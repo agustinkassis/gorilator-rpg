@@ -7,10 +7,12 @@ import {
   TransformNode,
   Vector3,
   MeshBuilder,
+  Mesh,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 
 export interface PropDef {
+  id?: string; // stable handle for editing/deleting (assigned by the importer endpoint)
   name: string;
   model: string; // url under /models
   x: number;
@@ -29,7 +31,7 @@ export interface LoadedProp {
   dispose: () => void;
 }
 
-function bounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 } {
+export function bounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 } {
   let min = new Vector3(Infinity, Infinity, Infinity);
   let max = new Vector3(-Infinity, -Infinity, -Infinity);
   for (const m of meshes) {
@@ -97,8 +99,9 @@ export function applyTransform(
   p.root.computeWorldMatrix(true);
 }
 
-/** Invisible box that casts the prop's shadow cheaply (the real mesh may be heavy). */
-export function addShadowProxy(scene: Scene, shadow: ShadowGenerator, p: LoadedProp, name: string): void {
+/** Invisible box that casts the prop's shadow cheaply (the real mesh may be heavy).
+ *  Returns the proxy so callers (the editor) can reposition/dispose it with the prop. */
+export function addShadowProxy(scene: Scene, shadow: ShadowGenerator, p: LoadedProp, name: string): Mesh {
   const b = bounds(p.meshes);
   const proxy = MeshBuilder.CreateBox(
     `propShadow_${name}`,
@@ -109,6 +112,7 @@ export function addShadowProxy(scene: Scene, shadow: ShadowGenerator, p: LoadedP
   proxy.isVisible = false;
   proxy.isPickable = false;
   shadow.addShadowCaster(proxy);
+  return proxy;
 }
 
 /** Fetch the manifest and place every persisted prop into the world. */

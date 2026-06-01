@@ -4,6 +4,8 @@ import { AnimGroups } from "./AnimationController";
 
 /** Bright flash colour for the "taking damage" reaction (works on any base colour). */
 export const HIT_FLASH = new Color3(1, 1, 1);
+/** Dark-red flash for the LOCAL player taking damage (an intermittent "ow" pulse). */
+export const DAMAGE_FLASH = new Color3(0.6, 0, 0);
 
 /**
  * A spawned character view. Skeletal models drive `groups` via AnimationController;
@@ -27,6 +29,6 @@ export interface SpawnedCharacter {
   /** Per-state yaw correction (radians) for clips authored off the model's forward. */
   yawFix?: Partial<Record<AnimState, number>>;
   pose?: (state: AnimState, t: number) => void;
-  flashHit: (on: boolean) => void;
+  flashHit: (on: boolean, color?: Color3) => void;
   dispose: () => void;
 }

@@ -21,7 +21,7 @@ export class PropImporter {
     private getPlayerPos: () => { x: number; z: number } | null,
   ) {
     const btn = document.createElement("button");
-    btn.textContent = "📦 Import Model (M)";
+    btn.textContent = "📦 Import Model";
     btn.style.cssText =
       "position:fixed; right:16px; bottom:132px; z-index:40; cursor:pointer;" +
       "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
@@ -90,12 +90,7 @@ export class PropImporter {
     };
     (panel.querySelector("#piAdd") as HTMLElement).onclick = () => void this.add();
     (panel.querySelector("#piDiscard") as HTMLElement).onclick = () => this.discard();
-
-    window.addEventListener("keydown", (e) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "m" || e.key === "M") this.toggle();
-    });
+    // (M is the world-map hotkey now; open this dev tool with its button.)
   }
 
   private toggle() {

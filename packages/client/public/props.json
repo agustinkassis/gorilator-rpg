@@ -2,8 +2,29 @@
   {
     "name": "Meshy_AI_Timberstone_Tow",
     "model": "/models/meshy_ai_timberstone_tow_1780332210503.glb",
-    "x": -30.6,
-    "z": -3.4,
+    "x": -12,
+    "z": -14.2,
+    "scale": 5,
+    "rotationY": 0,
+    "collisionRadius": 2.5,
+    "id": "/models/meshy_ai_timberstone_tow_1780332210503.glb"
+  },
+  {
+    "id": "meshy_ai_timberstone_tow_1780338285634",
+    "name": "Meshy_AI_Timberstone_Tow",
+    "model": "/models/meshy_ai_timberstone_tow_1780338285634.glb",
+    "x": 5.7,
+    "z": 23.4,
+    "scale": 5,
+    "rotationY": 0,
+    "collisionRadius": 2.5
+  },
+  {
+    "id": "meshy_ai_warrior_s_basti_1780338969291",
+    "name": "Meshy_AI_Warrior_s_Basti",
+    "model": "/models/meshy_ai_warrior_s_basti_1780338969291.glb",
+    "x": 29,
+    "z": -6.1,
     "scale": 5,
     "rotationY": 0,
     "collisionRadius": 2.5

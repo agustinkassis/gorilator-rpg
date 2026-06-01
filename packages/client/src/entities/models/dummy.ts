@@ -114,10 +114,10 @@ export function buildDummy(scene: Scene): SpawnedCharacter {
     groups: {},
     hasAnims: false,
     pose,
-    flashHit: (on) => {
+    flashHit: (on, color = HIT_FLASH) => {
       for (const m of meshes) {
         m.renderOverlay = on;
-        m.overlayColor = HIT_FLASH;
+        m.overlayColor = color;
         m.overlayAlpha = 0.5;
       }
     },

@@ -24,6 +24,7 @@ import {
   hasNostrExtension,
   NostrAuthPayload,
   NostrCredentials,
+  NostrPhase,
 } from "../net/nostr";
 
 /** What the player commits at the splash: a name, optionally a verified Nostr id. */
@@ -34,6 +35,8 @@ export interface SplashCredentials {
 
 /** Passed to CharacterFactory.spawn; ignored by the textured glb (and dummy). */
 const HERO_ACCENT = new Color3(0.98, 0.78, 0.28);
+/** The splash hero is shown bigger than its in-game (1×) size for a bolder pose. */
+const SPLASH_HERO_SCALE = 1.7;
 
 /**
  * The intro / character-select splash. It runs its own lightweight Babylon scene
@@ -79,6 +82,12 @@ export class SplashScreen {
 
   /** A verified Nostr identity once the player connects one (else anonymous). */
   private nostr?: NostrCredentials;
+
+  // ---- connect-progress log (terminal-style, paced flush) ----
+  private logQueue: Array<{ text: string; cls: string; pct?: number }> = [];
+  private flushTimer?: number;
+  private drainResolvers: Array<() => void> = [];
+  private relayTicker?: number;
 
   constructor(engine: Engine) {
     const scene = new Scene(engine);
@@ -260,7 +269,8 @@ export class SplashScreen {
       const factory = new CharacterFactory(this.scene);
       await factory.preload({ playerOnly: true });
       if (!this.active) return; // already launched / disposed
-      this.setHero(factory.spawn("player", HERO_ACCENT), factory);
+      // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
+      this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
     } catch (err) {
       console.warn("[splash] hero load failed", err);
     }
@@ -406,8 +416,9 @@ export class SplashScreen {
       .getElementById("nostrBtn")
       ?.addEventListener("click", () => void this.connectNostr());
     document
-      .getElementById("nostrClear")
+      .getElementById("nhDisconnect")
       ?.addEventListener("click", () => this.clearNostr());
+    document.getElementById("nhJoin")?.addEventListener("click", () => this.submit());
 
     // Locked roster slots just wobble — they're a teaser for future champions.
     document.querySelectorAll<HTMLElement>(".charCard.locked").forEach((card) => {
@@ -427,66 +438,186 @@ export class SplashScreen {
     this.enterBtn.disabled = this.input.value.trim().length === 0 && !this.nostr;
   }
 
-  /** Run the NIP-07 login, then show the verified profile + prefill the name. */
+  /** Run the NIP-07 login behind a terminal-style progress log, then reframe. */
   private async connectNostr() {
-    const btn = document.getElementById("nostrBtn") as HTMLButtonElement;
     const status = document.getElementById("nostrStatus") as HTMLElement;
     if (!hasNostrExtension()) {
-      status.classList.remove("busy");
       status.textContent = "No Nostr extension found — install Alby or nos2x.";
       return;
     }
-    btn.disabled = true;
-    status.classList.add("busy");
-    status.textContent = "Check your extension to sign…";
+    this.startProgress();
     try {
-      const creds = await nostrLogin();
+      const creds = await nostrLogin((phase, detail) => this.onNostrPhase(phase, detail));
+      this.stopRelayTicker();
+      this.npLog("✓ identity verified", "ok", 100);
+      await this.whenDrained();
+      await wait(400);
       this.nostr = creds;
-      status.classList.remove("busy");
-      status.textContent = "";
+      this.el.classList.remove("connecting");
       this.showNostrProfile(creds);
-      if (!this.input.value.trim() && creds.meta.name) {
-        this.input.value = creds.meta.name.slice(0, 16);
-      }
       this.syncEnter();
     } catch (err) {
-      btn.disabled = false;
-      status.classList.remove("busy");
+      this.stopRelayTicker();
+      this.npLog(`✗ ${err instanceof Error ? err.message : "login failed"}`, "err", 100);
+      await this.whenDrained();
+      await wait(1500);
+      this.el.classList.remove("connecting");
       status.textContent = err instanceof Error ? err.message : "Nostr login failed.";
     }
   }
 
-  private showNostrProfile(creds: NostrCredentials) {
-    const profile = document.getElementById("nostrProfile") as HTMLElement;
-    const avatar = document.getElementById("nostrAvatar") as HTMLImageElement;
-    const nameEl = document.getElementById("nostrName") as HTMLElement;
-    const npubEl = document.getElementById("nostrNpub") as HTMLElement;
-    nameEl.textContent = creds.meta.name || "Anonymous nostrich";
-    npubEl.textContent = `${creds.npub.slice(0, 12)}…${creds.npub.slice(-6)}`;
-    if (creds.meta.picture) {
-      avatar.src = creds.meta.picture;
-      avatar.style.display = "";
-      avatar.onerror = () => (avatar.style.display = "none");
-    } else {
-      avatar.style.display = "none";
+  // ---- connect progress ----------------------------------------------------
+
+  private startProgress() {
+    this.logQueue = [];
+    this.drainResolvers = [];
+    this.stopRelayTicker();
+    if (this.flushTimer !== undefined) window.clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
+    (document.getElementById("npLog") as HTMLElement).innerHTML = "";
+    this.npBar(0);
+    this.el.classList.add("connecting");
+    this.npLog("» initializing handshake", "dim", 4);
+  }
+
+  /** Queue a log line (+ optional progress target); lines flush at a fixed pace
+   *  so the steps visibly "type out" even when the real work finishes instantly. */
+  private npLog(text: string, cls: "dim" | "work" | "ok" | "err" = "work", pct?: number) {
+    this.logQueue.push({ text, cls, pct });
+    if (this.flushTimer === undefined) this.flushNext();
+  }
+
+  private flushNext() {
+    const item = this.logQueue.shift();
+    if (!item) {
+      this.flushTimer = undefined;
+      const resolvers = this.drainResolvers;
+      this.drainResolvers = [];
+      resolvers.forEach((r) => r());
+      return;
     }
-    profile.hidden = false;
-    (document.getElementById("nostrBtn") as HTMLElement).hidden = true;
+    const log = document.getElementById("npLog");
+    if (log) {
+      const line = document.createElement("div");
+      line.className = `npLine ${item.cls}`;
+      line.textContent = item.text;
+      log.appendChild(line);
+      while (log.childElementCount > 9) log.firstElementChild?.remove();
+    }
+    if (item.pct !== undefined) this.npBar(item.pct);
+    this.flushTimer = window.setTimeout(() => this.flushNext(), 115);
+  }
+
+  /** Resolve once every queued line has been shown. */
+  private whenDrained(): Promise<void> {
+    if (this.flushTimer === undefined && this.logQueue.length === 0) return Promise.resolve();
+    return new Promise((resolve) => this.drainResolvers.push(resolve));
+  }
+
+  private npBar(pct: number) {
+    const bar = document.getElementById("npBar") as HTMLElement | null;
+    if (bar) bar.style.width = `${pct}%`;
+  }
+
+  private onNostrPhase(phase: NostrPhase, detail?: string) {
+    switch (phase) {
+      case "signer":
+        this.npLog("» locating NIP-07 signer", "work", 8);
+        break;
+      case "pubkey":
+        this.npLog("✓ signer connected", "ok", 20);
+        if (detail) this.npLog(`  ${detail.slice(0, 16)}…${detail.slice(-5)}`, "dim");
+        break;
+      case "challenge":
+        this.npLog("» requesting one-time challenge", "work", 32);
+        break;
+      case "challenged":
+        this.npLog("✓ challenge received", "ok", 42);
+        break;
+      case "sign":
+        this.npLog("» awaiting signature…", "work", 50);
+        break;
+      case "signed":
+        this.npLog("✓ event signed · kind 22242", "ok", 64);
+        break;
+      case "relays":
+        this.npLog("» connecting to relays", "work", 70);
+        this.startRelayTicker();
+        break;
+      case "profile":
+        this.stopRelayTicker();
+        if (detail) this.npLog(`✓ profile decoded · ${detail}`, "ok", 92);
+        else this.npLog("· no published profile — using npub", "dim", 92);
+        break;
+      case "done":
+        break;
+    }
+  }
+
+  /** Cosmetic fast lines while pool.get queries the relays (the visible "fetch"). */
+  private startRelayTicker() {
+    const lines = [
+      "→ wss://relay.damus.io",
+      "→ wss://nos.lol",
+      "→ wss://relay.nostr.band",
+      "→ wss://relay.primal.net",
+      "» fetching kind:0 metadata",
+      "» decoding profile",
+    ];
+    let i = 0;
+    let pct = 72;
+    this.relayTicker = window.setInterval(() => {
+      if (i >= lines.length) {
+        this.stopRelayTicker();
+        return;
+      }
+      this.npLog(lines[i++], "dim", (pct = Math.min(90, pct + 3)));
+    }, 180);
+  }
+
+  private stopRelayTicker() {
+    if (this.relayTicker !== undefined) {
+      window.clearInterval(this.relayTicker);
+      this.relayTicker = undefined;
+    }
+  }
+
+  /** Reframe the splash into the logged-in layout: a big avatar beside the
+   *  gorilla, the display name + level, and one big JOIN button. */
+  private showNostrProfile(creds: NostrCredentials) {
+    const nameText = document.getElementById("nhNameText") as HTMLElement;
+    const img = document.getElementById("nhAvatarImg") as HTMLImageElement;
+    nameText.textContent =
+      creds.meta.name || `${creds.npub.slice(0, 12)}…${creds.npub.slice(-4)}`;
+    if (creds.meta.picture) {
+      img.onload = () => (img.style.display = "block");
+      img.onerror = () => (img.style.display = "none");
+      img.src = creds.meta.picture;
+    } else {
+      img.style.display = "none";
+      img.removeAttribute("src");
+    }
+    this.el.classList.add("nostr"); // hides the roster/name controls, shows #nostrHero
   }
 
   private clearNostr() {
     this.nostr = undefined;
-    (document.getElementById("nostrProfile") as HTMLElement).hidden = true;
+    this.el.classList.remove("nostr");
     const btn = document.getElementById("nostrBtn") as HTMLButtonElement;
     btn.hidden = false;
     btn.disabled = false;
+    const img = document.getElementById("nhAvatarImg") as HTMLImageElement;
+    img.style.display = "none";
+    img.removeAttribute("src");
     (document.getElementById("nostrStatus") as HTMLElement).textContent = "";
+    this.input.focus();
     this.syncEnter();
   }
 
   private submit() {
-    const name = this.input.value.trim();
-    // Anonymous players must name themselves; Nostr players already have an id.
+    // Nostr players join under their (verified) display name; anonymous players
+    // must type one.
+    const name = this.nostr ? this.nostr.meta.name.trim() : this.input.value.trim();
     if (!name && !this.nostr) {
       this.input.classList.remove("shake");
       void this.input.offsetWidth; // restart the shake animation

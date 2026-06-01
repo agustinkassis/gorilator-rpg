@@ -17,7 +17,7 @@ import {
   ROCK_HP,
   ROCK_ARMOR,
   ROCK_REGROW_MS,
-  STONES_PER_ROCK,
+  STONE_DROP_DAMAGE,
   BANANA_PICKUP_RADIUS,
   AUTO_GRAB_RADIUS,
   AnimState,
@@ -115,23 +115,35 @@ export function spawnRocks(state: GameState) {
   });
 }
 
-/** A rock's HP hit 0: turn it to rubble, drop stone, schedule regrow. */
-export function onRockMined(state: GameState, rock: Rock) {
+/** Spawn one stone collectible just outside a rock's body. */
+function dropStoneFromRock(state: GameState, rock: Rock) {
+  const s = getSeq(state);
+  const stone = new Stone();
+  stone.id = `stone-${s.stone++}`;
+  const angle = Math.random() * Math.PI * 2;
+  const r = rock.radius + 0.8 + Math.random() * 0.7; // outside the rock body
+  const spot = nearestFreeWorld(rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
+  stone.x = spot.x;
+  stone.z = spot.z;
+  state.stones.set(stone.id, stone);
+}
+
+/** Mining damage landed on a rock: shed one stone for every STONE_DROP_DAMAGE dealt. */
+export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
+  rock.damageSinceStone += amount;
+  while (rock.damageSinceStone >= STONE_DROP_DAMAGE) {
+    rock.damageSinceStone -= STONE_DROP_DAMAGE;
+    dropStoneFromRock(state, rock);
+  }
+}
+
+/** A rock's HP hit 0: turn it to rubble and schedule regrow. Its stone was shed
+ *  incrementally as it was mined (see onRockDamaged), so nothing drops here. */
+export function onRockMined(rock: Rock) {
   rock.alive = false;
   rock.hp = 0;
+  rock.damageSinceStone = 0;
   rock.regrowTimer = ROCK_REGROW_MS;
-
-  const s = getSeq(state);
-  for (let i = 0; i < STONES_PER_ROCK; i++) {
-    const stone = new Stone();
-    stone.id = `stone-${s.stone++}`;
-    const angle = (i / STONES_PER_ROCK) * Math.PI * 2 + Math.random();
-    const r = rock.radius + 0.8 + Math.random() * 0.7; // outside the rock body
-    const spot = nearestFreeWorld(rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
-    stone.x = spot.x;
-    stone.z = spot.z;
-    state.stones.set(stone.id, stone);
-  }
 }
 
 export function rockRegrowSystem(state: GameState, dt: number) {
@@ -142,6 +154,7 @@ export function rockRegrowSystem(state: GameState, dt: number) {
       if (r.regrowTimer <= 0) {
         r.alive = true;
         r.hp = r.maxHp;
+        r.damageSinceStone = 0;
       }
     }
   });

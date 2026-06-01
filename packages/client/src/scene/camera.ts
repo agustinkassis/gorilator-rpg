@@ -1,7 +1,8 @@
 import { ArcRotateCamera, Camera, Scene, Vector3 } from "@babylonjs/core";
 
-/** Half-height of the orthographic view, in world units. Smaller = more zoomed in. */
-const ORTHO_HALF_HEIGHT = 8.5;
+/** Half-height of the orthographic view, in world units. Smaller = more zoomed in.
+ *  6.3 ≈ 8.5 / 1.35 — i.e. 35% more zoomed-in than the previous 8.5. */
+const ORTHO_HALF_HEIGHT = 6.3;
 
 /**
  * A locked isometric camera: orthographic projection at the classic true-iso

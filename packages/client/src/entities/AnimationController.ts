@@ -15,6 +15,9 @@ export type AnimSpeeds = Partial<Record<AnimState, number>>;
  */
 export class AnimationController {
   private current?: AnimState;
+  private currentGroup?: AnimationGroup;
+  private currentBaseSpeed = 1; // the playing clip's per-state tuning speed
+  private speedScale = 1; // live multiplier on top of it (e.g. 1.35 while sprinting)
 
   constructor(
     private groups: AnimGroups,
@@ -32,19 +35,33 @@ export class AnimationController {
     this.current = state;
 
     const next = this.groups[state] ?? this.groups[AnimState.IDLE];
-    if (!next) return;
+    if (!next) {
+      this.currentGroup = undefined;
+      return;
+    }
 
     for (const g of Object.values(this.groups)) {
       if (g && g !== next) g.stop();
     }
 
     const loop = LOOPING.has(state);
-    next.start(loop, this.speeds[state] ?? 1.0, next.from, next.to, false);
+    this.currentGroup = next;
+    this.currentBaseSpeed = this.speeds[state] ?? 1.0;
+    next.start(loop, this.currentBaseSpeed * this.speedScale, next.from, next.to, false);
 
     // Freeze death on its final pose instead of snapping back to bind.
     if (state === AnimState.DEAD) {
       next.onAnimationGroupEndObservable.addOnce(() => next.goToFrame(next.to));
     }
+  }
+
+  /** Live playback-speed multiplier on top of the current clip's tuned speed —
+   *  used to run the locomotion cycle faster (×SPRINT_SPEED_MULT) while sprinting
+   *  so the legs keep pace with the boosted movement instead of sliding. */
+  setSpeedScale(scale: number) {
+    if (scale === this.speedScale) return;
+    this.speedScale = scale;
+    if (this.currentGroup) this.currentGroup.speedRatio = this.currentBaseSpeed * scale;
   }
 
   dispose() {

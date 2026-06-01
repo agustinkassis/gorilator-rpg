@@ -26,22 +26,31 @@ function hierarchyBounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 }
   return { min, max };
 }
 
+export interface HouseModel {
+  /** Collapse the house: hide the model and its shadow proxy. */
+  hide(): void;
+}
+
 /**
  * Load the Viking house once and stand it on the centre cross (map origin),
  * scaled so its footprint matches the cross. It casts + receives shadows like the
  * rest of the world. Loaded in the background (large model) so it just pops in.
+ * Returns a handle to hide it (when the server says it's been destroyed), or null.
  */
-export async function loadHouse(scene: Scene, shadow: ShadowGenerator): Promise<void> {
+export async function loadHouse(
+  scene: Scene,
+  shadow: ShadowGenerator,
+): Promise<HouseModel | null> {
   // HEAD probe so a missing file doesn't crash the client.
   try {
     const res = await fetch(HOUSE_URL, { method: "HEAD" });
     const type = res.headers.get("content-type") ?? "";
     if (!res.ok || type.includes("text/html")) {
       console.info(`[assets] ${HOUSE_URL} not present.`);
-      return;
+      return null;
     }
   } catch {
-    return;
+    return null;
   }
 
   try {
@@ -98,7 +107,16 @@ export async function loadHouse(scene: Scene, shadow: ShadowGenerator): Promise<
     shadow.addShadowCaster(proxy); // ...but it still casts a shadow
 
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
+
+    return {
+      hide: () => {
+        root.setEnabled(false); // collapse: hide the whole model...
+        proxy.setEnabled(false);
+        shadow.removeShadowCaster(proxy); // ...and stop it casting a shadow
+      },
+    };
   } catch (e) {
     console.warn(`[assets] failed to load ${HOUSE_URL}`, e);
+    return null;
   }
 }

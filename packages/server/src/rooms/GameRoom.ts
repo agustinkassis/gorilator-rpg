@@ -10,6 +10,12 @@ import {
   UseItemMessage,
   ThrowMessage,
   ChatMessage,
+  SprintMessage,
+  DevGodMessage,
+  DevMoveMessage,
+  DevDeleteMessage,
+  DevSetMessage,
+  DevTimeMessage,
   CHAT_MAX_LEN,
   InventorySlot,
   ItemType,
@@ -21,8 +27,10 @@ import {
   BANANA_MAX_THROW,
   STARTING_BANANAS,
   TICK_RATE,
+  NOSTR_TAKEOVER_CODE,
 } from "@rpg/shared";
 import { movementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
+import { staminaSystem } from "../systems/stamina";
 import {
   combatSystem,
   spawnDummies,
@@ -41,8 +49,30 @@ import {
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
 import { spawnGoblins, goblinAiSystem, goblinSpawnSystem } from "../systems/goblins";
+import { spawnHouse } from "../systems/houses";
 import { loadPropObstacles } from "../systems/props";
+import { devMove, devDelete, devSet } from "../systems/devEdit";
 import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
+
+/** A kicked session's gameplay state, handed to the new login that takes it over. */
+interface TakeoverState {
+  x: number;
+  z: number;
+  rotY: number;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  level: number;
+  xp: number;
+  attack: number;
+  armor: number;
+  critChance: number;
+  moveSpeed: number;
+  throwPower: number;
+  hue: number;
+  inventory?: InventorySlot[];
+}
 
 export class GameRoom extends Room<GameState> {
   maxClients = 16;
@@ -66,6 +96,7 @@ export class GameRoom extends Room<GameState> {
     spawnTrees(this.state);
     spawnRocks(this.state);
     spawnInitialBananas(this.state);
+    spawnHouse(this.state);
 
     this.onMessage("move", (client, msg: MoveMessage) => {
       const p = this.state.players.get(client.sessionId);
@@ -75,10 +106,50 @@ export class GameRoom extends Room<GameState> {
       setDestination(p, clampToWorld(msg.x), clampToWorld(msg.z));
     });
 
+    // Hold-to-sprint: record SPACE held/released. staminaSystem decides whether
+    // that actually translates into a sprint (moving + has stamina + not winded).
+    this.onMessage("sprint", (client, msg: SprintMessage) => {
+      const p = this.state.players.get(client.sessionId);
+      if (p) p.sprintHeld = !!msg?.on;
+    });
+
     this.onMessage("attack", (client, msg: AttackMessage) => {
       const p = this.state.players.get(client.sessionId);
       if (p) p.pickupTargetId = "";
       handleAttack(this.state, client.sessionId, msg.targetId);
+    });
+
+    // Dev Mode: toggle the sender's immortality. Turning it on while dead also
+    // revives them, so entering Dev Mode never strands you on the respawn screen.
+    this.onMessage("dev_god", (client, msg: DevGodMessage) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      p.godMode = !!msg?.on;
+      if (p.godMode) {
+        p.hp = p.maxHp;
+        if (p.state === AnimState.DEAD) {
+          p.state = AnimState.IDLE;
+          p.respawnTimer = 0;
+        }
+      }
+    });
+
+    // Dev Mode world edits — relocate / delete / retune a synced entity. They
+    // mutate authoritative state and sync to every client. Runtime-only (the
+    // world regenerates each restart); authored props persist via props.json.
+    this.onMessage("dev_move", (_client, msg: DevMoveMessage) => {
+      if (msg) devMove(this.state, msg.kind, msg.id, msg.x, msg.z);
+    });
+    this.onMessage("dev_delete", (_client, msg: DevDeleteMessage) => {
+      if (msg) devDelete(this.state, msg.kind, msg.id);
+    });
+    this.onMessage("dev_set", (_client, msg: DevSetMessage) => {
+      if (msg) devSet(this.state, msg.kind, msg.id, msg.field, msg.value);
+    });
+    // Pause / set game speed: scales the simulation for everyone (0 = paused).
+    this.onMessage("dev_time", (_client, msg: DevTimeMessage) => {
+      const s = Number(msg?.scale);
+      this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(8, s)) : 1;
     });
 
     this.onMessage("pickup", (client, msg: PickupMessage) => {
@@ -153,16 +224,21 @@ export class GameRoom extends Room<GameState> {
       this.broadcast("chat", { playerId: client.sessionId, name: p.name, text });
     });
 
-    // Fixed-step authoritative simulation.
+    // Fixed-step authoritative simulation. Dev Mode's time control scales every
+    // system's dt by `timeScale` (0 = fully paused, 2 = double speed, …) so the
+    // whole game freezes/slows/speeds for everyone. Direct edits (dev_move etc.)
+    // still apply while paused since they mutate state outside this loop.
     this.setSimulationInterval((deltaMs) => {
-      const dt = deltaMs / 1000;
+      const scaledMs = deltaMs * this.state.timeScale;
+      const dt = scaledMs / 1000;
       const emitDamage = (ev: DamageEvent) => this.broadcast("damage", ev);
       const emitXp = (ev: XpEvent) => this.broadcast("xp", ev);
+      staminaSystem(this.state, dt); // sets p.sprinting; movement reads it for the speed boost
       movementSystem(this.state, dt);
       combatSystem(this.state, dt, emitDamage, emitXp);
       goblinAiSystem(this.state, dt, emitDamage);
       goblinSpawnSystem(this.state, dt); // tower-defense waves scale with live players
-      this.releasePendingThrows(deltaMs);
+      this.releasePendingThrows(scaledMs);
       treeRegrowSystem(this.state, dt);
       rockRegrowSystem(this.state, dt);
       potionRespawnSystem(this.state, dt);
@@ -213,22 +289,95 @@ export class GameRoom extends Room<GameState> {
       p.name = options?.name?.trim() || `Knight-${client.sessionId.substring(0, 4)}`;
     }
 
-    const angle = Math.random() * Math.PI * 2;
-    const r = 12 + Math.random() * 4; // spawn clear of the centre-cross goblin
-    placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
-    p.rotY = Math.atan2(-p.x, -p.z);
-    p.hue = Math.floor(Math.random() * 360);
+    // Single session per nostr identity: if this npub is already playing here,
+    // kick that session and inherit its place + stats + inventory (newest wins).
+    const takeover = nostr ? this.takeOverSameNpub(client.sessionId, nostr.pubkey) : null;
+
+    if (takeover) {
+      p.x = takeover.x;
+      p.z = takeover.z;
+      p.rotY = takeover.rotY;
+      p.maxHp = takeover.maxHp;
+      p.hp = takeover.hp > 0 ? takeover.hp : takeover.maxHp; // don't arrive dead
+      p.maxStamina = takeover.maxStamina;
+      p.stamina = takeover.stamina;
+      p.level = takeover.level;
+      p.xp = takeover.xp;
+      p.attack = takeover.attack;
+      p.armor = takeover.armor;
+      p.critChance = takeover.critChance;
+      p.moveSpeed = takeover.moveSpeed;
+      p.throwPower = takeover.throwPower;
+      p.hue = takeover.hue;
+      p.targetX = p.x;
+      p.targetZ = p.z;
+      p.prevX = p.x;
+      p.prevZ = p.z;
+      p.state = AnimState.IDLE;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const r = 12 + Math.random() * 4; // spawn clear of the centre-cross goblin
+      placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
+      p.rotY = Math.atan2(-p.x, -p.z);
+      p.hue = Math.floor(Math.random() * 360);
+    }
 
     this.state.players.set(client.sessionId, p);
-    const inv = makeInventory();
-    addItem(inv, "banana", STARTING_BANANAS); // spawn stocked so you can throw right away
+
+    // Inherit the old session's inventory, or stock a fresh one with bananas.
+    const inv = takeover?.inventory ?? makeInventory();
+    if (!takeover?.inventory) addItem(inv, "banana", STARTING_BANANAS);
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
 
     console.log(
-      `[room] ${p.name}${p.nostrVerified ? " ⚡nostr" : ""} joined ` +
-        `(${this.state.players.size} online)`,
+      `[room] ${p.name}${p.nostrVerified ? " ⚡nostr" : ""} ` +
+        `${takeover ? "took over" : "joined"} (${this.state.players.size} online)`,
     );
+  }
+
+  /**
+   * Single session per nostr identity. If `pubkey` is already playing in this
+   * room under a different session, snapshot that session's place + stats +
+   * inventory, kick it (the newest login has priority), and return the snapshot
+   * for the new player to inherit. Returns null for anonymous / first-time keys.
+   */
+  private takeOverSameNpub(newSessionId: string, pubkey: string): TakeoverState | null {
+    if (!pubkey) return null;
+    let oldSid: string | null = null;
+    let snap: TakeoverState | null = null;
+    for (const [sid, existing] of this.state.players) {
+      if (sid === newSessionId || existing.pubkey !== pubkey) continue;
+      oldSid = sid;
+      snap = {
+        x: existing.x,
+        z: existing.z,
+        rotY: existing.rotY,
+        hp: existing.hp,
+        maxHp: existing.maxHp,
+        stamina: existing.stamina,
+        maxStamina: existing.maxStamina,
+        level: existing.level,
+        xp: existing.xp,
+        attack: existing.attack,
+        armor: existing.armor,
+        critChance: existing.critChance,
+        moveSpeed: existing.moveSpeed,
+        throwPower: existing.throwPower,
+        hue: existing.hue,
+        inventory: this.inventories.get(sid),
+      };
+      break;
+    }
+    if (!snap || !oldSid) return null;
+    // Kick the old session — onLeave removes its player/inventory/throws, and we
+    // already captured everything the new session inherits.
+    this.clients.find((c) => c.sessionId === oldSid)?.leave(NOSTR_TAKEOVER_CODE);
+    console.log(
+      `[room] npub ${pubkey.slice(0, 8)}… re-logged in → kicked ${oldSid}, ` +
+        `${newSessionId} takes over`,
+    );
+    return snap;
   }
 
   onLeave(client: Client) {

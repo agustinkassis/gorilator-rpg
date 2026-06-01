@@ -3,6 +3,7 @@ import {
   Player,
   AnimState,
   MOVE_SPEED,
+  SPRINT_SPEED_MULT,
   ARRIVE_THRESHOLD,
 } from "@rpg/shared";
 import { findPath, depenetrate, nearestFreeWorld } from "./pathfinding";
@@ -24,6 +25,8 @@ export function placeAtFreeSpot(player: Player, x: number, z: number) {
   player.z = free.z;
   player.targetX = free.x;
   player.targetZ = free.z;
+  player.prevX = free.x; // so staminaSystem sees no "movement" from the spawn/respawn jump
+  player.prevZ = free.z;
   player.path = [];
   player.pathIndex = 0;
 }
@@ -48,7 +51,8 @@ export function movementSystem(state: GameState, dt: number) {
         const dz = wp.z - p.z;
         const dist = Math.hypot(dx, dz);
         if (dist > ARRIVE_THRESHOLD) {
-          const speed = p.moveSpeed > 0 ? p.moveSpeed : MOVE_SPEED; // grows with level
+          const base = p.moveSpeed > 0 ? p.moveSpeed : MOVE_SPEED; // grows with level
+          const speed = p.sprinting ? base * SPRINT_SPEED_MULT : base; // +30% while sprinting (staminaSystem gates this)
           const step = Math.min(dist, speed * dt);
           p.x += (dx / dist) * step;
           p.z += (dz / dist) * step;

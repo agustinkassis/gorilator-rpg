@@ -14,4 +14,5 @@ export class Rock extends Schema {
 
   // ---- server-only ----
   regrowTimer = 0;
+  damageSinceStone = 0; // accumulates mining damage; sheds a stone each STONE_DROP_DAMAGE
 }

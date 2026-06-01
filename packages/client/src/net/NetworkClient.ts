@@ -10,6 +10,7 @@ import {
   Rock,
   Stone,
   Banana,
+  House,
   DamageEvent,
   HealEvent,
   XpEvent,
@@ -18,6 +19,7 @@ import {
   InventorySlot,
   ROOM_NAME,
   SERVER_PORT,
+  NOSTR_TAKEOVER_CODE,
 } from "@rpg/shared";
 
 export interface NetHandlers {
@@ -42,6 +44,9 @@ export interface NetHandlers {
   onStoneRemove(id: string): void;
   onBananaAdd(b: Banana, id: string): void;
   onBananaRemove(id: string): void;
+  onHouseAdd(h: House, id: string): void;
+  onHouseChange(h: House, id: string): void;
+  onHouseRemove(id: string): void;
   onBananaThrow(ev: BananaThrowEvent): void;
   onDamage(ev: DamageEvent): void;
   onHeal(ev: HealEvent): void;
@@ -121,6 +126,12 @@ export class NetworkClient {
       $(room.state).bananas.onAdd((banana, id) => handlers.onBananaAdd(banana, id));
       $(room.state).bananas.onRemove((_banana, id) => handlers.onBananaRemove(id));
 
+      $(room.state).houses.onAdd((house, id) => {
+        handlers.onHouseAdd(house, id);
+        $(house).onChange(() => handlers.onHouseChange(house, id));
+      });
+      $(room.state).houses.onRemove((_house, id) => handlers.onHouseRemove(id));
+
       room.onMessage("damage", (ev: DamageEvent) => handlers.onDamage(ev));
       room.onMessage("heal", (ev: HealEvent) => handlers.onHeal(ev));
       room.onMessage("xp", (ev: XpEvent) => handlers.onXp(ev));
@@ -131,7 +142,14 @@ export class NetworkClient {
       room.onError((code, message) => {
         handlers.onError(`room error ${code}: ${message ?? ""}`);
       });
-      room.onLeave(() => handlers.onError("disconnected"));
+      room.onLeave((code) => {
+        // The server kicks this session when the same npub logs in elsewhere.
+        handlers.onError(
+          code === NOSTR_TAKEOVER_CODE
+            ? "logged in from another window — this session was closed"
+            : "disconnected",
+        );
+      });
     } catch (err) {
       handlers.onError(
         err instanceof Error ? err.message : "failed to connect to server",
@@ -166,5 +184,36 @@ export class NetworkClient {
 
   sendChat(text: string) {
     this.room?.send("chat", { text });
+  }
+
+  /** Report SPACE held (sprint on) / released (sprint off). */
+  sendSprint(on: boolean) {
+    this.room?.send("sprint", { on });
+  }
+
+  // ---- Dev Mode (in-game editor) ----
+  /** Toggle the local player's immortality. */
+  sendGodMode(on: boolean) {
+    this.room?.send("dev_god", { on });
+  }
+
+  /** Relocate a synced world object (tree/rock/potion/dummy). */
+  sendDevMove(kind: string, id: string, x: number, z: number) {
+    this.room?.send("dev_move", { kind, id, x, z });
+  }
+
+  /** Delete a synced world object (persisted server-side). */
+  sendDevDelete(kind: string, id: string) {
+    this.room?.send("dev_delete", { kind, id });
+  }
+
+  /** Set one editable field on a synced world object. */
+  sendDevSet(kind: string, id: string, field: string, value: number | boolean | string) {
+    this.room?.send("dev_set", { kind, id, field, value });
+  }
+
+  /** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */
+  sendDevTime(scale: number) {
+    this.room?.send("dev_time", { scale });
   }
 }

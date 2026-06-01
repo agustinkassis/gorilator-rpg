@@ -17,6 +17,7 @@ import {
   Rock,
   Stone,
   Banana,
+  House,
   AnimState,
   DamageEvent,
   HealEvent,
@@ -33,23 +34,16 @@ import { buildRock, RockModel } from "../entities/models/rock";
 import { buildStone, StoneModel } from "../entities/models/stone";
 import { buildBanana, BananaModel } from "../entities/models/banana";
 import { buildStoneShot } from "../entities/models/stoneShot";
-import { buildSpotlight, Spotlight } from "../fx/spotlight";
+import { HouseModel } from "../entities/models/house";
 import { buildLightning, Lightning } from "../fx/lightning";
 import { makeBananaTrail, makeBananaBurst } from "../fx/bananaFx";
 import { makeLevelUpExplosion } from "../fx/explosion";
+import { makeBloodBurst } from "../fx/bloodFx";
+import { DamageFx } from "../fx/damageFx";
+import { DropAnim, startDrop, updateDrop } from "../fx/dropAnim";
 import { HUD } from "../ui/hud";
+import type { AudioManager } from "../audio/AudioManager";
 import { smooth } from "../util/math";
-
-const SPOTLIGHT_COLORS: Record<string, Color3> = {
-  tree: new Color3(1, 0.5, 0.12), // cut → orange
-  rock: new Color3(0.55, 0.75, 1), // mine → blue
-  log: new Color3(0.45, 0.95, 0.5), // grab → green
-  stone: new Color3(0.45, 0.95, 0.5), // grab → green
-  potion: new Color3(0.45, 0.95, 0.5), // grab → green
-  banana: new Color3(0.95, 0.85, 0.2), // grab → yellow
-  enemy: new Color3(1, 0.2, 0.13), // attack → red
-  player: new Color3(1, 0.2, 0.13),
-};
 
 interface ServerView {
   x: number;
@@ -59,6 +53,7 @@ interface ServerView {
   maxHp: number;
   state: AnimState;
   level: number;
+  sprinting?: boolean; // players only; enemies leave it undefined → no run-speed boost
 }
 
 export interface PickResult {
@@ -92,6 +87,7 @@ interface ThrownBanana {
   trail?: ParticleSystem;
   landingX: number;
   landingZ: number;
+  item: "banana" | "stone"; // which impact sound to play when it lands
   collectibleId?: string; // the hidden collectible to reveal when this settles
 }
 
@@ -135,20 +131,24 @@ const DUMMY_TINT = new Color3(0.72, 0.3, 0.26);
  */
 export class Game {
   private entities = new Map<string, Entity>();
-  private potions = new Map<string, PotionModel & { bob: number }>();
+  private potions = new Map<string, PotionModel & { bob: number; drop?: DropAnim }>();
   private trees = new Map<string, TreeModel & { hp: number; maxHp: number }>();
-  private logs = new Map<string, LogModel & { bob: number }>();
+  private logs = new Map<string, LogModel & { bob: number; drop?: DropAnim }>();
   private rocks = new Map<string, RockModel & { hp: number; maxHp: number }>();
-  private stones = new Map<string, StoneModel & { bob: number }>();
-  private bananas = new Map<string, BananaModel & { spin: number }>();
+  private stones = new Map<string, StoneModel & { bob: number; drop?: DropAnim }>();
+  private bananas = new Map<string, BananaModel & { spin: number; drop?: DropAnim }>();
+  private houses = new Map<string, { hp: number; maxHp: number; anchor: TransformNode }>();
+  private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
   private thrown: ThrownBanana[] = [];
   private particleFx: ParticleFx[] = []; // expiring banana trails/puffs
   private collecting: CollectFx[] = []; // items animating into a collector
   private playerIds = new Set<string>(); // entity ids that are players (magnet targets)
   private playerLevels = new Map<string, number>(); // last seen level, to detect level-ups
-  private spotlight: { fx: Spotlight; targetRoot: TransformNode } | null = null;
   private lightnings: Lightning[] = [];
   private deadElapsed: number | null = null; // seconds the local player has been dead
+  private dropsEnabled = false; // gate the loot-pop so the initial world sync doesn't all pop at once
+  private damageFx: DamageFx | null = null; // local-player hurt feedback (flash/shake/low-HP)
+  private audio: AudioManager | null = null; // sound effects + music (set after construction)
   localId: string | null = null;
 
   constructor(
@@ -156,10 +156,29 @@ export class Game {
     private factory: CharacterFactory,
     private hud: HUD,
     private shadow: ShadowGenerator,
-  ) {}
+  ) {
+    const canvas = camera.getScene().getEngine().getRenderingCanvas();
+    if (canvas) this.damageFx = new DamageFx(canvas);
+  }
 
   setLocalId(id: string) {
     this.localId = id;
+    // Enable the loot-pop shortly after joining, so the initial burst of existing
+    // world items (synced on connect) lands quietly — only items dropped DURING
+    // play pop into the air.
+    setTimeout(() => {
+      this.dropsEnabled = true;
+    }, 800);
+  }
+
+  /** Wire in the sound system (effects + music). */
+  setAudio(audio: AudioManager) {
+    this.audio = audio;
+  }
+
+  /** Flash a character white when the player picks it as an attack target. */
+  flashSelectTarget(id: string) {
+    this.entities.get(id)?.flashSelect();
   }
 
   // ---- player callbacks ----
@@ -193,6 +212,7 @@ export class Game {
       ent.root.position.z,
     );
     this.particleFx.push({ ps, ttl: 1.3 });
+    this.audio?.levelUp({ x: ent.root.position.x, z: ent.root.position.z });
   }
 
   removePlayer(id: string) {
@@ -230,7 +250,11 @@ export class Game {
       mesh.metadata = { entityId: id, kind: "potion" };
       this.castAndReceive(mesh);
     }
-    this.potions.set(id, { ...model, bob: Math.random() * Math.PI * 2 });
+    this.potions.set(id, {
+      ...model,
+      bob: Math.random() * Math.PI * 2,
+      drop: this.dropsEnabled ? startDrop(0.25) : undefined,
+    });
   }
 
   removePotion(id: string) {
@@ -264,6 +288,8 @@ export class Game {
     tm.hp = t.hp;
     tm.maxHp = t.maxHp;
     tm.setAlive(t.alive);
+    tm.root.position.x = t.x; // follow dev-mode relocation (HP bar is parented, so it tags along)
+    tm.root.position.z = t.z;
   }
 
   removeTree(id: string) {
@@ -284,7 +310,11 @@ export class Game {
       mesh.metadata = { entityId: id, kind: "log" };
       this.castAndReceive(mesh);
     }
-    this.logs.set(id, { ...model, bob: Math.random() * Math.PI * 2 });
+    this.logs.set(id, {
+      ...model,
+      bob: Math.random() * Math.PI * 2,
+      drop: this.dropsEnabled ? startDrop(0.12) : undefined,
+    });
   }
 
   removeLog(id: string) {
@@ -331,6 +361,41 @@ export class Game {
     this.rocks.delete(id);
   }
 
+  // ---- house callbacks ----
+  /** Receive the loaded house glb handle (so we can hide it when it collapses). */
+  setHouseModel(model: HouseModel | null) {
+    this.houseModel = model;
+  }
+
+  addHouse(h: House, id: string) {
+    if (this.houses.has(id)) return;
+    const scene = this.camera.getScene();
+    // The house glb itself is loaded separately (loadHouse); here we just track its
+    // HP and float a bar above the roof. The anchor is a fixed node at the house.
+    const anchor = new TransformNode(`houseBar-${id}`, scene);
+    anchor.position.set(h.x, 9, h.z);
+    const hm = { hp: h.hp, maxHp: h.maxHp, anchor };
+    this.houses.set(id, hm);
+    this.hud.addResource(id, anchor, () => hm.hp, () => hm.maxHp, "#d98c54");
+  }
+
+  changeHouse(h: House, id: string) {
+    const hm = this.houses.get(id);
+    if (!hm) return;
+    hm.hp = h.hp;
+    hm.maxHp = h.maxHp;
+    if (!h.alive) this.houseModel?.hide(); // collapsed
+  }
+
+  removeHouse(id: string) {
+    const hm = this.houses.get(id);
+    if (!hm) return;
+    this.hud.remove(id);
+    hm.anchor.dispose();
+    this.houses.delete(id);
+    this.houseModel?.hide(); // the house is gone — hide the model
+  }
+
   // ---- stone callbacks ----
   addStone(s: Stone, id: string) {
     if (this.stones.has(id)) return;
@@ -341,7 +406,11 @@ export class Game {
       mesh.metadata = { entityId: id, kind: "stone" };
       this.castAndReceive(mesh);
     }
-    this.stones.set(id, { ...model, bob: Math.random() * Math.PI * 2 });
+    this.stones.set(id, {
+      ...model,
+      bob: Math.random() * Math.PI * 2,
+      drop: this.dropsEnabled ? startDrop(0.12) : undefined,
+    });
   }
 
   removeStone(id: string) {
@@ -362,10 +431,12 @@ export class Game {
       mesh.metadata = { entityId: id, kind: "banana" };
       this.castAndReceive(mesh);
     }
-    this.bananas.set(id, { ...model, spin: Math.random() * Math.PI * 2 });
+    const ban = { ...model, spin: Math.random() * Math.PI * 2, drop: undefined as DropAnim | undefined };
+    this.bananas.set(id, ban);
 
     // If this is the landing of a banana still being thrown, keep it hidden until
     // the thrown visual settles here and hands off — otherwise both show at once.
+    let claimed = false;
     for (const t of this.thrown) {
       if (t.collectibleId) continue;
       const dx = t.landingX - b.x;
@@ -373,9 +444,13 @@ export class Game {
       if (dx * dx + dz * dz <= 2.5 * 2.5) {
         t.collectibleId = id;
         model.root.setEnabled(false);
+        claimed = true;
         break;
       }
     }
+    // A freshly dropped banana pops into the air; one handed off from a thrown
+    // banana already arced through flight, so it just appears where it landed.
+    if (!claimed && this.dropsEnabled) ban.drop = startDrop(0.25);
   }
 
   removeBanana(id: string) {
@@ -417,6 +492,7 @@ export class Game {
       startPos: model.root.position.clone(),
       startScale: model.root.scaling.clone(),
     });
+    this.audio?.pickup({ x: px, z: pz });
   }
 
   /**
@@ -428,8 +504,10 @@ export class Game {
    */
   showBananaThrow(ev: BananaThrowEvent) {
     const scene = this.camera.getScene();
+    const item: "banana" | "stone" = ev.item === "stone" ? "stone" : "banana";
     const model = ev.item === "stone" ? buildStoneShot(scene) : buildBanana(scene);
     for (const mesh of model.meshes) this.shadow.addShadowCaster(mesh); // drops a shadow mid-flight
+    this.audio?.throwItem({ x: ev.fromX, z: ev.fromZ }, item); // whoosh from the thrower
     const HAND_Y = 1.1;
     const R = THROW_RESTITUTION;
 
@@ -479,6 +557,7 @@ export class Game {
       trail: makeBananaTrail(scene, model.root.position),
       landingX: ev.toX,
       landingZ: ev.toZ,
+      item,
     });
   }
 
@@ -487,25 +566,51 @@ export class Game {
     const e = this.entities.get(ev.targetId);
     if (e) {
       this.hud.showDamage(e.root, e.id, ev.amount, ev.crit);
+      // a spray of blood at the struck character (strength ∝ damage)
+      const strength = Math.max(0.4, Math.min(2.2, ev.amount / 12));
+      this.particleFx.push({
+        ps: makeBloodBurst(this.camera.getScene(), e.root.position.x, 1.2, e.root.position.z, strength),
+        ttl: 0.7,
+      });
+      // the local player hurts (centered grunt + red flash + shake); everyone else
+      // gets a spatial impact thud. The death sting is fired separately on the
+      // DEAD state transition (see update()).
+      if (e.id === this.localId) {
+        this.audio?.hurt();
+        this.damageFx?.onHit(ev.amount / Math.max(1, e.maxHp)); // ∝ fraction of max HP lost
+      } else {
+        this.audio?.hit({ x: e.root.position.x, z: e.root.position.z });
+      }
       return;
     }
     const tree = this.trees.get(ev.targetId);
     if (tree) {
       this.hud.showDamage(tree.root, ev.targetId, ev.amount, ev.crit);
       tree.shake();
+      this.audio?.chop({ x: tree.root.position.x, z: tree.root.position.z });
       return;
     }
     const rock = this.rocks.get(ev.targetId);
     if (rock) {
       this.hud.showDamage(rock.root, ev.targetId, ev.amount, ev.crit);
       rock.shake();
+      this.audio?.mine({ x: rock.root.position.x, z: rock.root.position.z });
+      return;
+    }
+    const house = this.houses.get(ev.targetId);
+    if (house) {
+      this.hud.showDamage(house.anchor, ev.targetId, ev.amount, ev.crit);
+      this.audio?.mine({ x: house.anchor.position.x, z: house.anchor.position.z });
     }
   }
 
   /** A heal landed (potion pickup) — pop a green "+N" number. */
   onHeal(ev: HealEvent) {
     const e = this.entities.get(ev.targetId);
-    if (e) this.hud.showHeal(e.root, e.id, ev.amount);
+    if (e) {
+      this.hud.showHeal(e.root, e.id, ev.amount);
+      this.audio?.heal({ x: e.root.position.x, z: e.root.position.z });
+    }
   }
 
   /** A player gained XP — pop a gold "+N XP" number over them. */
@@ -535,7 +640,7 @@ export class Game {
 
   private register(entity: Entity, view: ServerView, isEnemy: boolean) {
     entity.teleport(view.x, view.z);
-    entity.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state);
+    entity.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
     entity.level = view.level;
     entity.root.metadata = { entityId: entity.id, kind: isEnemy ? "enemy" : "player" };
     for (const mesh of entity.meshes) this.castAndReceive(mesh);
@@ -567,7 +672,7 @@ export class Game {
         this.deadElapsed = null;
       }
     }
-    e.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state);
+    e.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
     e.level = view.level;
     this.refreshPickable(e); // dead → click-through, alive → targetable again
   }
@@ -584,6 +689,7 @@ export class Game {
     this.hud.remove(id);
     entity.dispose();
     this.entities.delete(id);
+    this.audio?.forget(id); // drop footstep/death bookkeeping for this entity
   }
 
   /** Walk a picked mesh up to its world-object root and return its id + kind. The
@@ -630,28 +736,6 @@ export class Game {
     return best;
   };
 
-  /** Mark the target the player is heading to act on with a spotlight. */
-  showActionSpotlight(id: string, kind: string) {
-    const targetRoot =
-      this.entities.get(id)?.root ??
-      this.trees.get(id)?.root ??
-      this.rocks.get(id)?.root ??
-      this.logs.get(id)?.root ??
-      this.stones.get(id)?.root ??
-      this.bananas.get(id)?.root;
-    if (!targetRoot) return;
-    this.clearSpotlight();
-    const color = SPOTLIGHT_COLORS[kind] ?? SPOTLIGHT_COLORS.enemy;
-    this.spotlight = { fx: buildSpotlight(this.camera.getScene(), color), targetRoot };
-  }
-
-  clearSpotlight() {
-    if (this.spotlight) {
-      this.spotlight.fx.dispose();
-      this.spotlight = null;
-    }
-  }
-
   /** Strike a lightning bolt at a spot (used for player respawns). */
   showLightning(x: number, z: number) {
     this.lightnings.push(buildLightning(this.camera.getScene(), x, z));
@@ -659,29 +743,62 @@ export class Game {
 
   update(dt: number) {
     if (this.deadElapsed !== null) this.deadElapsed += dt;
-    for (const entity of this.entities.values()) entity.update(dt);
+
+    const audio = this.audio;
+    const localPos = this.localId ? this.entities.get(this.localId)?.root.position : undefined;
+    for (const entity of this.entities.values()) {
+      entity.update(dt);
+      if (!audio) continue;
+      const px = entity.root.position.x;
+      const pz = entity.root.position.z;
+      const pos = { x: px, z: pz };
+      audio.entityState(entity.id, entity.animState, pos); // death sting on the DEAD transition
+      // footsteps: the local player always; others only when near — so a distant
+      // goblin pack doesn't clatter (and we don't build inaudible voices for them).
+      const near =
+        entity.isLocal ||
+        (localPos !== undefined && (px - localPos.x) ** 2 + (pz - localPos.z) ** 2 < 24 * 24);
+      audio.footstep(entity.id, pos, near && entity.isMoving, entity.isSprinting, dt);
+    }
+
     for (const tree of this.trees.values()) tree.update(dt);
     for (const rock of this.rocks.values()) rock.update(dt);
 
     for (const pot of this.potions.values()) {
-      pot.bob += dt;
       pot.root.rotation.y += dt * 1.6;
-      pot.root.position.y = 0.25 + Math.sin(pot.bob * 2.2) * 0.12;
+      if (pot.drop && !pot.drop.settled) {
+        pot.root.position.y = updateDrop(pot.drop, dt); // pop + bounce on drop
+      } else {
+        pot.bob += dt;
+        pot.root.position.y = 0.25 + Math.sin(pot.bob * 2.2) * 0.12;
+      }
     }
     for (const log of this.logs.values()) {
-      log.bob += dt;
       log.root.rotation.y += dt * 0.8;
-      log.root.position.y = 0.12 + Math.sin(log.bob * 2) * 0.06;
+      if (log.drop && !log.drop.settled) {
+        log.root.position.y = updateDrop(log.drop, dt);
+      } else {
+        log.bob += dt;
+        log.root.position.y = 0.12 + Math.sin(log.bob * 2) * 0.06;
+      }
     }
     for (const st of this.stones.values()) {
-      st.bob += dt;
       st.root.rotation.y += dt * 0.6;
-      st.root.position.y = 0.12 + Math.sin(st.bob * 2) * 0.05;
+      if (st.drop && !st.drop.settled) {
+        st.root.position.y = updateDrop(st.drop, dt);
+      } else {
+        st.bob += dt;
+        st.root.position.y = 0.12 + Math.sin(st.bob * 2) * 0.05;
+      }
     }
     for (const ban of this.bananas.values()) {
       ban.spin += dt;
       ban.root.rotation.y += dt * 0.7;
-      ban.root.position.y = 0.25 + Math.sin(ban.spin * 2) * 0.05;
+      if (ban.drop && !ban.drop.settled) {
+        ban.root.position.y = updateDrop(ban.drop, dt);
+      } else {
+        ban.root.position.y = 0.25 + Math.sin(ban.spin * 2) * 0.05;
+      }
     }
 
     // thrown bananas: arc to the landing, then bounce in place (height ∝ speed),
@@ -713,6 +830,8 @@ export class Game {
             ps: makeBananaBurst(throwScene, hop.toX, THROW_GROUND_Y, hop.toZ, strength),
             ttl: 0.5,
           });
+          // impact sound on the real landing (the throw hop), not the bounces
+          if (b.hopIndex === 0) this.audio?.land({ x: hop.toX, z: hop.toZ }, b.item, b.impact);
           b.hopIndex++;
           b.t = 0;
           if (b.hopIndex >= b.hops.length) {
@@ -787,16 +906,6 @@ export class Game {
       c.model.root.rotation.y += dt * 14; // little spin for flair
     }
 
-    if (this.spotlight) {
-      const { fx, targetRoot } = this.spotlight;
-      if (targetRoot.isDisposed()) {
-        this.clearSpotlight();
-      } else {
-        fx.root.position.set(targetRoot.position.x, 0, targetRoot.position.z);
-        if (!fx.update(dt)) this.clearSpotlight();
-      }
-    }
-
     for (let i = this.lightnings.length - 1; i >= 0; i--) {
       if (!this.lightnings[i].update(dt)) {
         this.lightnings[i].dispose();
@@ -823,6 +932,12 @@ export class Game {
         local.root.position.y - (d.y / len) * D,
         local.root.position.z - (d.z / len) * D,
       );
+    }
+
+    // local-player hurt feedback: persistent low-HP vignette + decaying flash/shake
+    if (this.damageFx) {
+      if (local) this.damageFx.setHp(local.hp, local.maxHp);
+      this.damageFx.update(dt);
     }
 
     this.hud.update(dt);

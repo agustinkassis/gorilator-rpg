@@ -152,6 +152,11 @@ export class HUD {
       // never clip the text to the box.
       name.heightInPixels = NAME_FONT + 18;
       name.clipContent = false;
+      // The default textWrapping (Clip) crops the text to the control's width, so a
+      // long name (handle + "Lv.X") gets sliced left/right. resizeToFit sizes the
+      // control to the text instead — the full, centered name shows (root has
+      // clipChildren off so it can overflow the 240px box).
+      name.resizeToFit = true;
       name.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP; // sits at the very top
       name.outlineColor = "black";
       name.outlineWidth = 6;

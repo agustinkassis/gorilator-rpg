@@ -238,14 +238,16 @@ export class CharacterFactory {
     }
   }
 
-  spawn(kind: CharacterKind, accent: Color3): SpawnedCharacter {
+  /** `scale` overrides the per-kind default (the splash passes a larger value to
+   *  show the hero off bigger than it appears in gameplay). */
+  spawn(kind: CharacterKind, accent: Color3, scale?: number): SpawnedCharacter {
     if (kind === "goblin" && this.goblinContainer) {
       return this.spawnFromContainer({
         container: this.goblinContainer,
         animMap: GOBLIN_ANIM_MAP,
         speeds: GOBLIN_SPEEDS,
         yawFix: GOBLIN_YAW_FIX,
-        scale: MODEL_SCALE,
+        scale: scale ?? MODEL_SCALE,
       });
     }
     // Players + training dummies share the gorilla rig (identical orientation,
@@ -256,7 +258,7 @@ export class CharacterFactory {
         animMap: ANIM_NAME_MAP,
         speeds: GORILLA_SPEEDS,
         yawFix: GORILLA_YAW_FIX,
-        scale: MODEL_SCALE,
+        scale: scale ?? MODEL_SCALE,
         throwTemplate: this.throwTemplate,
       });
     }
@@ -316,10 +318,10 @@ export class CharacterFactory {
       hasAnims: Object.keys(groups).length > 0,
       speeds: cfg.speeds,
       yawFix: cfg.yawFix,
-      flashHit: (on) => {
+      flashHit: (on, color = HIT_FLASH) => {
         for (const m of meshes) {
           m.renderOverlay = on;
-          m.overlayColor = HIT_FLASH;
+          m.overlayColor = color;
           m.overlayAlpha = on ? 0.6 : 0;
         }
       },

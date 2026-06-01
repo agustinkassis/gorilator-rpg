@@ -28,8 +28,8 @@ import {
   statsForLevel,
 } from "@rpg/shared";
 import { setDestination, placeAtFreeSpot } from "./movement";
-import { onTreeCut, onRockMined } from "./resources";
-import { grantXp, killXp, EmitXp } from "./leveling";
+import { onTreeCut, onRockMined, onRockDamaged } from "./resources";
+import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 
 /** Anything that can be attacked (player, enemy, tree, or rock). All have hp + armor. */
@@ -102,6 +102,12 @@ function targetRadius(t: Damageable): number {
 /** How close to a target's centre you can land a hit (its surface + melee reach). */
 function attackReach(t: Damageable): number {
   return ATTACK_RANGE + targetRadius(t);
+}
+
+/** Dev Mode: a player with god mode on is immortal — all damage to it is skipped.
+ *  Only Player carries `godMode`; on other Damageables this is undefined → false. */
+export function isImmune(t: Damageable): boolean {
+  return (t as Player).godMode === true;
 }
 
 /** A point just outside the target to walk toward (right up to bulky rocks). */
@@ -233,6 +239,7 @@ function connectHit(
 
   const target = resolveTarget(state, targetId);
   if (!target || target.hp <= 0) return;
+  if (isImmune(target)) return; // Dev Mode: an immortal player takes no damage
 
   const dx = target.x - attacker.x;
   const dz = target.z - attacker.z;
@@ -255,8 +262,9 @@ function connectHit(
   }
   const rock = state.rocks.get(targetId);
   if (rock) {
+    onRockDamaged(state, rock, amount); // sheds a stone every STONE_DROP_DAMAGE while mined
     if (rock.hp <= 0) {
-      onRockMined(state, rock);
+      onRockMined(rock);
       grantXp(attacker, killXp(state, targetId), emitXp); // mining a rock grants XP
     }
     return;
@@ -265,8 +273,10 @@ function connectHit(
   const pe = target as Player | Enemy;
   if (pe.hp <= 0) {
     pe.state = AnimState.DEAD;
-    if (state.players.has(targetId)) pe.respawnTimer = PLAYER_RESPAWN_MS;
-    else
+    if (state.players.has(targetId)) {
+      pe.respawnTimer = PLAYER_RESPAWN_MS;
+      applyDeathXpPenalty(pe as Player); // dying costs 30% of XP (can de-level)
+    } else
       pe.respawnTimer =
         state.enemies.get(targetId)?.kind === "goblin"
           ? GOBLIN_RESPAWN_MS

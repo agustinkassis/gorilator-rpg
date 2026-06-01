@@ -3,6 +3,7 @@ import {
   Banana,
   Player,
   Enemy,
+  House,
   AnimState,
   DamageEvent,
   BananaThrowEvent,
@@ -30,7 +31,7 @@ import {
   TREE_RADIUS,
 } from "@rpg/shared";
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
-import { grantXp, killXp, EmitXp } from "./leveling";
+import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 
 /** A banana mid-flight, resolved when its landing time arrives. */
 interface InFlight {
@@ -122,6 +123,10 @@ function firstObstacleHit(
   // Standing trees block too (cut stumps don't).
   state.trees.forEach((t) => {
     if (t.alive) consider(t.x, t.z, TREE_RADIUS);
+  });
+  // Standing houses block too — a throw stops at the wall (and gets damaged there).
+  state.houses.forEach((h) => {
+    if (h.alive) consider(h.x, h.z, h.radius);
   });
   if (bestT === Infinity) return null;
   return { x: ox + dx * bestT, z: oz + dz * bestT };
@@ -273,6 +278,7 @@ function landBanana(
   let best = BANANA_HIT_RADIUS * BANANA_HIT_RADIUS;
   const consider = (e: Player | Enemy) => {
     if (e.id === f.ownerId || e.hp <= 0 || e.state === AnimState.DEAD) return;
+    if ((e as Player).godMode) return; // Dev Mode: immortal players are never hit
     const d2 = (e.x - f.x) ** 2 + (e.z - f.z) ** 2;
     if (d2 < best) {
       best = d2;
@@ -287,8 +293,10 @@ function landBanana(
     emitDamage({ targetId: target.id, amount: f.dmg, crit: false });
     if (target.hp <= 0) {
       target.state = AnimState.DEAD;
-      if (state.players.has(target.id)) target.respawnTimer = PLAYER_RESPAWN_MS;
-      else
+      if (state.players.has(target.id)) {
+        target.respawnTimer = PLAYER_RESPAWN_MS;
+        applyDeathXpPenalty(target as Player); // dying costs 30% of XP (can de-level)
+      } else
         target.respawnTimer =
           state.enemies.get(target.id)?.kind === "goblin"
             ? GOBLIN_RESPAWN_MS
@@ -299,6 +307,28 @@ function landBanana(
       // play the hurt animation — but never interrupt an attack/throw in progress
       target.state = AnimState.HIT;
       target.stateTimer = HIT_STATE_MS;
+    }
+  } else {
+    // No character at the landing — did the throw strike a house? (It clips at the
+    // wall via firstObstacleHit, so the landing sits on the house's edge.)
+    let house: House | undefined;
+    let hbest = Infinity;
+    state.houses.forEach((h) => {
+      if (!h.alive) return;
+      const reach = h.radius + BANANA_HIT_RADIUS;
+      const d2 = (h.x - f.x) ** 2 + (h.z - f.z) ** 2;
+      if (d2 <= reach * reach && d2 < hbest) {
+        hbest = d2;
+        house = h;
+      }
+    });
+    if (house) {
+      house.hp = Math.max(0, house.hp - f.dmg);
+      emitDamage({ targetId: house.id, amount: f.dmg, crit: false });
+      if (house.hp <= 0) {
+        house.alive = false;
+        state.houses.delete(house.id); // collapsed — stops blocking throws; client hides it
+      }
     }
   }
 

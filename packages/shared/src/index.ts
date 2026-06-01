@@ -9,4 +9,5 @@ export * from "./schema/Log";
 export * from "./schema/Rock";
 export * from "./schema/Stone";
 export * from "./schema/Banana";
+export * from "./schema/House";
 export * from "./schema/GameState";

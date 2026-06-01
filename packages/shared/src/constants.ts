@@ -5,6 +5,11 @@ export const ROOM_NAME = "game";
 export const TICK_RATE = 20; // server simulation ticks per second
 export const SERVER_PORT = 2567;
 
+/** WebSocket close code: the server kicks an old session when the SAME nostr
+ *  npub logs in again (the newest login wins). The client shows a tailored
+ *  message for this code instead of the generic "disconnected". */
+export const NOSTR_TAKEOVER_CODE = 4001;
+
 // Movement
 export const MOVE_SPEED = 4.5; // world units / second
 export const ARRIVE_THRESHOLD = 0.15; // stop when this close to target
@@ -26,6 +31,18 @@ export const DAMAGE_DIVISOR = 7; // all computed damage is divided by this
 export const PLAYER_MAX_HP = 100;
 export const DUMMY_MAX_HP = 60;
 
+// Stamina (Valheim-style sprint): a bar that refills over time and is spent to
+// run faster. Hold SPACE while moving to sprint — +SPRINT_SPEED_MULT speed while
+// it drains; empty it and you're "winded" (can't sprint until it recovers past
+// the re-engage line). Server-authoritative — the server drains/regens and
+// applies the speed boost; the client just reports SPACE held + draws the bar.
+export const PLAYER_MAX_STAMINA = 100;
+export const SPRINT_SPEED_MULT = 1.55; // +55% move speed while sprinting (run animation matches)
+export const STAMINA_DRAIN_PER_SEC = 25; // spent per second while sprinting (≈4s from full)
+export const STAMINA_REGEN_PER_SEC = 18; // regained per second once regen resumes (≈5.5s to refill)
+export const STAMINA_REGEN_DELAY_MS = 800; // pause before stamina starts coming back after a sprint
+export const STAMINA_SPRINT_REENGAGE = 20; // once emptied, must recover to this before sprinting again
+
 // Leveling: characters gain XP from kills and level up on an escalating curve.
 export const XP_BASE = 100; // XP to go from level 1 → 2
 export const XP_GROWTH = 1.5; // each level needs XP_BASE * level^this
@@ -43,6 +60,7 @@ export const TREE_XP_REWARD = 8; // XP for chopping down a tree
 export const ROCK_XP_REWARD = 14; // XP for mining a boulder
 export const DUMMY_LEVEL = 1;
 export const GOBLIN_LEVEL = 2;
+export const XP_DEATH_PENALTY = 0.3; // on death you lose this fraction of TOTAL XP (de-leveling if it crosses a level boundary)
 
 /** XP required to advance FROM `level` to the next one (escalating). */
 export function xpForLevel(level: number): number {
@@ -139,13 +157,20 @@ export const TREE_SPAWN_RANGE = 135; // potions/trees scatter within this half-e
 
 // Boulders are mineable rocks (drop stone). Tougher than trees.
 export const ROCK_COUNT = 45; // how many boulders are scattered across the map
-export const ROCK_HP = 70;
+export const ROCK_HP = 560; // 8× tougher (was 70)
 export const ROCK_ARMOR = 12;
 export const ROCK_REGROW_MS = 30000; // rubble regrows into a rock after this
-export const STONES_PER_ROCK = 3; // stone dropped when a rock is mined
+export const STONE_DROP_DAMAGE = 12; // a mined rock sheds one stone for every this much damage dealt to it
 
-// Bananas: collectible ammo. Hold SPACE to charge a power bar, release to throw
-// toward the mouse; the charge sets distance, damage and speed.
+// The Viking house on the map origin is a destructible structure: throw bananas
+// or stones at it to chip its HP; at 0 it collapses. Footprint ≈ 11u across (see
+// the client house model), so a ~5u collision radius covers its walls.
+export const HOUSE_HP = 300;
+export const HOUSE_COLLISION_RADIUS = 5;
+
+// Bananas: collectible ammo. Hold a banana's hotkey (Q/W/E/R) to charge a power
+// bar, release to throw toward the mouse; the charge sets distance, damage and
+// speed. (SPACE is the sprint key — see the Stamina section above.)
 export const STARTING_BANANAS = 21; // each player spawns with this many bananas to throw
 export const BANANA_MAX = 60; // max bananas lying on the map at once (6× the original 10)
 export const BANANA_RESPAWN_MS = 4000; // delay before a new ambient banana spawns

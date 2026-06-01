@@ -72,13 +72,30 @@ function httpBase(): string {
  * server challenge, then fetch the user's kind-0 profile from relays. The
  * returned `auth`/`profile` are re-verified server-side on join.
  */
-export async function nostrLogin(): Promise<NostrCredentials> {
+/** A coarse phase of the login, reported to `onPhase` so the UI can narrate it. */
+export type NostrPhase =
+  | "signer"
+  | "pubkey"
+  | "challenge"
+  | "challenged"
+  | "sign"
+  | "signed"
+  | "relays"
+  | "profile"
+  | "done";
+
+export async function nostrLogin(
+  onPhase: (phase: NostrPhase, detail?: string) => void = () => {},
+): Promise<NostrCredentials> {
   if (!window.nostr) {
     throw new Error("No Nostr extension found — install Alby or nos2x.");
   }
+  onPhase("signer");
   const pubkey = await window.nostr.getPublicKey();
+  onPhase("pubkey", npubEncode(pubkey));
 
   // 1. one-time challenge from the server (single-use → no replay)
+  onPhase("challenge");
   let challenge: string;
   try {
     const res = await fetch(`${httpBase()}/nostr/challenge`);
@@ -87,8 +104,10 @@ export async function nostrLogin(): Promise<NostrCredentials> {
   } catch {
     throw new Error("Couldn't reach the game server for a challenge.");
   }
+  onPhase("challenged", challenge);
 
   // 2. sign a fresh client-auth event embedding the challenge (proves ownership)
+  onPhase("sign");
   const auth = await window.nostr.signEvent({
     kind: 22242, // NIP-42 client authentication
     created_at: Math.floor(Date.now() / 1000),
@@ -99,8 +118,10 @@ export async function nostrLogin(): Promise<NostrCredentials> {
     ],
     content: "Authenticate to Gorilator",
   });
+  onPhase("signed");
 
   // 3. best-effort kind-0 profile fetch (login still works without it)
+  onPhase("relays");
   let profile: NostrEvent | undefined;
   let meta: NostrProfile = { name: "", picture: "", nip05: "", about: "" };
   try {
@@ -127,6 +148,8 @@ export async function nostrLogin(): Promise<NostrCredentials> {
   } catch {
     /* relays unreachable — proceed with just the verified pubkey */
   }
+  onPhase("profile", meta.name);
+  onPhase("done");
 
   return { pubkey, npub: npubEncode(pubkey), auth, profile, meta };
 }

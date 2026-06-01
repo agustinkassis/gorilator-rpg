@@ -4,11 +4,13 @@ import { applyOrthoSize } from "./scene/camera";
 import { CharacterFactory } from "./entities/CharacterFactory";
 import { preloadBanana } from "./entities/models/banana";
 import { loadHouse } from "./entities/models/house";
-import { loadProps } from "./scene/props";
+import { PropManager } from "./dev/PropManager";
+import { DevMode } from "./dev/DevMode";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
 import { HealthGlobe } from "./ui/healthGlobe";
 import { XpBar } from "./ui/xpBar";
+import { StaminaBar } from "./ui/staminaBar";
 import { CharacterSheet } from "./ui/characterSheet";
 import { PlayerBadge } from "./ui/playerBadge";
 import { InventoryUI } from "./ui/inventory";
@@ -17,8 +19,11 @@ import { Minimap } from "./ui/minimap";
 import { ChatLog } from "./ui/chat";
 import { CharacterDebugWindow } from "./ui/characterDebug";
 import { Game } from "./game/Game";
+import { AudioManager } from "./audio/AudioManager";
+import { AudioControls } from "./ui/audioControls";
 import { NetworkClient } from "./net/NetworkClient";
 import { setupClickToMove } from "./input/ClickToMove";
+import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
@@ -33,9 +38,14 @@ const factory = new CharacterFactory(scene);
 const hud = new HUD(scene);
 const globe = new HealthGlobe();
 const xpBar = new XpBar();
+const staminaBar = new StaminaBar();
 const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
 const game = new Game(camera, factory, hud, shadow);
+// Sound system: spatial SFX + music. Unlocks itself on the first user gesture
+// (the splash "ENTER" click), so it's safe to build up-front.
+const audio = new AudioManager();
+game.setAudio(audio);
 const net = new NetworkClient();
 const inventory = new InventoryUI(
   (from, to) => net.sendInventoryMove(from, to),
@@ -45,6 +55,11 @@ const hotkeyBar = new HotkeyBar((slot) => net.sendUseItem(slot));
 const minimap = new Minimap(net); // top-left radar + hold TAB / Map button for the big map
 const chat = new ChatLog((text) => net.sendChat(text)); // Enter to chat (right-side log)
 
+// Imported-prop registry (loads props.json into the world). In dev builds it also
+// backs Dev Mode, the in-game world editor (toggle with the button or ` backtick).
+const propManager = new PropManager(scene, shadow);
+const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
+
 setupClickToMove({
   scene,
   ground,
@@ -53,12 +68,22 @@ setupClickToMove({
   resolveNearby: game.resolveNearby,
   onMoveTo: (point) => {
     hud.showClickMarker(point);
-    game.clearSpotlight();
   },
-  onAction: (id, kind) => game.showActionSpotlight(id, kind),
+  onSelectTarget: (id) => game.flashSelectTarget(id), // flash the picked target white
   // a banana/stone is thrown by holding its assigned hotkey (Q/W/E/R)
   throwItemForKey: (key) => hotkeyBar.throwItemForKey(key),
+  dev: devMode
+    ? {
+        isActive: devMode.isActive,
+        pointerDown: devMode.pointerDown,
+        pointerMove: devMode.pointerMove,
+        pointerUp: devMode.pointerUp,
+      }
+    : undefined,
 });
+
+// Hold SPACE to sprint (server drains stamina + applies the speed boost).
+setupSprint(net);
 
 // The intro / character-select splash. It renders its own hero scene on this
 // same engine while the player picks a name; the main render loop below draws it
@@ -78,8 +103,8 @@ async function start() {
   // isn't fatal — the factory falls back to the built-in models — so don't let
   // it strand the player on the splash.
   await preload.catch((err) => console.warn("[assets] preload failed", err));
-  void loadHouse(scene, shadow);
-  void loadProps(scene, shadow); // place any models added via the importer
+  void loadHouse(scene, shadow).then((house) => game.setHouseModel(house)); // hide-on-destroy handle
+  void propManager.loadAll(); // place any models added via the importer (+ back Dev Mode)
 
   // Connect (passing the chosen name) in the background while the launch plays.
   const connected = net.connect(
@@ -108,6 +133,9 @@ async function start() {
       onStoneRemove: (id) => game.removeStone(id),
       onBananaAdd: (b, id) => game.addBanana(b, id),
       onBananaRemove: (id) => game.removeBanana(id),
+      onHouseAdd: (h, id) => game.addHouse(h, id),
+      onHouseChange: (h, id) => game.changeHouse(h, id),
+      onHouseRemove: (id) => game.removeHouse(id),
       onBananaThrow: (ev) => game.showBananaThrow(ev),
       onDamage: (ev) => game.onDamage(ev),
       onHeal: (ev) => game.onHeal(ev),
@@ -142,6 +170,10 @@ async function start() {
   // flash masks the cut from the splash scene to the live game world.
   await splash.playLaunch();
   splash.dispose();
+
+  // The world is live: show the music/mute widget and start the ambient bed.
+  new AudioControls(audio);
+  audio.startMusic();
 }
 
 start().catch((err) => {
@@ -151,7 +183,7 @@ start().catch((err) => {
 
 // Dev-only hook: poke at the running game from the browser console (window.__rpg).
 if (import.meta.env.DEV) {
-  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, playerBadge };
+  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, devMode };
 
   // Standalone model inspector (button bottom-right, or press C).
   new CharacterDebugWindow();
@@ -206,7 +238,11 @@ engine.runRenderLoop(() => {
     return;
   }
 
-  game.update(dt);
+  // Dev Mode time control: mirror the server's simulation speed so the world
+  // looks paused/slowed/sped on the client too (frozen positions + animations).
+  const timeScale = net.room?.state.timeScale ?? 1;
+  scene.animationsEnabled = timeScale > 0; // freeze skeletal animations when paused
+  game.update(dt * timeScale);
   minimap.update(); // redraws only while TAB is held
 
   const hp = game.localHp();
@@ -216,6 +252,7 @@ engine.runRenderLoop(() => {
   const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
   if (me) {
     xpBar.set(me.level, me.xp);
+    staminaBar.set(me.stamina, me.maxStamina);
     playerBadge.set({
       name: me.name,
       level: me.level,
@@ -235,6 +272,9 @@ engine.runRenderLoop(() => {
       throwPower: me.throwPower,
     });
   }
+
+  // Keep the audio listener on the player so spatial SFX pan + attenuate correctly.
+  audio.updateListener(camera, me ? { x: me.x, z: me.z } : null);
 
   const respawnIn = game.respawnCountdown();
   if (respawnIn === null) {

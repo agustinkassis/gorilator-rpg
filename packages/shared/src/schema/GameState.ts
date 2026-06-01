@@ -7,6 +7,7 @@ import { Log } from "./Log";
 import { Rock } from "./Rock";
 import { Stone } from "./Stone";
 import { Banana } from "./Banana";
+import { House } from "./House";
 
 /** Root synchronized state for a game room. */
 export class GameState extends Schema {
@@ -18,4 +19,9 @@ export class GameState extends Schema {
   @type({ map: Rock }) rocks = new MapSchema<Rock>();
   @type({ map: Stone }) stones = new MapSchema<Stone>();
   @type({ map: Banana }) bananas = new MapSchema<Banana>();
+  @type({ map: House }) houses = new MapSchema<House>();
+
+  // Dev Mode time control: simulation speed multiplier (1 = normal, 0 = paused,
+  // 2 = double speed, …). The server scales its tick dt by this; clients mirror it.
+  @type("number") timeScale = 1;
 }

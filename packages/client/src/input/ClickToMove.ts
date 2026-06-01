@@ -3,6 +3,7 @@ import {
   Mesh,
   AbstractMesh,
   PointerEventTypes,
+  PickingInfo,
   Vector3,
   Nullable,
 } from "@babylonjs/core";
@@ -24,11 +25,20 @@ export interface ClickToMoveDeps {
   resolveNearby: (point: Vector3) => PickResult | null;
   /** Called when the player clicks bare ground (to show a marker). */
   onMoveTo: (point: Vector3) => void;
-  /** Called when the player clicks an actionable object (to spotlight it). */
-  onAction: (id: string, kind: string) => void;
+  /** Called when the player clicks an enemy/player to attack — flashes the target. */
+  onSelectTarget?: (id: string) => void;
   /** The throwable item (banana/stone, in stock) bound to a hotkey (Q/W/E/R), or
    *  "" — gates the charge-and-throw (the throw comes from a hotkey, not SPACE). */
   throwItemForKey: (key: string) => "banana" | "stone" | "";
+  /** Optional Dev Mode interceptor. While it's active it consumes world clicks +
+   *  hover so selecting/relocating objects replaces the normal move/attack. Each
+   *  hook returns true when it handled (consumed) the event. */
+  dev?: {
+    isActive: () => boolean;
+    pointerDown: (pick: Nullable<PickingInfo>) => boolean;
+    pointerMove: (pick: Nullable<PickingInfo>) => boolean;
+    pointerUp: () => void;
+  };
 }
 
 /** The bottom-center power meter shown while charging a banana throw. */
@@ -103,11 +113,10 @@ function cursorForKind(kind: string): string {
 /**
  * Diablo-style input: hovering an object swaps the cursor to the action it
  * affords (attack / cut / grab). Left-click a log to collect it, an
- * enemy/player/tree to attack/chop it, or the ground to walk there. Clicking an
- * object also triggers a spotlight on it via onAction.
+ * enemy/player/tree to attack/chop it, or the ground to walk there.
  */
 export function setupClickToMove(deps: ClickToMoveDeps) {
-  const { scene, ground, net, resolvePick, resolveNearby, onMoveTo, onAction } = deps;
+  const { scene, ground, net, resolvePick, resolveNearby, onMoveTo } = deps;
   const canvas = scene.getEngine().getRenderingCanvas();
   // Stop Babylon from resetting the cursor each pointer move (it would otherwise
   // immediately revert our themed cursor back to the default — the "flash" bug).
@@ -131,6 +140,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
 
   window.addEventListener("keydown", (e) => {
     if (inField(e) || charging || e.repeat) return;
+    if (deps.dev?.isActive()) return; // no throwing while editing the world
     const k = (e.key || "").toUpperCase();
     const item = deps.throwItemForKey(k);
     if (!item) return; // not a hotkey holding a throwable (banana/stone) with stock
@@ -199,6 +209,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
     // ---- hover / drag: theme the cursor, and while the button is held, follow ----
     if (pi.type === PointerEventTypes.POINTERMOVE) {
       const pick = scene.pick(scene.pointerX, scene.pointerY);
+      if (deps.dev?.isActive() && deps.dev.pointerMove(pick)) return; // Dev Mode owns hover
       let hit = pick?.hit ? resolvePick(pick.pickedMesh) : null;
       // click-assist: over bare ground, snap the cursor to a nearby target
       if (!hit && pick?.pickedMesh === ground && pick.pickedPoint) hit = resolveNearby(pick.pickedPoint);
@@ -210,6 +221,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
 
     // ---- left button released → stop following the cursor ----
     if (pi.type === PointerEventTypes.POINTERUP) {
+      if (deps.dev?.isActive()) deps.dev.pointerUp();
       if (pi.event.button === 0) dragging = false;
       return;
     }
@@ -219,6 +231,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
     if (pi.event.button !== 0) return;
 
     const pick = pi.pickInfo ?? scene.pick(scene.pointerX, scene.pointerY);
+    if (deps.dev?.isActive() && deps.dev.pointerDown(pick)) return; // Dev Mode owns the click
     if (!pick || !pick.hit) return;
 
     let hit = resolvePick(pick.pickedMesh);
@@ -232,8 +245,11 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
         hit.kind === "banana"
       )
         net.sendPickup(hit.id);
-      else net.sendAttack(hit.id); // player, enemy, tree (chop), or rock (mine)
-      onAction(hit.id, hit.kind);
+      else {
+        net.sendAttack(hit.id); // player, enemy, tree (chop), or rock (mine)
+        // flash the target white when it's a character you're attacking
+        if (hit.kind === "enemy" || hit.kind === "player") deps.onSelectTarget?.(hit.id);
+      }
       return; // clicking an object doesn't begin a drag-move
     }
 

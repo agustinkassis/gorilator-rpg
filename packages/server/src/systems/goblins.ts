@@ -35,6 +35,7 @@ import {
   statsForLevel,
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
+import { applyDeathXpPenalty } from "./leveling";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -317,6 +318,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
 function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage) {
   const target = state.players.get(g.aiTargetId);
   if (!target || target.hp <= 0 || target.state === AnimState.DEAD) return;
+  if (target.godMode) return; // Dev Mode: immortal players take no goblin damage
   const d = Math.hypot(target.x - g.x, target.z - g.z);
   if (d > GOBLIN_ATTACK_RANGE * 1.4) return; // player stepped out of reach (dodged)
 
@@ -330,6 +332,7 @@ function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage) {
   if (target.hp <= 0) {
     target.state = AnimState.DEAD;
     target.respawnTimer = PLAYER_RESPAWN_MS;
+    applyDeathXpPenalty(target); // dying costs 30% of XP (can de-level)
   } else if (target.state !== AnimState.ATTACK && target.state !== AnimState.THROW) {
     // play the hurt animation on the player — but never interrupt their own
     // attack/throw (so it can't cancel an action mid-swing).

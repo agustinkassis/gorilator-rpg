@@ -57,6 +57,48 @@ export interface ChatMessage {
   text: string;
 }
 
+// ---- Dev Mode (in-game world editor) ----
+// These mutate authoritative state and are intended for the dev-only editor;
+// they are unguarded like the other dev tooling in this demo.
+
+/** Toggle the sender's immortality (no damage while on). */
+export interface DevGodMessage {
+  on: boolean;
+}
+
+/** Relocate a synced world object (tree/rock/potion/dummy) to a ground point. */
+export interface DevMoveMessage {
+  kind: string; // tree | rock | potion | enemy | ...
+  id: string;
+  x: number;
+  z: number;
+}
+
+/** Remove a synced world object from the world (persisted). */
+export interface DevDeleteMessage {
+  kind: string;
+  id: string;
+}
+
+/** Set a single editable field on a synced world object (e.g. rock.radius). */
+export interface DevSetMessage {
+  kind: string;
+  id: string;
+  field: string;
+  value: number | boolean | string;
+}
+
+/** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */
+export interface DevTimeMessage {
+  scale: number;
+}
+
+/** Hold-to-sprint intent: `on` while SPACE is held, `off` on release. The server
+ *  owns the actual sprint (drains stamina, applies the speed boost). */
+export interface SprintMessage {
+  on: boolean;
+}
+
 export type ClientMessages = {
   move: MoveMessage;
   attack: AttackMessage;
@@ -65,6 +107,12 @@ export type ClientMessages = {
   use_item: UseItemMessage;
   throw: ThrowMessage;
   chat: ChatMessage;
+  sprint: SprintMessage;
+  dev_god: DevGodMessage;
+  dev_move: DevMoveMessage;
+  dev_delete: DevDeleteMessage;
+  dev_set: DevSetMessage;
+  dev_time: DevTimeMessage;
 };
 
 // Server -> client: emitted every time a hit lands, so clients can pop a

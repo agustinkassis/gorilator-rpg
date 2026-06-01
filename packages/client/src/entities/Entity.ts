@@ -1,7 +1,7 @@
-import { TransformNode, Scalar, AbstractMesh } from "@babylonjs/core";
-import { AnimState } from "@rpg/shared";
+import { TransformNode, Scalar, AbstractMesh, Color3 } from "@babylonjs/core";
+import { AnimState, SPRINT_SPEED_MULT } from "@rpg/shared";
 import { AnimationController } from "./AnimationController";
-import { SpawnedCharacter } from "./types";
+import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH } from "./types";
 import { lerpAngle, smooth } from "../util/math";
 
 interface RespawnSeq {
@@ -23,6 +23,11 @@ const FADE_IN = 0.45;
 // server respawns the body later (it pops back in at its home).
 const CORPSE_HOLD = 1.8; // let the death animation finish before fading
 const CORPSE_FADE = 0.9; // seconds to fade the corpse to nothing
+
+// A brief white pulse on a character when you pick it as your attack target.
+const SELECT_FLASH_MS = 0.6; // total duration of the select flash
+const SELECT_BLINK_MS = 0.1; // overlay toggles every this long → "flash, flash, flash"
+const DMG_BLINK_MS = 0.08; // local player's dark-red damage flash toggles this fast
 
 /**
  * Client-side view of one networked character (player or dummy). Interpolates
@@ -56,6 +61,7 @@ export class Entity {
   private targetZ = 0;
   private targetRotY = 0;
   private state: AnimState = AnimState.IDLE;
+  private sprinting = false; // server flag → run the WALK cycle SPRINT_SPEED_MULT× faster
   private stateTime = 0;
   private respawn: RespawnSeq | null = null;
   /** Yaw multiplier (see SpawnedCharacter.yawSign); -1 for mirrored glTF roots. */
@@ -71,6 +77,9 @@ export class Entity {
   private moveSpeed = 0; // smoothed units/sec of real root movement
   private movingShown = false; // hysteresis latch for the WALK↔IDLE choice
   private shownState: AnimState = AnimState.IDLE; // the clip actually playing
+  private selectFlashT = 0; // seconds left in the attack-target white flash
+  private overlayOn = false; // current overlay on/off (HIT flash, damage flash, or select flash)
+  private overlayColor: Color3 = HIT_FLASH; // current overlay tint
 
   constructor(id: string, spawned: SpawnedCharacter, isLocal: boolean) {
     this.id = id;
@@ -85,6 +94,24 @@ export class Entity {
 
   get meshes(): AbstractMesh[] {
     return this.spawned.meshes;
+  }
+
+  /** The current authoritative animation state (for the audio death sting, etc.). */
+  get animState(): AnimState {
+    return this.state;
+  }
+  /** True while the WALK locomotion clip is actually showing (real movement, post-hysteresis). */
+  get isMoving(): boolean {
+    return this.shownState === AnimState.WALK;
+  }
+  /** True while the server says this character is sprinting. */
+  get isSprinting(): boolean {
+    return this.sprinting;
+  }
+
+  /** Briefly flash this character white — used when it's picked as an attack target. */
+  flashSelect() {
+    this.selectFlashT = SELECT_FLASH_MS;
   }
 
   /** Snap to a position with no interpolation (used on spawn). */
@@ -130,9 +157,11 @@ export class Entity {
     hp: number,
     maxHp: number,
     state: AnimState,
+    sprinting = false,
   ) {
     this.hp = hp;
     this.maxHp = maxHp;
+    this.sprinting = sprinting;
     const yaw = rotY * this.yawSign; // flip for mirrored (negative-scale) glTF roots
 
     // Respawn (players): keep the corpse at the death spot and start fading out;
@@ -170,15 +199,13 @@ export class Entity {
     this.targetRotY = yaw;
 
     if (state !== this.state) {
-      const wasHit = this.state === AnimState.HIT;
       this.state = state;
       this.stateTime = 0;
       this.refreshAnim(); // suppresses a non-moving WALK into IDLE
       // per-model orientation fix for clips authored off the model's forward
       this.yawFixTarget = this.spawned.yawFix?.[state] ?? 0;
       if (this.corpseFx && state === AnimState.DEAD) this.corpseT = 0; // start the corpse clock
-      if (state === AnimState.HIT) this.spawned.flashHit(true);
-      else if (wasHit) this.spawned.flashHit(false);
+      // the white HIT flash + the select flash are driven centrally in update()
     }
   }
 
@@ -212,6 +239,33 @@ export class Entity {
     this.moveSpeed = Scalar.Lerp(this.moveSpeed, inst, smooth(dt, 0.08));
     this.refreshAnim();
 
+    // Sprinting speeds up the run cycle so the legs match the boosted movement
+    // (only while the locomotion clip is actually showing).
+    this.anim.setSpeedScale(
+      this.sprinting && this.shownState === AnimState.WALK ? SPRINT_SPEED_MULT : 1,
+    );
+
+    // Mesh overlay flash. While taking a HIT: EVERY character (the local player,
+    // other players, and enemies alike) flashes intermittent DARK RED ("ow").
+    // Otherwise a brief WHITE blink when freshly picked as an attack target.
+    if (this.selectFlashT > 0) this.selectFlashT -= dt;
+    const selElapsed = SELECT_FLASH_MS - this.selectFlashT;
+    const selectBlink =
+      this.selectFlashT > 0 && Math.floor(selElapsed / SELECT_BLINK_MS) % 2 === 0;
+    let wantOn = false;
+    let wantColor = HIT_FLASH;
+    if (this.state === AnimState.HIT) {
+      wantColor = DAMAGE_FLASH;
+      wantOn = Math.floor(this.stateTime / DMG_BLINK_MS) % 2 === 0; // intermittent dark red
+    } else if (selectBlink) {
+      wantOn = true;
+    }
+    if (wantOn !== this.overlayOn || wantColor !== this.overlayColor) {
+      this.spawned.flashHit(wantOn, wantColor);
+      this.overlayOn = wantOn;
+      this.overlayColor = wantColor;
+    }
+
     // facing interpolates toward the server's rotY; the clip yaw correction blends
     // in at ~the animation cross-fade rate so attack/throw don't snap-turn.
     this.facingY = lerpAngle(this.facingY, this.targetRotY, smooth(dt, 0.05));
@@ -240,6 +294,8 @@ export class Entity {
         this.anim.play(rs.nstate);
         this.shownState = rs.nstate; // keep refreshAnim() in sync after the teleport
         this.spawned.flashHit(false);
+        this.overlayOn = false; // keep the centralized overlay state in sync
+        this.selectFlashT = 0;
         this.onRespawn?.(rs.nx, rs.nz);
         this.setVisibility(0);
         rs.phase = "in";
