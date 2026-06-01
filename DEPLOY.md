@@ -128,5 +128,26 @@ docker compose up -d --build
 | Tunnel down | `sudo gorilator tunnel status` / `sudo gorilator tunnel restart`. |
 | `docker` permission denied | You were added to the `docker` group during install — log out and back in (or use `sudo gorilator …`). |
 | DNS not resolving | The tunnel created CNAMEs in Cloudflare; allow a minute and confirm the records exist in the dashboard. |
+| Build fails: `429 Too Many Requests` pulling `node`/`nginx` | Docker Hub anonymous pull limit (common on cloud IPs). See below. |
+
+### Docker Hub rate limit (429) during build
+
+The build pulls the `node` and `nginx` base images from Docker Hub, which rate-limits
+anonymous pulls per IP. Two reliable fixes — then re-run `pnpm run setup` (idempotent):
+
+```bash
+# Fix A — authenticate (raises 100 → 200 pulls/6h). NOTE: until you re-login for
+# docker-group membership, the installer uses `sudo docker`, so log in as root:
+sudo docker login
+
+# Fix B — mirror Docker Hub's official images via a non-rate-limited mirror
+# (no account needed; daemon-level, so root/user context doesn't matter):
+sudo mkdir -p /etc/docker
+echo '{ "registry-mirrors": ["https://mirror.gcr.io"] }' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
+
+The base images are pulled **once** and then cached, so this only bites the first build.
+Waiting ~6h (the window resets) or building from a different IP also works.
 
 Update to the latest code anytime with `gorilator update`.
