@@ -44,12 +44,13 @@ The installer will, in order:
 
 When it finishes it prints your live URLs and the monitor credentials.
 
-> Already cloned it / using a fork? Run the installer directly:
+> Already cloned it (or using a fork)? From inside the repo:
 > ```bash
-> sudo ./cli/gorilator install
+> pnpm run setup            # same as ./cli/gorilator install (self-elevates with sudo)
 > # or point the bootstrap at your fork:
 > GORILATOR_REPO=https://github.com/you/fork.git sudo -E bash cli/install.sh
 > ```
+> After install, `pnpm gorilator <cmd>` works too (e.g. `pnpm gorilator status`).
 
 ---
 

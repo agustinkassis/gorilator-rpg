@@ -38,7 +38,7 @@ $SUDO chmod +x "$INSTALL_DIR/cli/gorilator" "$INSTALL_DIR/cli/install.sh" 2>/dev
 echo "==> Launching the installer…"
 # Reconnect stdin to the terminal so prompts work even when this script was
 # piped from curl.
-if [ -e /dev/tty ]; then
+if { true </dev/tty; } 2>/dev/null; then
   "$INSTALL_DIR/cli/gorilator" install </dev/tty
 else
   "$INSTALL_DIR/cli/gorilator" install

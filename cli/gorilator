@@ -44,17 +44,21 @@ SUDO=""
 [ "$(id -u)" -ne 0 ] && SUDO="sudo"
 as_root() { if [ -n "$SUDO" ]; then sudo "$@"; else "$@"; fi; }
 
-# --- Interactive prompts (work even when stdin is a pipe) ---
+# --- Interactive prompts. Prefer /dev/tty so prompts work even when stdin is a
+#     pipe (curl | bash), but only when it can actually be opened — a bare
+#     `[ -e /dev/tty ]` is true even with no controlling terminal, which then
+#     errors noisily on redirect. Fall back to stdin, then to the default. ---
 ASSUME_YES="${GORILATOR_YES:-0}"
+have_tty() { { true </dev/tty; } 2>/dev/null; }
 _read() { # _read VAR "prompt"
   local __v="$1" __p="$2" __a=""
-  if [ -e /dev/tty ]; then read -rp "$__p" __a </dev/tty || true; else read -rp "$__p" __a || true; fi
+  if have_tty; then read -rp "$__p" __a </dev/tty || true; else read -rp "$__p" __a || true; fi
   printf -v "$__v" '%s' "$__a"
 }
 confirm() {
   [ "$ASSUME_YES" = "1" ] && return 0
   local a=""
-  if [ -e /dev/tty ]; then read -rp "$1 [y/N] " a </dev/tty || true; else read -rp "$1 [y/N] " a || true; fi
+  if have_tty; then read -rp "$1 [y/N] " a </dev/tty || true; else read -rp "$1 [y/N] " a || true; fi
   [[ "$a" =~ ^[Yy] ]]
 }
 
