@@ -1,0 +1,830 @@
+import {
+  ArcRotateCamera,
+  Color3,
+  ShadowGenerator,
+  TransformNode,
+  AbstractMesh,
+  Vector3,
+  ParticleSystem,
+  Nullable,
+} from "@babylonjs/core";
+import {
+  Player,
+  Enemy,
+  Potion,
+  Tree,
+  Log,
+  Rock,
+  Stone,
+  Banana,
+  AnimState,
+  DamageEvent,
+  HealEvent,
+  XpEvent,
+  BananaThrowEvent,
+  PLAYER_RESPAWN_MS,
+} from "@rpg/shared";
+import { CharacterFactory } from "../entities/CharacterFactory";
+import { Entity } from "../entities/Entity";
+import { buildPotion, PotionModel } from "../entities/models/potion";
+import { buildTree, TreeModel } from "../entities/models/tree";
+import { buildLog, LogModel } from "../entities/models/log";
+import { buildRock, RockModel } from "../entities/models/rock";
+import { buildStone, StoneModel } from "../entities/models/stone";
+import { buildBanana, BananaModel } from "../entities/models/banana";
+import { buildStoneShot } from "../entities/models/stoneShot";
+import { buildSpotlight, Spotlight } from "../fx/spotlight";
+import { buildLightning, Lightning } from "../fx/lightning";
+import { makeBananaTrail, makeBananaBurst } from "../fx/bananaFx";
+import { makeLevelUpExplosion } from "../fx/explosion";
+import { HUD } from "../ui/hud";
+import { smooth } from "../util/math";
+
+const SPOTLIGHT_COLORS: Record<string, Color3> = {
+  tree: new Color3(1, 0.5, 0.12), // cut → orange
+  rock: new Color3(0.55, 0.75, 1), // mine → blue
+  log: new Color3(0.45, 0.95, 0.5), // grab → green
+  stone: new Color3(0.45, 0.95, 0.5), // grab → green
+  potion: new Color3(0.45, 0.95, 0.5), // grab → green
+  banana: new Color3(0.95, 0.85, 0.2), // grab → yellow
+  enemy: new Color3(1, 0.2, 0.13), // attack → red
+  player: new Color3(1, 0.2, 0.13),
+};
+
+interface ServerView {
+  x: number;
+  z: number;
+  rotY: number;
+  hp: number;
+  maxHp: number;
+  state: AnimState;
+  level: number;
+}
+
+export interface PickResult {
+  id: string;
+  kind: string; // player | enemy | tree | log | stone | potion | banana
+}
+
+/** One parabolic leg of a thrown banana's path (the throw, then each bounce). */
+interface Hop {
+  fromX: number;
+  fromZ: number;
+  toX: number;
+  toZ: number;
+  peak: number; // apex height of this arc
+  dur: number; // seconds
+  launchY: number; // start height (hand height for the throw, ground for bounces)
+  arcFrac?: number; // throw hop: draw only the first `frac` of a full arc (clipped at a prop)
+}
+
+/** A banana mid-flight (purely visual; the server resolves the hit + landing).
+ *  Arcs to the landing, then bounces in place with speed-scaled energy, trailing
+ *  sparks and puffing dust at each ground contact. On settling it seamlessly
+ *  hands off to the real (server-spawned) collectible resting at the same spot. */
+interface ThrownBanana {
+  model: BananaModel;
+  hops: Hop[];
+  hopIndex: number;
+  t: number; // time into the current hop
+  impact: number; // bounce/particle strength (≈ throw speed)
+  fade: number; // fade-out progress if no collectible is there to hand off to
+  trail?: ParticleSystem;
+  landingX: number;
+  landingZ: number;
+  collectibleId?: string; // the hidden collectible to reveal when this settles
+}
+
+/** A short-lived particle system being aged out then disposed. */
+interface ParticleFx {
+  ps: ParticleSystem;
+  ttl: number;
+}
+
+const THROW_GROUND_Y = 0.18; // resting height of a banana on the ground
+const CLICK_ASSIST_RADIUS = 1.7; // a click this close to a target (world units) still hits it
+const THROW_RESTITUTION = 0.42; // each bounce keeps this fraction of the last's energy
+
+/** Minimal collectible model shape (potion/log/stone/banana all satisfy this). */
+interface CollectibleModel {
+  root: TransformNode;
+  meshes: AbstractMesh[];
+  dispose(): void;
+}
+
+/** A just-grabbed item being sucked into the collector (magnet + shrink + fade). */
+interface CollectFx {
+  model: CollectibleModel;
+  target: Entity; // the player it flies toward
+  t: number;
+  dur: number;
+  startPos: Vector3;
+  startScale: Vector3;
+}
+
+const COLLECT_DUR = 0.42; // seconds the magnet-collect animation lasts
+const COLLECT_MAGNET_MAX_DIST = 6; // don't magnet to a player farther than this (safety)
+const COLLECT_AIM_Y = 1.1; // fly the item up to ~chest height as it reaches the player
+
+const DUMMY_TINT = new Color3(0.72, 0.3, 0.26);
+
+/**
+ * Owns the set of live world objects (characters, potions, trees, logs) and maps
+ * Colyseus state callbacks onto them. Also pans the isometric camera to follow
+ * the local player each frame.
+ */
+export class Game {
+  private entities = new Map<string, Entity>();
+  private potions = new Map<string, PotionModel & { bob: number }>();
+  private trees = new Map<string, TreeModel & { hp: number; maxHp: number }>();
+  private logs = new Map<string, LogModel & { bob: number }>();
+  private rocks = new Map<string, RockModel & { hp: number; maxHp: number }>();
+  private stones = new Map<string, StoneModel & { bob: number }>();
+  private bananas = new Map<string, BananaModel & { spin: number }>();
+  private thrown: ThrownBanana[] = [];
+  private particleFx: ParticleFx[] = []; // expiring banana trails/puffs
+  private collecting: CollectFx[] = []; // items animating into a collector
+  private playerIds = new Set<string>(); // entity ids that are players (magnet targets)
+  private playerLevels = new Map<string, number>(); // last seen level, to detect level-ups
+  private spotlight: { fx: Spotlight; targetRoot: TransformNode } | null = null;
+  private lightnings: Lightning[] = [];
+  private deadElapsed: number | null = null; // seconds the local player has been dead
+  localId: string | null = null;
+
+  constructor(
+    private camera: ArcRotateCamera,
+    private factory: CharacterFactory,
+    private hud: HUD,
+    private shadow: ShadowGenerator,
+  ) {}
+
+  setLocalId(id: string) {
+    this.localId = id;
+  }
+
+  // ---- player callbacks ----
+  addPlayer(p: Player, id: string) {
+    if (this.entities.has(id)) return;
+    const accent = Color3.FromHSV(p.hue, 0.7, 1.0);
+    const entity = new Entity(id, this.factory.spawn("player", accent), id === this.localId);
+    entity.name = p.name;
+    entity.respawnFx = true; // players fade out on death + return with a lightning strike
+    entity.onRespawn = (x, z) => this.showLightning(x, z);
+    this.playerIds.add(id); // a magnet target for collected items
+    this.playerLevels.set(id, p.level); // baseline, so we can detect level-ups
+    this.register(entity, p, false);
+  }
+
+  changePlayer(p: Player, id: string) {
+    this.apply(id, p);
+    const prev = this.playerLevels.get(id);
+    if (prev !== undefined && p.level > prev) this.explodeLevelUp(id); // a level-up — everybody sees it
+    this.playerLevels.set(id, p.level);
+  }
+
+  /** Golden burst on a player who just leveled up (rendered on every client). */
+  private explodeLevelUp(id: string) {
+    const ent = this.entities.get(id);
+    if (!ent) return;
+    const ps = makeLevelUpExplosion(
+      this.camera.getScene(),
+      ent.root.position.x,
+      0.6,
+      ent.root.position.z,
+    );
+    this.particleFx.push({ ps, ttl: 1.3 });
+  }
+
+  removePlayer(id: string) {
+    this.playerIds.delete(id);
+    this.playerLevels.delete(id);
+    this.unregister(id);
+  }
+
+  // ---- enemy callbacks ----
+  addEnemy(e: Enemy, id: string) {
+    if (this.entities.has(id)) return;
+    const isGoblin = e.kind === "goblin";
+    const spawned = this.factory.spawn(isGoblin ? "goblin" : "enemy", DUMMY_TINT);
+    const entity = new Entity(id, spawned, false);
+    entity.name = isGoblin ? "Goblin" : "Dummy"; // the nameplate appends " Lv.N"
+    entity.corpseFx = isGoblin; // dead goblins fade out, then respawn at their home
+    this.register(entity, e, true);
+  }
+
+  changeEnemy(e: Enemy, id: string) {
+    this.apply(id, e);
+  }
+
+  removeEnemy(id: string) {
+    this.unregister(id);
+  }
+
+  // ---- potion callbacks ----
+  addPotion(p: Potion, id: string) {
+    if (this.potions.has(id)) return;
+    const model = buildPotion(this.camera.getScene());
+    model.root.position.set(p.x, 0.2, p.z);
+    model.root.metadata = { entityId: id, kind: "potion" };
+    for (const mesh of model.meshes) {
+      mesh.metadata = { entityId: id, kind: "potion" };
+      this.castAndReceive(mesh);
+    }
+    this.potions.set(id, { ...model, bob: Math.random() * Math.PI * 2 });
+  }
+
+  removePotion(id: string) {
+    const pot = this.potions.get(id);
+    if (!pot) return;
+    this.potions.delete(id);
+    this.startCollect(pot); // fly into the collector, shrink + fade
+  }
+
+  // ---- tree callbacks ----
+  addTree(t: Tree, id: string) {
+    if (this.trees.has(id)) return;
+    const scene = this.camera.getScene();
+    const model = buildTree(scene);
+    model.root.position.set(t.x, 0, t.z);
+    model.root.metadata = { entityId: id, kind: "tree" };
+    model.setAlive(t.alive);
+    for (const mesh of model.meshes) this.castAndReceive(mesh); // light shadow
+    const tm = { ...model, hp: t.hp, maxHp: t.maxHp };
+    this.trees.set(id, tm);
+    // HP bar floats above the crown; it only appears once the tree is chopped.
+    const anchor = new TransformNode(`treeBar-${id}`, scene);
+    anchor.parent = model.root;
+    anchor.position.y = 5.9;
+    this.hud.addResource(id, anchor, () => tm.hp, () => tm.maxHp, "#7bd17b");
+  }
+
+  changeTree(t: Tree, id: string) {
+    const tm = this.trees.get(id);
+    if (!tm) return;
+    tm.hp = t.hp;
+    tm.maxHp = t.maxHp;
+    tm.setAlive(t.alive);
+  }
+
+  removeTree(id: string) {
+    const tree = this.trees.get(id);
+    if (!tree) return;
+    this.hud.remove(id);
+    tree.dispose();
+    this.trees.delete(id);
+  }
+
+  // ---- log callbacks ----
+  addLog(l: Log, id: string) {
+    if (this.logs.has(id)) return;
+    const model = buildLog(this.camera.getScene());
+    model.root.position.set(l.x, 0.12, l.z);
+    model.root.metadata = { entityId: id, kind: "log" };
+    for (const mesh of model.meshes) {
+      mesh.metadata = { entityId: id, kind: "log" };
+      this.castAndReceive(mesh);
+    }
+    this.logs.set(id, { ...model, bob: Math.random() * Math.PI * 2 });
+  }
+
+  removeLog(id: string) {
+    const log = this.logs.get(id);
+    if (!log) return;
+    this.logs.delete(id);
+    this.startCollect(log);
+  }
+
+  // ---- rock callbacks ----
+  addRock(rock: Rock, id: string) {
+    if (this.rocks.has(id)) return;
+    const scene = this.camera.getScene();
+    const model = buildRock(scene, rock.radius);
+    model.root.position.set(rock.x, 0, rock.z);
+    model.root.metadata = { entityId: id, kind: "rock" };
+    for (const mesh of model.meshes) {
+      mesh.metadata = { entityId: id, kind: "rock" };
+      this.castAndReceive(mesh);
+    }
+    model.setAlive(rock.alive);
+    const rm = { ...model, hp: rock.hp, maxHp: rock.maxHp };
+    this.rocks.set(id, rm);
+    // HP bar floats above the boulder; it only appears once the rock is mined.
+    const anchor = new TransformNode(`rockBar-${id}`, scene);
+    anchor.parent = model.root;
+    anchor.position.y = rock.radius * 1.5 + 0.5;
+    this.hud.addResource(id, anchor, () => rm.hp, () => rm.maxHp, "#9fb0c4");
+  }
+
+  changeRock(rock: Rock, id: string) {
+    const rm = this.rocks.get(id);
+    if (!rm) return;
+    rm.hp = rock.hp;
+    rm.maxHp = rock.maxHp;
+    rm.setAlive(rock.alive);
+  }
+
+  removeRock(id: string) {
+    const r = this.rocks.get(id);
+    if (!r) return;
+    this.hud.remove(id);
+    r.dispose();
+    this.rocks.delete(id);
+  }
+
+  // ---- stone callbacks ----
+  addStone(s: Stone, id: string) {
+    if (this.stones.has(id)) return;
+    const model = buildStone(this.camera.getScene());
+    model.root.position.set(s.x, 0.12, s.z);
+    model.root.metadata = { entityId: id, kind: "stone" };
+    for (const mesh of model.meshes) {
+      mesh.metadata = { entityId: id, kind: "stone" };
+      this.castAndReceive(mesh);
+    }
+    this.stones.set(id, { ...model, bob: Math.random() * Math.PI * 2 });
+  }
+
+  removeStone(id: string) {
+    const st = this.stones.get(id);
+    if (!st) return;
+    this.stones.delete(id);
+    this.startCollect(st);
+  }
+
+  // ---- banana callbacks ----
+  addBanana(b: Banana, id: string) {
+    if (this.bananas.has(id)) return;
+    const model = buildBanana(this.camera.getScene());
+    model.root.position.set(b.x, 0.25, b.z);
+    model.root.rotation.set(0.25, Math.random() * Math.PI * 2, 0.1);
+    model.root.metadata = { entityId: id, kind: "banana" };
+    for (const mesh of model.meshes) {
+      mesh.metadata = { entityId: id, kind: "banana" };
+      this.castAndReceive(mesh);
+    }
+    this.bananas.set(id, { ...model, spin: Math.random() * Math.PI * 2 });
+
+    // If this is the landing of a banana still being thrown, keep it hidden until
+    // the thrown visual settles here and hands off — otherwise both show at once.
+    for (const t of this.thrown) {
+      if (t.collectibleId) continue;
+      const dx = t.landingX - b.x;
+      const dz = t.landingZ - b.z;
+      if (dx * dx + dz * dz <= 2.5 * 2.5) {
+        t.collectibleId = id;
+        model.root.setEnabled(false);
+        break;
+      }
+    }
+  }
+
+  removeBanana(id: string) {
+    const b = this.bananas.get(id);
+    if (!b) return;
+    this.bananas.delete(id);
+    this.startCollect(b);
+  }
+
+  /**
+   * Begin the "magnet" pickup FX: the just-grabbed item flies into the nearest
+   * player (the collector), accelerating while it shrinks and fades, then is
+   * disposed. If no player is plausibly nearby, it's just removed.
+   */
+  private startCollect(model: CollectibleModel) {
+    model.root.setEnabled(true); // may have been hidden mid-throw; show it for the magnet
+    let target: Entity | null = null;
+    let best = Infinity;
+    const px = model.root.position.x;
+    const pz = model.root.position.z;
+    for (const id of this.playerIds) {
+      const e = this.entities.get(id);
+      if (!e) continue;
+      const d = (e.root.position.x - px) ** 2 + (e.root.position.z - pz) ** 2;
+      if (d < best) {
+        best = d;
+        target = e;
+      }
+    }
+    if (!target || best > COLLECT_MAGNET_MAX_DIST * COLLECT_MAGNET_MAX_DIST) {
+      model.dispose(); // no plausible collector → no animation
+      return;
+    }
+    this.collecting.push({
+      model,
+      target,
+      t: 0,
+      dur: COLLECT_DUR,
+      startPos: model.root.position.clone(),
+      startScale: model.root.scaling.clone(),
+    });
+  }
+
+  /**
+   * Animate a thrown banana: it arcs from the thrower to the landing spot, then
+   * bounces in place — bounce height (and dust) scaling with the throw speed —
+   * trailing sparks the whole way. When it settles it hands off to the real
+   * collectible the server dropped there (revealed from hiding), so there is only
+   * ever one banana on screen.
+   */
+  showBananaThrow(ev: BananaThrowEvent) {
+    const scene = this.camera.getScene();
+    const model = ev.item === "stone" ? buildStoneShot(scene) : buildBanana(scene);
+    for (const mesh of model.meshes) this.shadow.addShadowCaster(mesh); // drops a shadow mid-flight
+    const HAND_Y = 1.1;
+    const R = THROW_RESTITUTION;
+
+    // The arc and speed come from the FULL intended throw (arcTo); a prop in the
+    // way only clips the flight short. So a banana that hits a tree flies exactly
+    // like one sailing to open ground — same speed, same arc — then suddenly stops.
+    const arcToX = ev.arcToX ?? ev.toX;
+    const arcToZ = ev.arcToZ ?? ev.toZ;
+    const fullDist = Math.hypot(arcToX - ev.fromX, arcToZ - ev.fromZ) || 0.001;
+    const hitDist = Math.hypot(ev.toX - ev.fromX, ev.toZ - ev.fromZ);
+    const f = Math.max(0, Math.min(1, hitDist / fullDist)); // fraction of the arc before impact
+    const dur = Math.max(0.04, ev.flightMs / 1000); // already speed-correct (time to the hit point)
+    const speed = hitDist / Math.max(0.04, dur); // = the full-throw speed, regardless of a prop
+    const fullPeak = Math.min(3, 0.8 + fullDist * 0.18); // arc height from the FULL distance
+    // height of the clipped arc where it meets the prop (mid-air if f < 1)
+    const hitY = THROW_GROUND_Y + (HAND_Y - THROW_GROUND_Y) * (1 - f) + fullPeak * Math.sin(f * Math.PI);
+
+    // hop 0: the throw — fly the full arc, but only up to fraction f (where the prop is)
+    const hops: Hop[] = [
+      { fromX: ev.fromX, fromZ: ev.fromZ, toX: ev.toX, toZ: ev.toZ, peak: fullPeak, dur, launchY: HAND_Y, arcFrac: f },
+    ];
+    // two diminishing bounces in place at the impact spot — energy ∝ the banana's
+    // speed at impact (so a fast throw that suddenly hits a prop bounces hard).
+    let bouncePeak = Math.max(0.25, Math.min(2.2, speed * 0.045));
+    let startY = hitY; // the first bounce falls from the impact height
+    for (let b = 0; b < 2; b++) {
+      hops.push({
+        fromX: ev.toX,
+        fromZ: ev.toZ,
+        toX: ev.toX,
+        toZ: ev.toZ,
+        peak: bouncePeak,
+        dur: 0.42 * Math.sqrt(Math.max(0.2, bouncePeak)),
+        launchY: startY,
+      });
+      bouncePeak *= R;
+      startY = THROW_GROUND_Y;
+    }
+
+    this.thrown.push({
+      model,
+      hops,
+      hopIndex: 0,
+      t: 0,
+      impact: Math.max(0.25, Math.min(1.8, speed * 0.045)),
+      fade: 0,
+      trail: makeBananaTrail(scene, model.root.position),
+      landingX: ev.toX,
+      landingZ: ev.toZ,
+    });
+  }
+
+  /** A hit landed — pop a floating damage number (and shake trees). */
+  onDamage(ev: DamageEvent) {
+    const e = this.entities.get(ev.targetId);
+    if (e) {
+      this.hud.showDamage(e.root, e.id, ev.amount, ev.crit);
+      return;
+    }
+    const tree = this.trees.get(ev.targetId);
+    if (tree) {
+      this.hud.showDamage(tree.root, ev.targetId, ev.amount, ev.crit);
+      tree.shake();
+      return;
+    }
+    const rock = this.rocks.get(ev.targetId);
+    if (rock) {
+      this.hud.showDamage(rock.root, ev.targetId, ev.amount, ev.crit);
+      rock.shake();
+    }
+  }
+
+  /** A heal landed (potion pickup) — pop a green "+N" number. */
+  onHeal(ev: HealEvent) {
+    const e = this.entities.get(ev.targetId);
+    if (e) this.hud.showHeal(e.root, e.id, ev.amount);
+  }
+
+  /** A player gained XP — pop a gold "+N XP" number over them. */
+  onXp(ev: XpEvent) {
+    const e = this.entities.get(ev.playerId);
+    if (e) this.hud.showXp(e.root, ev.amount);
+  }
+
+  /** A player said something — float a chat bubble over their head. */
+  showChatBubble(playerId: string, text: string) {
+    const e = this.entities.get(playerId);
+    if (e) this.hud.showChatBubble(e.root, playerId, text);
+  }
+
+  /** Current HP of the local player, for the health orb. */
+  localHp(): { hp: number; maxHp: number } | null {
+    const e = this.localId ? this.entities.get(this.localId) : null;
+    return e ? { hp: e.hp, maxHp: e.maxHp } : null;
+  }
+
+  // ---- internals ----
+  /** Make a mesh both cast and receive the scene's soft shadow. */
+  private castAndReceive(mesh: AbstractMesh) {
+    this.shadow.addShadowCaster(mesh);
+    mesh.receiveShadows = true;
+  }
+
+  private register(entity: Entity, view: ServerView, isEnemy: boolean) {
+    entity.teleport(view.x, view.z);
+    entity.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state);
+    entity.level = view.level;
+    entity.root.metadata = { entityId: entity.id, kind: isEnemy ? "enemy" : "player" };
+    for (const mesh of entity.meshes) this.castAndReceive(mesh);
+    this.hud.addCharacter(entity, isEnemy);
+    this.entities.set(entity.id, entity);
+
+    if (entity.id === this.localId) this.camera.target.set(view.x, 1, view.z);
+    this.refreshPickable(entity);
+  }
+
+  /** A character is a click target only while it's a LIVING, non-local entity.
+   *  Your own player and any corpse are click-through (a click walks to the ground
+   *  behind them) and show no targeting cursor. */
+  private refreshPickable(entity: Entity) {
+    const pickable = entity.id !== this.localId && entity.hp > 0;
+    for (const mesh of entity.meshes) {
+      if (mesh.isPickable !== pickable) mesh.isPickable = pickable;
+    }
+  }
+
+  private apply(id: string, view: ServerView) {
+    const e = this.entities.get(id);
+    if (!e) return;
+    if (id === this.localId) {
+      // track the local player's death window for the respawn countdown
+      if (view.state === AnimState.DEAD) {
+        if (this.deadElapsed === null) this.deadElapsed = 0;
+      } else {
+        this.deadElapsed = null;
+      }
+    }
+    e.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state);
+    e.level = view.level;
+    this.refreshPickable(e); // dead → click-through, alive → targetable again
+  }
+
+  /** Seconds until the local player respawns, or null if alive. */
+  respawnCountdown(): number | null {
+    if (this.deadElapsed === null) return null;
+    return Math.max(0, PLAYER_RESPAWN_MS / 1000 - this.deadElapsed);
+  }
+
+  private unregister(id: string) {
+    const entity = this.entities.get(id);
+    if (!entity) return;
+    this.hud.remove(id);
+    entity.dispose();
+    this.entities.delete(id);
+  }
+
+  /** Walk a picked mesh up to its world-object root and return its id + kind. The
+   *  local player is never a target (you can't click yourself). */
+  resolvePick = (mesh: Nullable<AbstractMesh>): PickResult | null => {
+    let node: Nullable<TransformNode> = mesh ?? null;
+    while (node) {
+      const md = node.metadata as { entityId?: string; kind?: string } | null;
+      if (md?.entityId) {
+        if (md.entityId === this.localId) return null; // never your own character
+        const ent = this.entities.get(md.entityId);
+        if (ent && ent.hp <= 0) return null; // dead → not clickable, no special cursor
+        return { id: md.entityId, kind: md.kind ?? "" };
+      }
+      node = node.parent as Nullable<TransformNode>;
+    }
+    return null;
+  };
+
+  /** Click-assist: the nearest clickable thing whose centre is within
+   *  CLICK_ASSIST_RADIUS of a world point — so a click NEAR a small/moving target
+   *  (a character or a collectible) still hits it. Big static props (trees, rocks)
+   *  are excluded so they don't hijack clicks meant for walking; so is the local
+   *  player. Returns the closest, or null. */
+  resolveNearby = (point: Vector3): PickResult | null => {
+    let best: PickResult | null = null;
+    let bestD2 = CLICK_ASSIST_RADIUS * CLICK_ASSIST_RADIUS;
+    const consider = (id: string, kind: string, x: number, z: number) => {
+      const d2 = (x - point.x) ** 2 + (z - point.z) ** 2;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = { id, kind };
+      }
+    };
+    this.entities.forEach((e, id) => {
+      if (id === this.localId || e.hp <= 0) return; // not self, not a corpse
+      const kind = (e.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
+      consider(id, kind, e.root.position.x, e.root.position.z);
+    });
+    this.logs.forEach((m, id) => consider(id, "log", m.root.position.x, m.root.position.z));
+    this.stones.forEach((m, id) => consider(id, "stone", m.root.position.x, m.root.position.z));
+    this.potions.forEach((m, id) => consider(id, "potion", m.root.position.x, m.root.position.z));
+    this.bananas.forEach((m, id) => consider(id, "banana", m.root.position.x, m.root.position.z));
+    return best;
+  };
+
+  /** Mark the target the player is heading to act on with a spotlight. */
+  showActionSpotlight(id: string, kind: string) {
+    const targetRoot =
+      this.entities.get(id)?.root ??
+      this.trees.get(id)?.root ??
+      this.rocks.get(id)?.root ??
+      this.logs.get(id)?.root ??
+      this.stones.get(id)?.root ??
+      this.bananas.get(id)?.root;
+    if (!targetRoot) return;
+    this.clearSpotlight();
+    const color = SPOTLIGHT_COLORS[kind] ?? SPOTLIGHT_COLORS.enemy;
+    this.spotlight = { fx: buildSpotlight(this.camera.getScene(), color), targetRoot };
+  }
+
+  clearSpotlight() {
+    if (this.spotlight) {
+      this.spotlight.fx.dispose();
+      this.spotlight = null;
+    }
+  }
+
+  /** Strike a lightning bolt at a spot (used for player respawns). */
+  showLightning(x: number, z: number) {
+    this.lightnings.push(buildLightning(this.camera.getScene(), x, z));
+  }
+
+  update(dt: number) {
+    if (this.deadElapsed !== null) this.deadElapsed += dt;
+    for (const entity of this.entities.values()) entity.update(dt);
+    for (const tree of this.trees.values()) tree.update(dt);
+    for (const rock of this.rocks.values()) rock.update(dt);
+
+    for (const pot of this.potions.values()) {
+      pot.bob += dt;
+      pot.root.rotation.y += dt * 1.6;
+      pot.root.position.y = 0.25 + Math.sin(pot.bob * 2.2) * 0.12;
+    }
+    for (const log of this.logs.values()) {
+      log.bob += dt;
+      log.root.rotation.y += dt * 0.8;
+      log.root.position.y = 0.12 + Math.sin(log.bob * 2) * 0.06;
+    }
+    for (const st of this.stones.values()) {
+      st.bob += dt;
+      st.root.rotation.y += dt * 0.6;
+      st.root.position.y = 0.12 + Math.sin(st.bob * 2) * 0.05;
+    }
+    for (const ban of this.bananas.values()) {
+      ban.spin += dt;
+      ban.root.rotation.y += dt * 0.7;
+      ban.root.position.y = 0.25 + Math.sin(ban.spin * 2) * 0.05;
+    }
+
+    // thrown bananas: arc to the landing, then bounce in place (height ∝ speed),
+    // puffing dust at each ground hit. A spark trail follows in flight. On settling
+    // it hands off to the real collectible there (or fades if none arrived yet).
+    const throwScene = this.camera.getScene();
+    for (let i = this.thrown.length - 1; i >= 0; i--) {
+      const b = this.thrown[i];
+      if (b.hopIndex < b.hops.length) {
+        const hop = b.hops[b.hopIndex];
+        b.t += dt;
+        const p = Math.min(1, b.t / hop.dur);
+        const x = hop.fromX + (hop.toX - hop.fromX) * p;
+        const z = hop.fromZ + (hop.toZ - hop.fromZ) * p;
+        // The throw hop draws only the first `frac` of a full arc (clipped where a
+        // prop blocks it); bounces use a full arc (frac = 1).
+        const frac = hop.arcFrac ?? 1;
+        const y =
+          THROW_GROUND_Y +
+          (hop.launchY - THROW_GROUND_Y) * (1 - p * frac) +
+          hop.peak * Math.sin(p * frac * Math.PI);
+        b.model.root.position.set(x, y, z);
+        b.model.root.rotation.x += dt * 16;
+        b.model.root.rotation.y += dt * 7;
+        if (p >= 1) {
+          // ground contact: kick up a dust + spark puff (smaller each bounce)
+          const strength = b.impact * Math.pow(THROW_RESTITUTION, b.hopIndex);
+          this.particleFx.push({
+            ps: makeBananaBurst(throwScene, hop.toX, THROW_GROUND_Y, hop.toZ, strength),
+            ttl: 0.5,
+          });
+          b.hopIndex++;
+          b.t = 0;
+          if (b.hopIndex >= b.hops.length) {
+            // settled: detach + stop the trail, let it dissipate, then dispose
+            if (b.trail) {
+              b.trail.emitter = b.model.root.position.clone();
+              b.trail.stop();
+              this.particleFx.push({ ps: b.trail, ttl: 0.5 });
+              b.trail = undefined;
+            }
+            // seamlessly become the collectible resting here (reveal it, drop the
+            // throw visual) so there's never a duplicate banana
+            const col = b.collectibleId ? this.bananas.get(b.collectibleId) : undefined;
+            if (col) {
+              col.root.setEnabled(true);
+              for (const m of b.model.meshes) this.shadow.removeShadowCaster(m);
+              b.model.dispose();
+              this.thrown.splice(i, 1);
+              continue;
+            }
+          }
+        }
+      } else {
+        // no collectible to hand off to (not arrived yet) → fade out and dispose
+        b.fade += dt;
+        const k = Math.min(1, b.fade / 0.3);
+        for (const m of b.model.meshes) m.visibility = 1 - k;
+        if (k >= 1) {
+          for (const m of b.model.meshes) this.shadow.removeShadowCaster(m);
+          b.model.dispose();
+          this.thrown.splice(i, 1);
+        }
+      }
+    }
+
+    // age out finished banana particle systems (trails + impact puffs)
+    for (let i = this.particleFx.length - 1; i >= 0; i--) {
+      const f = this.particleFx[i];
+      f.ttl -= dt;
+      if (f.ttl <= 0) {
+        f.ps.dispose();
+        this.particleFx.splice(i, 1);
+      }
+    }
+
+    // collected items: magnet into the collector, accelerating while shrinking + fading
+    for (let i = this.collecting.length - 1; i >= 0; i--) {
+      const c = this.collecting[i];
+      c.t += dt;
+      const p = Math.min(1, c.t / c.dur);
+      if (p >= 1 || c.target.root.isDisposed()) {
+        c.model.dispose();
+        this.collecting.splice(i, 1);
+        continue;
+      }
+      const ease = p * p; // ease-in: slow start, then snap into the player
+      const aim = c.target.root.position;
+      Vector3.LerpToRef(
+        c.startPos,
+        new Vector3(aim.x, COLLECT_AIM_Y, aim.z),
+        ease,
+        c.model.root.position,
+      );
+      const s = 1 - ease; // shrink toward nothing
+      c.model.root.scaling.set(
+        c.startScale.x * s,
+        c.startScale.y * s,
+        c.startScale.z * s,
+      );
+      const vis = 1 - p; // fade out
+      for (const m of c.model.meshes) m.visibility = vis;
+      c.model.root.rotation.y += dt * 14; // little spin for flair
+    }
+
+    if (this.spotlight) {
+      const { fx, targetRoot } = this.spotlight;
+      if (targetRoot.isDisposed()) {
+        this.clearSpotlight();
+      } else {
+        fx.root.position.set(targetRoot.position.x, 0, targetRoot.position.z);
+        if (!fx.update(dt)) this.clearSpotlight();
+      }
+    }
+
+    for (let i = this.lightnings.length - 1; i >= 0; i--) {
+      if (!this.lightnings[i].update(dt)) {
+        this.lightnings[i].dispose();
+        this.lightnings.splice(i, 1);
+      }
+    }
+
+    const local = this.localId ? this.entities.get(this.localId) : null;
+    if (local) {
+      const f = smooth(dt, 0.12);
+      const t = this.camera.target;
+      t.x += (local.root.position.x - t.x) * f;
+      t.z += (local.root.position.z - t.z) * f;
+      t.y = 1;
+
+      // keep the (fixed-size) shadow frustum centred on the player so shadows stay
+      // crisp on the big map instead of being smeared across the whole world.
+      const sun = this.shadow.getLight();
+      const d = sun.direction;
+      const len = Math.hypot(d.x, d.y, d.z) || 1;
+      const D = 130;
+      sun.position.set(
+        local.root.position.x - (d.x / len) * D,
+        local.root.position.y - (d.y / len) * D,
+        local.root.position.z - (d.z / len) * D,
+      );
+    }
+
+    this.hud.update(dt);
+  }
+}

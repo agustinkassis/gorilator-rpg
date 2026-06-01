@@ -1,0 +1,42 @@
+# Gorilator — game stack (client + server). The Cloudflare tunnel runs natively
+# on the host as its own systemd service (see `gorilator` CLI), not here.
+#
+#   gorilator start      → docker compose up -d
+#   docker compose up -d  also works standalone (reads ./.env)
+name: gorilator
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: gorilator-server
+    ports:
+      - "2567:2567"
+    environment:
+      GAME_SERVER_PORT: "2567"
+      # When set, the Colyseus /colyseus monitor requires HTTP Basic auth.
+      MONITOR_USER: "${MONITOR_USER:-}"
+      MONITOR_PASS: "${MONITOR_PASS:-}"
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+      args:
+        # Public server URL baked into the bundle, e.g. wss://api.example.com.
+        # Empty → client dials ws(s)://<page-host>:2567 (local/manual runs).
+        VITE_SERVER_URL: "${VITE_SERVER_URL:-}"
+    container_name: gorilator-client
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

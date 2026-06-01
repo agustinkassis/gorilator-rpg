@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+###############################################################################
+# Gorilator — Colyseus game server image.
+#
+# Strategy: a full-workspace pnpm build (NOT `pnpm deploy`, which is fragile
+# with this monorepo's isolated linker + a built-to-dist workspace dep). We
+# install everything, build @rpg/shared (tsc — decorators) then @rpg/server,
+# drop dev deps with `pnpm prune --prod`, and copy the ENTIRE /app tree into a
+# slim runtime so pnpm's symlinks into node_modules/.pnpm stay valid.
+###############################################################################
+
+###############################################################################
+# Stage 1 — builder
+###############################################################################
+FROM node:20-bookworm-slim AS builder
+WORKDIR /app
+
+# Pinned pnpm (matches packageManager: pnpm@10.14.0). Installed via npm rather
+# than corepack to avoid corepack's signature-key verification fragility.
+RUN npm install -g pnpm@10.14.0
+
+# --- Dependency layer (cached unless a manifest or the lockfile changes) ---
+# Every workspace member's package.json must be present so pnpm can resolve the
+# workspace:* links and reproduce the lockfile graph under --frozen-lockfile.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/server/package.json packages/server/package.json
+COPY packages/client/package.json packages/client/package.json
+
+# onlyBuiltDependencies (esbuild, msgpackr-extract) run their build scripts here.
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# --- Source layer ---
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY packages/server packages/server
+
+# Build @rpg/shared (no prepare script — must be explicit). It MUST be compiled
+# with tsc for the Colyseus schema decorators; the server imports its dist.
+# The server itself is NOT tsc-built: its emitted ESM uses extensionless relative
+# imports that Node's native loader rejects (`node dist` crashes with
+# ERR_MODULE_NOT_FOUND). It runs from TS source via tsx — exactly what
+# `pnpm dev` already does — so we only need the shared build here.
+RUN pnpm --filter @rpg/shared build
+
+# NOTE: we intentionally do NOT run `pnpm prune --prod`. In pnpm 10 it
+# interactively confirms a destructive "remove & reinstall from scratch", which
+# hangs a non-TTY build (and re-downloads everything even when confirmed). We
+# keep the full workspace tree instead — robustness over image size.
+
+###############################################################################
+# Stage 2 — runtime
+###############################################################################
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV GAME_SERVER_PORT=2567
+
+# Copy the WHOLE tree (root node_modules/.pnpm store + each package). Copying
+# only packages/server would leave dangling symlinks to the virtual store.
+COPY --from=builder /app /app
+
+# Run as the unprivileged user shipped in the node image.
+USER node
+
+EXPOSE 2567
+
+# Liveness via the express "/" route (Node 18+ global fetch — no curl in slim).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.GAME_SERVER_PORT||2567)+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+# Run from TS source via tsx (single in-process loader → clean PID 1). cwd is the
+# server package so `tsx` and `@rpg/shared` resolve through pnpm's per-package
+# node_modules.
+WORKDIR /app/packages/server
+CMD ["node", "--import", "tsx", "src/index.ts"]

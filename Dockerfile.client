@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+###############################################################################
+# Gorilator — static client image (Vite build served by nginx).
+#
+# The browser must dial the server on its own Cloudflare subdomain over 443, so
+# we bake that URL in at build time via VITE_SERVER_URL. Vite only exposes
+# VITE_-prefixed vars and reads them from the process env, so the build ARG is
+# promoted to an ENV (after install, so changing the URL only busts the fast
+# build layer — not the slow install layer).
+###############################################################################
+
+###############################################################################
+# Stage 1 — builder
+###############################################################################
+FROM node:20-bookworm-slim AS builder
+WORKDIR /app
+
+# Pinned pnpm via npm (avoids corepack signature-key fragility).
+RUN npm install -g pnpm@10.14.0
+
+# --- Dependency layer (cached unless a manifest/lockfile changes) ---
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/server/package.json packages/server/package.json
+COPY packages/client/package.json packages/client/package.json
+
+# Full install so esbuild's build script runs (vite build needs it).
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# --- Source layer ---
+COPY tsconfig.base.json ./
+COPY packages/shared packages/shared
+COPY packages/client packages/client
+
+# Build the workspace dep first (no prepare script).
+RUN pnpm --filter @rpg/shared build
+
+# Bake the public server URL into the bundle. Empty is fine — the client then
+# falls back to ws(s)://<page-host>:2567 (see NetworkClient.defaultEndpoint).
+ARG VITE_SERVER_URL
+ENV VITE_SERVER_URL=${VITE_SERVER_URL}
+RUN pnpm --filter @rpg/client build
+
+###############################################################################
+# Stage 2 — runtime (nginx serving the static dist)
+###############################################################################
+FROM nginx:alpine AS runtime
+
+# Vite's default outDir (the config does not override build.outDir or base).
+COPY --from=builder /app/packages/client/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80

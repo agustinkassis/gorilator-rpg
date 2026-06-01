@@ -1,0 +1,22 @@
+# Keep the build context small AND correct: never ship host-built (darwin)
+# node_modules / dist into the Linux image — they would break esbuild/msgpackr
+# and the compiled output. Everything is rebuilt inside the image.
+.git
+.gitignore
+.github
+.claude
+**/.DS_Store
+*.log
+
+node_modules
+**/node_modules
+dist
+**/dist
+.vite
+**/.vite
+
+.env
+.env.*
+*.local
+.vscode
+.idea

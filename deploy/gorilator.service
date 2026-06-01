@@ -1,0 +1,17 @@
+[Unit]
+Description=Gorilator RPG (Docker Compose stack)
+Documentation=https://github.com/agustinkassis/gorilator-rpg
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# gorilator resolves its own project dir; these wrap `docker compose up/down`.
+ExecStart=/usr/local/bin/gorilator start
+ExecStop=/usr/local/bin/gorilator stop
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
