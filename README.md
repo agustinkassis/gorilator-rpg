@@ -4,6 +4,13 @@ An isometric low-poly multiplayer brawler: click-to-move, an animation state
 machine (idle / walk / attack / hit / death), and **live multiplayer** — open two
 browser tabs and you'll see both gorillas move and fight in real time.
 
+## Deploy
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/REPLACE_WITH_TEMPLATE_ID)
+
+- **Railway (one click):** a single service serves the client **and** the multiplayer server — no variables to set. See [RAILWAY.md](RAILWAY.md).
+- **Self-host (Docker + Cloudflare):** one command on your own Linux box. See [DEPLOY.md](DEPLOY.md).
+
 ## Stack
 
 | Layer | Tech |

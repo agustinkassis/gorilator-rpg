@@ -57,12 +57,15 @@ export interface NetHandlers {
 }
 
 function defaultEndpoint(): string {
-  // Production (Docker + Cloudflare): the server lives on its own subdomain over
-  // 443, baked into the bundle at build time as VITE_SERVER_URL (e.g.
-  // wss://api.example.com). Vite only exposes VITE_-prefixed env vars.
+  // Two-service deploys (Docker + Cloudflare): the server has its own subdomain,
+  // baked in at build time as VITE_SERVER_URL (e.g. wss://api.example.com).
+  // Vite only exposes VITE_-prefixed env vars.
   const fromEnv = import.meta.env.VITE_SERVER_URL as string | undefined;
   if (fromEnv) return fromEnv;
   const proto = location.protocol === "https:" ? "wss" : "ws";
+  // Single-service deploys (the Railway template): one server serves the client
+  // AND the WebSocket, so dial the page's own host + port (set at build time).
+  if (import.meta.env.VITE_SAME_ORIGIN) return `${proto}://${location.host}`;
   // Dev: client is served on :5173, the Colyseus server runs on :2567.
   return `${proto}://${location.hostname}:${SERVER_PORT}`;
 }

@@ -1,4 +1,5 @@
 import { createServer } from "http";
+import { join } from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import { Server } from "@colyseus/core";
@@ -42,6 +43,14 @@ if (monitorUser && monitorPass) {
 } else {
   app.use("/colyseus", monitor()); // live room/state inspector (open in dev)
 }
+
+// Single-service deploys (e.g. the Railway template) set CLIENT_DIST to the built
+// client bundle so ONE server serves the game page AND the WebSocket on the same
+// origin/port. Unset in dev / two-service (Docker+Cloudflare) deploys → no effect.
+const clientDist = process.env.CLIENT_DIST;
+if (clientDist) app.use(express.static(clientDist));
+
+app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 app.get("/", (_req, res) => {
   res.send("Gorilator server is up. Room state monitor at /colyseus");
 });
@@ -51,6 +60,15 @@ app.get("/", (_req, res) => {
 app.get("/nostr/challenge", (_req, res) => {
   res.json({ challenge: issueChallenge() });
 });
+
+// SPA fallback (single-service only): unmatched GETs return index.html so the
+// client renders, but never shadow the monitor or Colyseus matchmaking routes.
+if (clientDist) {
+  app.get("*", (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith("/colyseus") || req.path.startsWith("/matchmake")) return next();
+    res.sendFile(join(clientDist, "index.html"));
+  });
+}
 
 const httpServer = createServer(app);
 const gameServer = new Server({
