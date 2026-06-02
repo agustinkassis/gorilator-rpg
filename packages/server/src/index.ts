@@ -1,3 +1,4 @@
+import "./systems/webcrypto";
 import { createServer } from "http";
 import { join } from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";

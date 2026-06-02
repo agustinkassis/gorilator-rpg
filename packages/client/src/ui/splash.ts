@@ -39,11 +39,11 @@ const HERO_ACCENT = new Color3(0.98, 0.78, 0.28);
 const SPLASH_HERO_SCALE = 1.7;
 
 /**
- * The intro / character-select splash. It runs its own lightweight Babylon scene
+ * The intro splash. It runs its own lightweight Babylon scene
  * (sharing the game's engine) that shows the player's gorilla on a glowing
  * pedestal — slowly turntabling, breathing, wreathed in rising embers. The DOM
- * overlay (see index.html) holds the title, the champion roster and the name
- * prompt. When the player commits a name, `playLaunch()` performs a cinematic
+ * overlay (see index.html) holds the title and the name prompt. When the player
+ * commits a name, `playLaunch()` performs a cinematic
  * hand-off: the gorilla rears back into an overhead slam, the camera punches in
  * with a shake, a gold shockwave rings out, and a white flash masks the cut into
  * the live game.
@@ -440,15 +440,6 @@ export class SplashScreen {
       .getElementById("nhDisconnect")
       ?.addEventListener("click", () => this.clearNostr());
     document.getElementById("nhJoin")?.addEventListener("click", () => this.submit());
-
-    // Locked roster slots just wobble — they're a teaser for future champions.
-    document.querySelectorAll<HTMLElement>(".charCard.locked").forEach((card) => {
-      card.addEventListener("click", () => {
-        card.classList.remove("nudge");
-        void card.offsetWidth; // reflow so the animation can restart
-        card.classList.add("nudge");
-      });
-    });
 
     this.syncEnter();
     window.setTimeout(() => this.input.focus(), 60);

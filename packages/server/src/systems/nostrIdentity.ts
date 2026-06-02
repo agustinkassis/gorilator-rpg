@@ -1,3 +1,4 @@
+import "./webcrypto";
 import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
