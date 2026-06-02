@@ -176,8 +176,8 @@ export const POTION_COUNT = 6; // how many exist at once
 export const POTION_HEAL = 90; // HP restored when a potion is consumed from the inventory
 export const PICKUP_RADIUS = 1.3; // how close you must walk to grab one
 export const POTION_RESPAWN_MS = 7000; // delay before a collected potion is replaced
-export const GOBLIN_POTION_DROP_CHANCE = 0.15; // a slain goblin drops a health potion this often
-export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.02; // rare berserker flask drop from slain goblins
+export const GOBLIN_POTION_DROP_CHANCE = 0.6; // a slain goblin drops a health potion this often
+export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.08; // rare berserker flask drop from slain goblins
 export const AMBIENT_ITEM_SPAWN_CLEAR_RADIUS = 24; // random pickups stay out of the central player spawn ring
 
 // Trees are choppable resources scattered across the map.
@@ -197,7 +197,6 @@ export const TREE_SPAWN_RANGE = 135; // potions/trees scatter within this half-e
 export const ROCK_COUNT = 135; // how many boulders are scattered across the map
 export const ROCK_HP = 560; // 8× tougher (was 70)
 export const ROCK_ARMOR = 12;
-export const ROCK_REGROW_MS = 30000; // rubble regrows into a rock after this
 export const STONE_DROP_DAMAGE = 12; // a mined rock sheds one stone for every this much damage dealt to it
 export const ROCK_COLLISION_SCALE = 0.5; // a rock's collision/approach footprint is this fraction of its visual radius (so players can walk right up to it + reach its dropped stones)
 
@@ -206,6 +205,10 @@ export const ROCK_COLLISION_SCALE = 0.5; // a rock's collision/approach footprin
 // the client house model), so a ~5u collision radius covers its walls.
 export const HOUSE_HP = 300;
 export const HOUSE_COLLISION_RADIUS = 5;
+export const TOWER_PROP_NAME = "Meshy_AI_Timberstone_Tow";
+export const SACRED_CIRCLE_RADIUS = 8;
+export const SACRED_CIRCLE_HEAL_PER_SEC_MIN = 3;
+export const SACRED_CIRCLE_HEAL_PER_SEC_MAX = 5;
 
 // When La Crypta falls the realm ends: the world freezes and a countdown runs
 // before the next realm spins up with every player respawned from scratch.

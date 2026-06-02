@@ -22,7 +22,7 @@ the section comments in the file:
 | **Waves** (tower defense) | `WAVE_INTERVAL_BASE_MS` (2.5 min), `WAVE_INTERVAL_STEP_MS` (+0.5 min/wave), `WAVE_INTERVAL_MAX_MS` (cap), `WAVE_FIRST_DELAY_MS`, `WAVE_MARCH_SECONDS` → `WAVE_SPAWN_DISTANCE`, `WAVE_SPAWN_ARC`, `WAVE_SIZE_BASE/_PER_PLAYER/_PER_WAVE/_MAX`, `GOBLIN_LIVE_CAP`, `GOBLIN_HOUSE_DAMAGE` |
 | **Potions** | `POTION_COUNT`, `POTION_HEAL`, `PICKUP_RADIUS`, respawn delay |
 | **Trees** | `TREE_COUNT`, `TREE_HP`, `TREE_ARMOR`, `TREE_REGROW_MS`, `TREE_BANANA_DROP_CHANCE`, `LOGS_PER_TREE`, `AUTO_GRAB_RADIUS` |
-| **Rocks** | `ROCK_COUNT`, `ROCK_HP`, `ROCK_ARMOR`, `STONES_PER_ROCK`, `ROCK_REGROW_MS` |
+| **Rocks** | `ROCK_COUNT`, `ROCK_HP`, `ROCK_ARMOR`, grouped stone drop amount in `resources.json` |
 | **House** | `HOUSE_HP`, `HOUSE_COLLISION_RADIUS` |
 | **Bananas** | `STARTING_BANANAS`, `BANANA_MAX`, `BANANA_MIN/MAX_THROW`, `BANANA_DAMAGE`, flight timing |
 | **Stones** | `STONE_MIN/MAX_THROW`, `STONE_DAMAGE`, `STONE_MIN_DAMAGE` |

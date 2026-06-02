@@ -31,8 +31,7 @@ export interface HouseModel {
   hide(): void;
   /** Rebuild the house: re-show the model and its shadow proxy (after a wipe). */
   show(): void;
-  /** Toggle the cheap house pick proxy. Normal play uses it for repair targeting;
-   *  Dev Mode also uses it for selection. */
+  /** Toggle picking on the house model geometry. */
   setPickable(on: boolean): void;
 }
 
@@ -93,8 +92,12 @@ export async function loadHouse(
     root.position.y += -b.min.y;
     root.computeWorldMatrix(true);
 
-    root.isPickable = false;
-    r.meshes.forEach((m) => (m.isPickable = false));
+    root.metadata = { entityId: "house-0", kind: "house" };
+    root.isPickable = true;
+    r.meshes.forEach((m) => {
+      m.isPickable = true;
+      m.metadata = { entityId: "house-0", kind: "house" };
+    });
 
     // Shadow: the real house is ~6M verts — far too heavy to render into the shadow
     // map every frame. Instead an invisible box that matches its footprint casts a
@@ -111,35 +114,22 @@ export async function loadHouse(
     proxy.isPickable = false;
     shadow.addShadowCaster(proxy); // ...but it still casts a shadow
 
-    // A cheap, transparent, pickable proxy so normal play can repair the house and
-    // Dev Mode can select it. The real glb is ~6M verts — far too heavy to hover-pick.
-    const pick = MeshBuilder.CreateBox(
-      "housePickProxy",
-      { width: b.max.x - b.min.x, height: b.max.y - b.min.y, depth: b.max.z - b.min.z },
-      scene,
-    );
-    pick.position.copyFrom(proxy.position);
-    pick.visibility = 0; // transparent — invisible, but isVisible (so it can be picked)
-    pick.isPickable = true;
-    pick.metadata = { entityId: "house-0", kind: "house" };
-
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
 
     return {
       hide: () => {
         root.setEnabled(false); // collapse: hide the whole model...
         proxy.setEnabled(false);
-        pick.setEnabled(false);
         shadow.removeShadowCaster(proxy); // ...and stop it casting a shadow
       },
       show: () => {
         root.setEnabled(true); // rebuilt after a wipe: show it again...
         proxy.setEnabled(true);
-        pick.setEnabled(true);
         shadow.addShadowCaster(proxy); // ...and resume its shadow
       },
       setPickable: (on: boolean) => {
-        pick.isPickable = on;
+        root.isPickable = on;
+        for (const mesh of r.meshes) mesh.isPickable = on;
       },
     };
   } catch (e) {

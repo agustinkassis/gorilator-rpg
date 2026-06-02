@@ -45,6 +45,9 @@ import {
   BERSERKER_CRIT_DAMAGE_MULT,
   BERSERKER_ARMOR_MULT,
   BERSERKER_HP_MULT,
+  SACRED_CIRCLE_HEAL_PER_SEC_MAX,
+  SACRED_CIRCLE_HEAL_PER_SEC_MIN,
+  SACRED_CIRCLE_RADIUS,
   HealEvent,
   PlayerSave,
 } from "@rpg/shared";
@@ -60,7 +63,6 @@ import {
   spawnTrees,
   treeRegrowSystem,
   spawnRocks,
-  rockRegrowSystem,
   itemPickupSystem,
   autoGrabSystem,
   resetResources,
@@ -72,6 +74,7 @@ import { goblinAiSystem, waveSystem, resetWaves } from "../systems/goblins";
 import { realmTracker } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
 import { spawnHouse } from "../systems/houses";
+import { healingTowerPosition } from "../systems/healingTower";
 import { loadPropObstacles } from "../systems/props";
 import { loadSpawners, spawnerSystem } from "../systems/spawners";
 import { loadResourceDrops } from "../systems/resourceDrops";
@@ -113,6 +116,9 @@ export class GameRoom extends Room<GameState> {
     critMultiplier: number; moveSpeed: number; maxHp: number;
   }>();
 
+  /** Fractional sacred-circle healing is accumulated into whole-HP popups. */
+  private sacredHealCarry = new Map<string, number>();
+
   /** Signs + publishes Nostr-logged-in players' progress with the SERVER key. */
   private serverSaver = new ServerSaver();
   /** Per-session level/death watermark, so the tick can persist a save the
@@ -129,6 +135,8 @@ export class GameRoom extends Room<GameState> {
   /** True while La Crypta (the home) stands; flips on collapse so the tick fires the
    *  wipe exactly once, then back to true once the home is rebuilt. */
   private homeStanding = true;
+
+  private healingTower = healingTowerPosition();
 
   /** Throttles the realm-tracker snapshot (it doesn't need every 20Hz tick). */
   private realmTick = 0;
@@ -374,10 +382,10 @@ export class GameRoom extends Room<GameState> {
       goblinAiSystem(this.state, dt, emitDamage);
       if (this.state.timeScale > 0) separationSystem(this.state); // fan attackers out — no stacking on one tile
       waveSystem(this.state, dt); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
+      this.sacredCircleHealSystem(dt);
       spawnerSystem(this.state, dt); // dev-placed object spawners (coexist with waves)
       this.releasePendingThrows(scaledMs);
       treeRegrowSystem(this.state, dt);
-      rockRegrowSystem(this.state, dt);
       potionRespawnSystem(this.state, dt);
       bananaSystem(this.state, dt, emitDamage, emitHeal, emitXp);
       const collect = (pid: string, type: ItemType) => {
@@ -442,6 +450,34 @@ export class GameRoom extends Room<GameState> {
       live,
       wave: this.state.waveNumber,
       npubs,
+    });
+  }
+
+  private sacredCircleHealSystem(dt: number) {
+    if (dt <= 0 || !this.healingTower) return;
+    const radiusSq = SACRED_CIRCLE_RADIUS * SACRED_CIRCLE_RADIUS;
+    const emitHeal = (ev: HealEvent) => this.broadcast("heal", ev);
+    this.state.players.forEach((p, sid) => {
+      if (p.hp <= 0 || p.state === AnimState.DEAD || p.hp >= p.maxHp) return;
+      const dx = p.x - this.healingTower!.x;
+      const dz = p.z - this.healingTower!.z;
+      if (dx * dx + dz * dz > radiusSq) return;
+
+      const healPerSec =
+        SACRED_CIRCLE_HEAL_PER_SEC_MIN +
+        Math.random() * (SACRED_CIRCLE_HEAL_PER_SEC_MAX - SACRED_CIRCLE_HEAL_PER_SEC_MIN);
+      const healed = Math.min(p.maxHp - p.hp, healPerSec * dt);
+      if (healed <= 0) return;
+      p.hp += healed;
+
+      const carry = (this.sacredHealCarry.get(sid) ?? 0) + healed;
+      if (carry >= 1 || p.hp >= p.maxHp) {
+        const amount = Math.max(1, Math.floor(carry));
+        emitHeal({ targetId: sid, amount });
+        this.sacredHealCarry.set(sid, carry - amount);
+      } else {
+        this.sacredHealCarry.set(sid, carry);
+      }
     });
   }
 

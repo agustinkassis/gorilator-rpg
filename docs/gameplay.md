@@ -88,8 +88,8 @@ realms are tracked, counted, and published for external discovery.
 
 - **Trees** (`TREE_COUNT`) can be chopped for a log; every chop has a
   `TREE_BANANA_DROP_CHANCE` to shake a banana loose. Felled trees regrow.
-- **Rocks/boulders** (`ROCK_COUNT`) can be mined for **stones** (`STONES_PER_ROCK`) —
-  your hard-hitting throwable. Rubble regrows.
+- **Rocks/boulders** (`ROCK_COUNT`) can be mined for grouped **stones** — your
+  hard-hitting throwable. Mined-out rubble stays depleted until the realm resets.
 - **Bananas** litter the map (and drop from trees); they're your default throwable
   ammo (you start with `STARTING_BANANAS`).
 - **Potions** (`POTION_COUNT`) heal `POTION_HEAL` when consumed from the inventory.

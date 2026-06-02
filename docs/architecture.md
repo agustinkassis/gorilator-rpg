@@ -35,7 +35,7 @@ is `ROOM_NAME` (`"game"`). One game world = one room.
 
 Each tick (scaled by `state.timeScale` for Dev-Mode pause/slow-mo) runs, in order:
 `stamina → movement (+ghost while paused) → combat → goblin AI → waves → spawners →
-pending throws → tree/rock regrow → potion respawn → bananas → item pickup/auto-grab
+pending throws → tree regrow → potion respawn → bananas → item pickup/auto-grab
 → checkHomeFall (the wipe) → save triggers → realm tracker`.
 
 ## `@rpg/shared`
@@ -66,7 +66,7 @@ Game logic is a set of systems in `server/src/systems/`, each a function over
 | `goblins` | wave spawner (`waveSystem`), goblin AI (march → fight → attack home), `resetWaves` |
 | `bananas` | banana/stone spawn, charged throw flight, landing damage (incl. the house) |
 | `houses` | spawn La Crypta |
-| `resources` | spawn/regrow trees & rocks, item pickup, auto-grab |
+| `resources` | spawn trees & rocks, regrow trees, item pickup, auto-grab |
 | `pickups` | health potions |
 | `inventory` | per-player inventory ops (off-state, sent only to the owner) |
 | `leveling` | award XP, per-level stat growth, death XP penalty |

@@ -674,7 +674,7 @@ export class DevMode {
     const def: DropCfg =
       kind === "tree"
         ? { item: "log", amount: 1, trigger: "kill", hp: 60 }
-        : { item: "stone", amount: 4, trigger: "hit", hp: 560 };
+        : { item: "stone", amount: 28, trigger: "hit", hp: 560 };
     const c = this.drops.get(kind);
     if (!c) {
       this.drops.set(kind, def);

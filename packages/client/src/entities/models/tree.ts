@@ -23,6 +23,8 @@ interface TreeMats {
   stumpTop: StandardMaterial;
 }
 
+export const TREE_VISUAL_SCALE = 1.35;
+
 // Share materials across all trees in a scene (there can be dozens).
 const matCache = new WeakMap<Scene, TreeMats>();
 function getMats(scene: Scene): TreeMats {
@@ -49,6 +51,7 @@ function getMats(scene: Scene): TreeMats {
 export function buildTree(scene: Scene): TreeModel {
   const mats = getMats(scene);
   const root = new TransformNode("tree", scene);
+  root.scaling.setAll(TREE_VISUAL_SCALE);
   const meshes: AbstractMesh[] = [];
 
   // ---- alive tree ----

@@ -112,6 +112,16 @@ function cursorForKind(kind: string): string {
   return CURSORS.default;
 }
 
+function isHouseMesh(mesh: AbstractMesh): boolean {
+  let node: Nullable<AbstractMesh> = mesh;
+  while (node) {
+    const md = node.metadata as { kind?: string } | null;
+    if (md?.kind === "house") return true;
+    node = node.parent as Nullable<AbstractMesh>;
+  }
+  return false;
+}
+
 /**
  * Diablo-style input: hovering an object swaps the cursor to the action it
  * affords (attack / cut / grab). Left-click a log to collect it, an
@@ -123,6 +133,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
   // Stop Babylon from resetting the cursor each pointer move (it would otherwise
   // immediately revert our themed cursor back to the default — the "flash" bug).
   scene.doNotHandleCursors = true;
+  scene.skipPointerMovePicking = true;
   // No browser context menu when right-clicking in the world.
   canvas?.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -210,7 +221,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
   scene.onPointerObservable.add((pi) => {
     // ---- hover / drag: theme the cursor, and while the button is held, follow ----
     if (pi.type === PointerEventTypes.POINTERMOVE) {
-      const pick = scene.pick(scene.pointerX, scene.pointerY);
+      const pick = scene.pick(scene.pointerX, scene.pointerY, (m) => !isHouseMesh(m));
       if (deps.dev?.isActive() && deps.dev.pointerMove(pick)) return; // Dev Mode owns hover
       let hit = pick?.hit ? resolvePick(pick.pickedMesh) : null;
       // click-assist: over bare ground, snap the cursor to a nearby target

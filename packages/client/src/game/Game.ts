@@ -24,6 +24,7 @@ import {
   XpEvent,
   BananaThrowEvent,
   PLAYER_RESPAWN_MS,
+  SACRED_CIRCLE_RADIUS,
 } from "@rpg/shared";
 import { CharacterFactory } from "../entities/CharacterFactory";
 import { Entity } from "../entities/Entity";
@@ -44,6 +45,7 @@ import { buildLightning, Lightning } from "../fx/lightning";
 import { makeBananaTrail, makeBananaBurst } from "../fx/bananaFx";
 import { makeLevelUpExplosion } from "../fx/explosion";
 import { makeBloodBurst } from "../fx/bloodFx";
+import { makeSacredCircleFx, SacredCircleFx } from "../fx/sacredCircleFx";
 import { DamageFx } from "../fx/damageFx";
 import { DropAnim, startDrop, updateDrop } from "../fx/dropAnim";
 import { HUD } from "../ui/hud";
@@ -145,6 +147,7 @@ export class Game {
   private bananas = new Map<string, BananaModel & { spin: number; drop?: DropAnim }>();
   private houses = new Map<string, { hp: number; maxHp: number; anchor: TransformNode }>();
   private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
+  private healingCircle: SacredCircleFx | null = null;
   private thrown: ThrownBanana[] = [];
   private particleFx: ParticleFx[] = []; // expiring banana trails/puffs
   private collecting: CollectFx[] = []; // items animating into a collector
@@ -452,6 +455,14 @@ export class Game {
     this.houseModel?.setPickable(on || this.houses.size > 0);
   }
 
+  setHealingTowerPosition(x: number, z: number) {
+    if (!this.healingCircle) {
+      this.healingCircle = makeSacredCircleFx(this.camera.getScene(), SACRED_CIRCLE_RADIUS);
+    }
+    this.healingCircle.root.position.set(x, 0, z);
+    this.healingCircle.setEnabled(true);
+  }
+
   addHouse(h: House, id: string) {
     if (this.houses.has(id)) return;
     const scene = this.camera.getScene();
@@ -470,7 +481,10 @@ export class Game {
     if (!hm) return;
     hm.hp = h.hp;
     hm.maxHp = h.maxHp;
+    hm.anchor.position.x = h.x;
+    hm.anchor.position.z = h.z;
     if (!h.alive) this.houseModel?.hide(); // collapsed
+    else this.houseModel?.show();
   }
 
   removeHouse(id: string) {

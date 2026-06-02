@@ -16,7 +16,6 @@ import {
   TREE_SPAWN_RANGE,
   ROCK_HP,
   ROCK_ARMOR,
-  ROCK_REGROW_MS,
   ROCK_COLLISION_SCALE,
   BANANA_PICKUP_RADIUS,
   AUTO_GRAB_RADIUS,
@@ -28,6 +27,8 @@ import { dropConfig } from "./resourceDrops";
 import { structureLoot } from "./structureDrops";
 
 let dropSeq = 0; // id counter for misc drops (potions / future custom items)
+const STONE_GROUP_MIN = 2;
+const STONE_GROUP_MAX = 9;
 
 /** Spawn one collectible of `type` at (x,z), routed to the matching entity map.
  *  The drop editor sets which `type` a resource yields; unknown types fall back to
@@ -225,6 +226,19 @@ function dropFromRock(state: GameState, rock: Rock, item: string) {
   dropItem(state, item, rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
 }
 
+/** Drop a clustered burst of stones around one reachable point at a rock's base. */
+function dropStoneGroupFromRock(state: GameState, rock: Rock, count: number) {
+  const angle = Math.random() * Math.PI * 2;
+  const r = rock.radius * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
+  const cx = rock.x + Math.cos(angle) * r;
+  const cz = rock.z + Math.sin(angle) * r;
+  for (let i = 0; i < count; i++) {
+    const spreadAngle = Math.random() * Math.PI * 2;
+    const spread = Math.random() * 0.75;
+    dropItem(state, "stone", cx + Math.cos(spreadAngle) * spread, cz + Math.sin(spreadAngle) * spread);
+  }
+}
+
 /** Mining damage landed on a rock: shed the configured item progressively — `amount`
  *  total, spread evenly across the rock's HP (so it runs out as the rock is mined). */
 export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
@@ -234,13 +248,23 @@ export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
   if (total <= 0) return; // configured to yield nothing (also guards the divide below)
   const perItem = Math.max(1, cfg.hp) / total; // user's formula: total HP / total items
   rock.damageSinceStone += amount;
-  while (rock.damageSinceStone >= perItem) {
-    rock.damageSinceStone -= perItem;
-    dropFromRock(state, rock, cfg.item);
+  let ready = Math.floor(rock.damageSinceStone / perItem);
+  while (ready >= STONE_GROUP_MIN) {
+    const group = Math.min(
+      ready,
+      STONE_GROUP_MIN + Math.floor(Math.random() * (STONE_GROUP_MAX - STONE_GROUP_MIN + 1)),
+    );
+    rock.damageSinceStone -= perItem * group;
+    ready -= group;
+    if (cfg.item === "stone") {
+      dropStoneGroupFromRock(state, rock, group);
+    } else {
+      for (let i = 0; i < group; i++) dropFromRock(state, rock, cfg.item);
+    }
   }
 }
 
-/** A rock's HP hit 0: turn it to rubble and schedule regrow. A KILL-drop rock yields
+/** A rock's HP hit 0: turn it to rubble for the rest of the realm. A KILL-drop rock yields
  *  its full configured amount here; a progressive ("hit") rock already shed its items
  *  while being mined (see onRockDamaged), so nothing extra drops. */
 export function onRockMined(state: GameState, rock: Rock) {
@@ -252,7 +276,6 @@ export function onRockMined(state: GameState, rock: Rock) {
   rock.alive = false;
   rock.hp = 0;
   rock.damageSinceStone = 0;
-  rock.regrowTimer = ROCK_REGROW_MS;
 }
 
 /** Push the live drop config's HP onto EVERY resource of each kind (not just the one
@@ -274,22 +297,8 @@ export function applyResourceConfig(state: GameState) {
   });
 }
 
-export function rockRegrowSystem(state: GameState, dt: number) {
-  const dtMs = dt * 1000;
-  state.rocks.forEach((r) => {
-    if (!r.alive) {
-      r.regrowTimer -= dtMs;
-      if (r.regrowTimer <= 0) {
-        r.alive = true;
-        r.hp = r.maxHp;
-        r.damageSinceStone = 0;
-      }
-    }
-  });
-}
-
 /** Round wipe → restart resources from scratch: restore every structure to pristine
- *  (all trees/rocks full + alive, regrow timers cleared) and clear any loot dropped
+ *  (all trees/rocks full + alive, timers cleared) and clear any loot dropped
  *  during the realm. Untouched structures encode no delta, so this is cheap. */
 export function resetResources(state: GameState) {
   state.trees.forEach((t) => {

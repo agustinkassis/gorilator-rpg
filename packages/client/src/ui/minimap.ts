@@ -1,4 +1,4 @@
-import { WORLD_SIZE, HOUSE_CENTER, HOUSE_RADIUS } from "@rpg/shared";
+import { HOUSE_COLLISION_RADIUS, TOWER_PROP_NAME, WORLD_SIZE } from "@rpg/shared";
 import type { GameState } from "@rpg/shared";
 import { npubEncode } from "nostr-tools/nip19";
 import type { NetworkClient } from "../net/NetworkClient";
@@ -16,6 +16,7 @@ function esc(s: string): string {
  *  tree-like → tree, stone/timber-like → rock, any other concrete prop → a generic
  *  marker, and non-concrete clutter → null (not shown). */
 function propIcon(def: { name: string; model: string; collisionRadius?: number }): "tree" | "rock" | "object" | null {
+  if (def.name === TOWER_PROP_NAME) return null;
   const s = (def.name + " " + def.model).toLowerCase();
   if (/tree|pine|bush|palm|oak|shrub|fern/.test(s)) return "tree";
   if (/stone|rock|timber|boulder|cliff|ore|crystal/.test(s)) return "rock";
@@ -182,7 +183,7 @@ export class Minimap {
         if (!onScreen(x, y)) return;
         this.rockIcon(ctx, x, y, Math.max(2.5, r.radius * scale));
       });
-      const treeS = 3 * Math.sqrt(scale / BASE_SCALE); // grow a little with zoom so they read
+      const treeS = 4.2 * Math.sqrt(scale / BASE_SCALE); // grow a little with zoom so they read
       state.trees.forEach((t) => {
         if (!t.alive) return;
         const [x, y] = proj(t.x, t.z);
@@ -218,9 +219,16 @@ export class Minimap {
     ctx.strokeStyle = "rgba(180,210,255,0.22)";
     ctx.stroke();
 
-    // ---- the central house/objective — always visible, above the fog ----
-    const [hx, hy] = proj(HOUSE_CENTER.x, HOUSE_CENTER.z);
-    this.drawHouse(ctx, hx, hy, scale);
+    // ---- La Crypta objective and the healing tower — always visible above fog ----
+    state?.houses.forEach((h) => {
+      const [hx, hy] = proj(h.x, h.z);
+      this.drawHouse(ctx, hx, hy, scale, h.hp, h.maxHp, h.alive);
+    });
+    for (const tower of this.props?.all() ?? []) {
+      if (tower.def.name !== TOWER_PROP_NAME) continue;
+      const [tx, ty] = proj(tower.def.x, tower.def.z);
+      this.drawTowerCross(ctx, tx, ty, scale, true);
+    }
 
     // ---- characters: only those within vision (self always shown), crisp on top ----
     const r2 = REVEAL_RADIUS * REVEAL_RADIUS;
@@ -296,24 +304,38 @@ export class Minimap {
     }
   }
 
-  /** The central house (La Crypta — the objective). Drawn ON TOP of the fog so it's
-   *  always visible, and oversized vs its footprint so it's the key landmark. */
-  private drawHouse(ctx: CanvasRenderingContext2D, hx: number, hy: number, scale: number) {
-    const footPx = HOUSE_RADIUS * scale; // real footprint radius, in px
-    const h = Math.min(58, Math.max(18, footPx * 1.8)); // icon half-size — always bigger than life
+  /** La Crypta, the home objective. Drawn ON TOP of the fog so it's always visible. */
+  private drawHouse(
+    ctx: CanvasRenderingContext2D,
+    hx: number,
+    hy: number,
+    scale: number,
+    hp: number,
+    maxHp: number,
+    alive: boolean,
+  ) {
+    const footPx = HOUSE_COLLISION_RADIUS * scale;
+    const h = Math.min(58, Math.max(18, footPx * 1.8));
+    const health = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : alive ? 1 : 0;
 
     const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, h * 2.3);
-    glow.addColorStop(0, "rgba(255,206,104,0.5)");
+    glow.addColorStop(0, alive ? "rgba(255,206,104,0.5)" : "rgba(255,80,80,0.42)");
     glow.addColorStop(1, "rgba(255,206,104,0)");
     ctx.fillStyle = glow;
     ctx.beginPath();
     ctx.arc(hx, hy, h * 2.3, 0, Math.PI * 2);
     ctx.fill();
 
+    ctx.beginPath();
+    ctx.arc(hx, hy, h * 1.28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * health);
+    ctx.lineWidth = Math.max(2, h * 0.13);
+    ctx.strokeStyle = alive ? "#ffd479" : "#ff5c5c";
+    ctx.stroke();
+
     const bodyW = h * 1.5;
     const bodyH = h * 1.05;
     const roofH = h * 0.9;
-    const over = h * 0.22; // roof eave overhang
+    const over = h * 0.22;
     const topY = hy - (roofH + bodyH) / 2;
     const bodyTop = topY + roofH;
     const left = hx - bodyW / 2;
@@ -324,13 +346,13 @@ export class Minimap {
     ctx.strokeStyle = "#2a1b0d";
     ctx.lineWidth = Math.max(1.5, h * 0.13);
 
-    ctx.fillStyle = "#f2d489"; // body
+    ctx.fillStyle = alive ? "#f2d489" : "#b99a77";
     ctx.beginPath();
     ctx.rect(left, bodyTop, bodyW, bodyH);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = "#d98a25"; // roof
+    ctx.fillStyle = alive ? "#d98a25" : "#7b5740";
     ctx.beginPath();
     ctx.moveTo(hx, topY);
     ctx.lineTo(right + over, bodyTop);
@@ -339,12 +361,53 @@ export class Minimap {
     ctx.fill();
     ctx.stroke();
 
-    const doorW = bodyW * 0.3; // door
+    const doorW = bodyW * 0.3;
     const doorH = bodyH * 0.58;
     ctx.fillStyle = "#5a3b18";
     ctx.beginPath();
     ctx.rect(hx - doorW / 2, bodyBot - doorH, doorW, doorH);
     ctx.fill();
+    ctx.stroke();
+  }
+
+  /** The repair tower marker. */
+  private drawTowerCross(
+    ctx: CanvasRenderingContext2D,
+    hx: number,
+    hy: number,
+    scale: number,
+    alive: boolean,
+  ) {
+    const footPx = HOUSE_COLLISION_RADIUS * scale;
+    const h = Math.min(48, Math.max(14, footPx * 1.65));
+
+    const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, h * 2.5);
+    glow.addColorStop(0, alive ? "rgba(116,255,148,0.58)" : "rgba(255,80,80,0.42)");
+    glow.addColorStop(1, "rgba(116,255,148,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(hx, hy, h * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(1.5, h * 0.12);
+    ctx.strokeStyle = "rgba(8,38,20,0.9)";
+    ctx.fillStyle = alive ? "#eaffef" : "#ffd9d9";
+    const arm = h * 0.32;
+    const long = h * 0.92;
+    ctx.beginPath();
+    ctx.rect(hx - arm / 2, hy - long, arm, long * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(hx - long, hy - arm / 2, long * 2, arm);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(hx, hy, h * 1.34, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, h * 0.08);
+    ctx.strokeStyle = "rgba(234,255,239,0.82)";
     ctx.stroke();
   }
 
@@ -504,11 +567,19 @@ export class Minimap {
         }));
       });
     }
-    // central objective
-    consider(HOUSE_CENTER.x, HOUSE_CENTER.z, 22, () => ({
-      title: "La Crypta",
-      lines: ["The objective — defend it"],
-    }));
+    state?.houses.forEach((h) => {
+      consider(h.x, h.z, 22, () => ({
+        title: "La Crypta",
+        lines: ["Home objective", `HP ${Math.round(h.hp)} / ${Math.round(h.maxHp)}`],
+      }));
+    });
+    for (const tower of this.props?.all() ?? []) {
+      if (tower.def.name !== TOWER_PROP_NAME) continue;
+      consider(tower.def.x, tower.def.z, 18, () => ({
+        title: "Healing Tower",
+        lines: ["Repairs players over time"],
+      }));
+    }
     // imported props
     for (const pr of this.props?.all() ?? []) {
       const kind = propIcon(pr.def);
@@ -659,13 +730,21 @@ export class Minimap {
     const houseSwatch =
       `<span style="display:inline-flex;align-items:center;gap:5px">` +
       `<span style="width:12px;height:9px;background:#f2d489;border:1px solid #2a1b0d;` +
-      `box-shadow:0 0 7px rgba(255,206,104,0.9)"></span>House</span>`;
+      `box-shadow:0 0 7px rgba(255,206,104,0.9)"></span>La Crypta</span>`;
+    const towerSwatch =
+      `<span style="display:inline-flex;align-items:center;gap:5px">` +
+      `<span style="position:relative;width:12px;height:12px;display:inline-block;` +
+      `filter:drop-shadow(0 0 5px rgba(116,255,148,0.9))">` +
+      `<span style="position:absolute;left:4px;top:0;width:4px;height:12px;background:#eaffef"></span>` +
+      `<span style="position:absolute;left:0;top:4px;width:12px;height:4px;background:#eaffef"></span>` +
+      `</span>Tower</span>`;
     legend.innerHTML =
       swatch(COLORS.ally, "Ally") +
       swatch(COLORS.enemy, "Enemy") +
       swatch(COLORS.neutral, "Neutral") +
       swatch(COLORS.self, "You") +
-      houseSwatch;
+      houseSwatch +
+      towerSwatch;
 
     // connected-players panel (name · level · nostr), top-left of the map
     const playerList = document.createElement("div");

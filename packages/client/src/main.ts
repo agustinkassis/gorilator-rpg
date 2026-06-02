@@ -30,6 +30,7 @@ import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
 import { setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
+import { TOWER_PROP_NAME } from "@rpg/shared";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -169,7 +170,10 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
     {
       label: "world props",
       weight: 2,
-      promise: propManager.loadAll(),
+      promise: propManager.loadAll().then(() => {
+        const tower = propManager.all().find((p) => p.def.name === TOWER_PROP_NAME);
+        if (tower) game.setHealingTowerPosition(tower.def.x, tower.def.z);
+      }),
     },
     {
       label: "placed characters",

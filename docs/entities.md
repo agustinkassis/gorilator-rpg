@@ -55,9 +55,10 @@ a **log**, with a `TREE_BANANA_DROP_CHANCE` to also drop a banana.
 ## Rock / boulder (mineable)
 
 `id, x, z, radius` (visual + nav size), `hp, maxHp` (`ROCK_HP`), `alive` (rubble
-regrows), `armor` (`ROCK_ARMOR`). Mining sheds **stones** (`STONES_PER_ROCK`). Rocks
-are dynamic nav obstacles (collision follows the live entity, so Dev-Mode moves
-update pathfinding).
+stays mined out until the realm resets), `armor` (`ROCK_ARMOR`). Mining sheds
+grouped **stones** from the rock drop amount in `resources.json`. Rocks are dynamic
+nav obstacles (collision follows the live entity, so Dev-Mode moves update
+pathfinding).
 
 ## Collectibles (position-only schemas)
 
