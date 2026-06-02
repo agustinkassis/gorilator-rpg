@@ -324,6 +324,35 @@ function injectChatStyles() {
       to   { opacity: 0.62; transform: translate(-50%, -50%) scale(1); }
     }
 
+    @media (max-width: 720px), (max-height: 520px) {
+      #chatDock:not(.active) {
+        right: 8px;
+        top: 38px;
+        width: min(42vw, 220px);
+        gap: 4px;
+        font-size: 11px;
+        line-height: 1.32;
+      }
+      #chatDock:not(.active) #chatLog {
+        max-height: 30vh;
+        gap: 1px;
+        padding: 4px 6px;
+        border-radius: 6px;
+      }
+      #chatDock:not(.active) .chatLine.nostr {
+        gap: 5px;
+        margin: 2px 0;
+        padding: 3px 5px;
+        border-radius: 6px;
+      }
+      #chatDock:not(.active) .chatAvatar {
+        width: 18px;
+        height: 18px;
+        font-size: 11px;
+        border-width: 1px;
+      }
+    }
+
     /* Hidden during the intro / character-select splash. */
     body.preGame #chatDock, body.preGame #chatBackdrop { display: none !important; }
   `;
