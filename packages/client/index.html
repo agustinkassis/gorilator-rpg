@@ -765,6 +765,124 @@
         pointer-events: none;
       }
 
+      /* ---- Game asset loading: starts in the background during the splash. ---- */
+      #assetLoad {
+        position: absolute;
+        left: 50%;
+        top: clamp(154px, 23vh, 214px);
+        z-index: 5;
+        width: min(440px, 76vw);
+        transform: translateX(-50%);
+        pointer-events: none;
+        opacity: 0.9;
+        visibility: visible;
+        transition:
+          opacity 0.25s ease,
+          transform 0.32s cubic-bezier(0.2, 0.85, 0.25, 1),
+          visibility 0s linear 0s;
+      }
+      #assetLoad.joining {
+        opacity: 1;
+        transform: translateX(-50%) translateY(8px) scale(1.04);
+      }
+      #assetLoad.ready {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-6px) scale(0.98);
+        visibility: hidden;
+        transition:
+          opacity 0.22s ease,
+          transform 0.28s cubic-bezier(0.2, 0.85, 0.25, 1),
+          visibility 0s linear 0.24s;
+      }
+      #assetLoadHead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 8px;
+        font: 800 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 1.4px;
+        text-transform: uppercase;
+        color: #f5cf83;
+        text-shadow: 0 1px 5px rgba(0, 0, 0, 0.75), 0 0 18px rgba(255, 170, 40, 0.35);
+      }
+      #assetLoadTitle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      #assetLoadTitle::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        flex: none;
+        border-radius: 50%;
+        background: #ffd479;
+        box-shadow: 0 0 10px #ffd479, 0 0 22px rgba(255, 145, 38, 0.75);
+        animation: assetPulse 1s ease-in-out infinite;
+      }
+      @keyframes assetPulse {
+        0%, 100% { opacity: 0.45; transform: scale(0.8); }
+        50% { opacity: 1; transform: scale(1.15); }
+      }
+      #assetStatus {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #assetPct {
+        flex: none;
+        color: #fff2c8;
+      }
+      #assetTrack {
+        position: relative;
+        height: 12px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(12, 8, 6, 0.74);
+        border: 1px solid rgba(255, 212, 121, 0.24);
+        box-shadow:
+          0 10px 26px rgba(0, 0, 0, 0.42),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+          inset 0 0 18px rgba(0, 0, 0, 0.62);
+      }
+      #assetTrack::after {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        border-radius: inherit;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.12) 0 1px,
+            transparent 1px 18px
+          );
+        opacity: 0.28;
+        mix-blend-mode: screen;
+      }
+      #assetBar {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 0%;
+        border-radius: inherit;
+        background:
+          linear-gradient(90deg, #7a2b13 0%, #d98f22 36%, #ffe59b 64%, #f59f31 100%);
+        box-shadow: 0 0 18px rgba(255, 178, 48, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        transition: width 0.16s linear;
+      }
+      #assetBar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.55) 46%, transparent 62%);
+        background-size: 210% 100%;
+        animation: assetShimmer 1.15s linear infinite;
+      }
+      @keyframes assetShimmer { to { background-position: -210% 0; } }
+
       /* ---- Nostr login ---- */
       #nostrRow {
         display: flex;
@@ -1125,6 +1243,13 @@
       <div id="splashTop">
         <div id="splashTitle">GORILATOR</div>
         <div id="splashSub">Defend La Crypta</div>
+      </div>
+      <div id="assetLoad">
+        <div id="assetLoadHead">
+          <div id="assetLoadTitle"><span id="assetStatus">warming up assets</span></div>
+          <div id="assetPct">0%</div>
+        </div>
+        <div id="assetTrack"><div id="assetBar"></div></div>
       </div>
       <div id="splashBottom">
         <div id="charRow">

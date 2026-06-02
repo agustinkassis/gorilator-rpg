@@ -128,10 +128,92 @@ const splash = new SplashScreen(engine);
 // removed from state on collapse.
 let homeMaxHp = 0;
 
+interface AssetTask {
+  label: string;
+  weight: number;
+  promise: Promise<void>;
+}
+
+function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
+  let completed = 0;
+  let settled = 0;
+  let mode: "background" | "joining" | "ready" = "background";
+  const tasks: AssetTask[] = [
+    {
+      label: "gorilla rigs",
+      weight: 5,
+      promise: factory.preload(),
+    },
+    {
+      label: "throwables",
+      weight: 1,
+      promise: preloadBanana(scene),
+    },
+    {
+      label: "berserker flask",
+      weight: 1,
+      promise: preloadBerserkerPotion(scene),
+    },
+    {
+      label: "audio banks",
+      weight: 1,
+      promise: audio.ready,
+    },
+    {
+      label: "La Crypta house",
+      weight: 4,
+      promise: loadHouse(scene, shadow).then((house) => {
+        game.setHouseModel(house);
+      }),
+    },
+    {
+      label: "world props",
+      weight: 2,
+      promise: propManager.loadAll(),
+    },
+    {
+      label: "placed characters",
+      weight: 2,
+      promise: characterManager.loadAll(),
+    },
+  ];
+  const total = tasks.reduce((sum, task) => sum + task.weight, 0);
+  const setProgress = (status: string, nextMode: "background" | "joining" | "ready" = mode) => {
+    const pct = Math.min(100, Math.round((completed / total) * 100));
+    splash.setAssetProgress(pct, status, nextMode);
+  };
+
+  setProgress("warming up assets");
+
+  const done = Promise.all(
+    tasks.map((task) =>
+      task.promise
+        .catch((err) => {
+          console.warn(`[assets] ${task.label} preload failed`, err);
+        })
+        .finally(() => {
+          completed += task.weight;
+          settled += 1;
+          const done = settled === tasks.length;
+          setProgress(done ? "assets ready" : `loaded ${task.label}`, done ? "ready" : "background");
+        }),
+    ),
+  ).then(() => undefined);
+
+  return {
+    done,
+    setJoining() {
+      mode = "joining";
+      setProgress("finishing world load");
+    },
+  };
+}
+
 async function start() {
-  // Kick the (potentially slow) asset loads off immediately, in the background,
-  // so they finish while the player is reading the splash and typing a name.
-  const preload = Promise.all([factory.preload(), preloadBanana(scene), preloadBerserkerPotion(scene)]);
+  // Kick the asset loads off immediately, in the background, so the splash time
+  // is useful. The launch waits for this, so gameplay starts with all known
+  // world assets already available instead of popping in after the cut.
+  const preload = buildAssetPreload();
 
   // Wait for the player to commit: a name, and optionally a verified Nostr id.
   // Progress persistence is fully server-side now: the server signs/owns each
@@ -140,14 +222,12 @@ async function start() {
   // close code, handled in NetworkClient.onLeave).
   const creds = await splash.awaitCredentials();
 
-  // Make sure the character models are ready before we reveal the world, then
-  // stream in the heavy/optional props in the background. A preload failure
-  // isn't fatal — the factory falls back to the built-in models — so don't let
-  // it strand the player on the splash.
-  await preload.catch((err) => console.warn("[assets] preload failed", err));
-  void loadHouse(scene, shadow).then((house) => game.setHouseModel(house)); // hide-on-destroy handle
-  void propManager.loadAll(); // place any models added via the importer (+ back Dev Mode)
-  void characterManager.loadAll(); // instantiate placed custom characters (npcs.json)
+  // Make sure every known asset task has settled before we reveal the world. A
+  // preload failure isn't fatal — the model builders fall back gracefully — so
+  // this waits for completion without stranding the player on a missing GLB.
+  preload.setJoining();
+  await preload.done;
+  splash.setAssetProgress(100, "assets ready", "ready");
 
   // Connect (passing the chosen name) in the background while the launch plays.
   const connected = net.connect(

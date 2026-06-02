@@ -78,7 +78,13 @@ export class SplashScreen {
   private readonly enterBtn: HTMLButtonElement;
   private readonly flashEl: HTMLElement;
   private readonly shockEl: HTMLElement;
+  private readonly assetLoadEl: HTMLElement;
+  private readonly assetBarEl: HTMLElement;
+  private readonly assetPctEl: HTMLElement;
+  private readonly assetStatusEl: HTMLElement;
   private resolveCreds?: (creds: SplashCredentials) => void;
+  private assetTargetPct = 0;
+  private assetShownPct = 0;
 
   /** A verified Nostr identity once the player connects one (else anonymous). */
   private nostr?: NostrCredentials;
@@ -164,6 +170,10 @@ export class SplashScreen {
     this.enterBtn = document.getElementById("enterBtn") as HTMLButtonElement;
     this.flashEl = document.getElementById("splashFlash") as HTMLElement;
     this.shockEl = document.getElementById("splashShockwave") as HTMLElement;
+    this.assetLoadEl = document.getElementById("assetLoad") as HTMLElement;
+    this.assetBarEl = document.getElementById("assetBar") as HTMLElement;
+    this.assetPctEl = document.getElementById("assetPct") as HTMLElement;
+    this.assetStatusEl = document.getElementById("assetStatus") as HTMLElement;
     this.wireDom();
   }
 
@@ -197,6 +207,15 @@ export class SplashScreen {
         0.12 + p * 0.12,
       );
     }
+    this.updateAssetProgress(dt);
+  }
+
+  /** Keep the splash's game-asset meter in sync with the background loader. */
+  setAssetProgress(pct: number, status: string, mode: "background" | "joining" | "ready" = "background") {
+    this.assetTargetPct = Math.max(0, Math.min(100, pct));
+    this.assetStatusEl.textContent = status;
+    this.assetLoadEl.classList.toggle("joining", mode === "joining");
+    this.assetLoadEl.classList.toggle("ready", mode === "ready");
   }
 
   /**
@@ -643,9 +662,22 @@ export class SplashScreen {
     if (!this.resolveCreds) return;
     this.enterBtn.disabled = true;
     this.input.disabled = true;
+    this.assetLoadEl.classList.add("joining");
     const resolve = this.resolveCreds;
     this.resolveCreds = undefined;
     resolve({ name, nostr: this.nostr });
+  }
+
+  private updateAssetProgress(dt: number) {
+    const delta = this.assetTargetPct - this.assetShownPct;
+    if (Math.abs(delta) < 0.05) {
+      this.assetShownPct = this.assetTargetPct;
+    } else {
+      this.assetShownPct += delta * Math.min(1, dt * 6.5);
+    }
+    const pct = Math.round(this.assetShownPct);
+    this.assetBarEl.style.width = `${this.assetShownPct.toFixed(2)}%`;
+    this.assetPctEl.textContent = `${pct}%`;
   }
 }
 

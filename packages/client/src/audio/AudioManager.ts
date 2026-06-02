@@ -44,6 +44,7 @@ const FOOT_INTERVAL_SPRINT = 0.26; // ...quicker when sprinting
 
 export class AudioManager {
   readonly engine: AudioEngine;
+  readonly ready: Promise<void>;
   private readonly ambient: AmbientMusic;
 
   private muted = false;
@@ -80,7 +81,7 @@ export class AudioManager {
       if (el) this.click();
     });
 
-    void this.loadManifest();
+    this.ready = this.loadManifest();
   }
 
   /** Load optional sample overrides. Missing manifest/files → everything is synthesized. */
