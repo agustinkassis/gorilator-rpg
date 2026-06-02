@@ -688,13 +688,11 @@ export class Minimap {
     });
     overlayCanvas.addEventListener("mouseleave", () => this.hideTooltip());
 
-    // Hover/active styling, hide map UI during the splash, and push the help hint
-    // below the corner radar so they don't overlap.
+    // Hover/active styling and hide map UI during the splash.
     const style = document.createElement("style");
     style.textContent =
       "#rpgMiniMap:hover{border-color:#8a6a3c}" +
       "body.preGame #rpgMiniMap{display:none!important}" +
-      "body #hint{top:210px}" +
       "#mmPlayers{position:absolute;top:12px;right:14px;z-index:2;pointer-events:auto;" +
       "min-width:150px;max-width:46%;max-height:calc(100% - 70px);overflow-y:auto;" +
       "background:rgba(10,8,12,0.6);border:1px solid #6b4f2e;border-radius:8px;padding:8px 10px;" +

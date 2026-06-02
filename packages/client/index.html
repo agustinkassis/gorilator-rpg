@@ -20,20 +20,6 @@
         touch-action: none;
         outline: none;
       }
-      #hint {
-        position: fixed;
-        left: 14px;
-        top: 12px;
-        font-size: 13px;
-        line-height: 1.5;
-        color: #cdd3e0;
-        opacity: 0.85;
-        pointer-events: none;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-      }
-      #hint b {
-        color: #ffd479;
-      }
       #status {
         position: fixed;
         right: 14px;
@@ -523,7 +509,6 @@
          Intro splash
          ============================================================ */
       /* Keep the in-game HUD hidden until the player launches into the arena. */
-      body.preGame #hint,
       body.preGame #status,
       body.preGame #healthGlobe,
       body.preGame #xpBar,
@@ -1284,14 +1269,6 @@
       </div>
       <div id="splashShockwave"></div>
       <div id="splashFlash"></div>
-    </div>
-    <div id="hint">
-      <b>Left-click ground</b> to move &nbsp;·&nbsp;
-      <b>Left-click a dummy/knight</b> to attack &nbsp;·&nbsp;
-      <b>Hold the 🍌 hotkey (Q)</b> to charge a throw, release to fling at the cursor &nbsp;·&nbsp;
-      <b>I</b> for inventory · drag items onto Q/W/E/R &nbsp;·&nbsp;
-      <b>Hold TAB</b> for the local map · <b>M</b> for the full-screen map &nbsp;·&nbsp;
-      <b>Enter</b> to chat
     </div>
     <div id="status">connecting…</div>
     <!-- Tiny build version, always visible in the bottom-right (set in main.ts). -->
