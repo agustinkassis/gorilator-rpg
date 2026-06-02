@@ -56,14 +56,12 @@ const ANIM_NAME_MAP: Record<string, AnimState> = {
   Death: AnimState.DEAD,
 };
 /** Gorilla speed/yaw tuning. The standalone clips were authored facing off from
- *  the rig's forward, so each gets a yaw correction. The new ATTACK clip's root
- *  orientation matches the THROW export (positive), so it takes +56° — unlike the
- *  old bundled Attack clip, which faced the other way (-56°). */
+ *  the rig's forward, so each gets a yaw correction. */
 const GORILLA_SPEEDS: AnimSpeeds = {
   [AnimState.THROW]: 6.53, // pitch plays 50% faster (4.35 → 6.53)
   [AnimState.ATTACK]: 4.5, // the swing clip is ~2.83s; ~4.5× makes it read in the combat window
 };
-const GORILLA_YAW_FIX = { [AnimState.ATTACK]: 56 * DEG, [AnimState.THROW]: 56 * DEG };
+const GORILLA_YAW_FIX = { [AnimState.ATTACK]: 45 * DEG, [AnimState.THROW]: 56 * DEG };
 
 /**
  * Goblin clips (Meshy "Gloombraid Goblin"): no idle/attack clip, so Walking

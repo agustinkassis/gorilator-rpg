@@ -19,6 +19,7 @@ import {
   BANANA_HIT_RADIUS,
   BANANA_FLIGHT_BASE_MS,
   BANANA_FLIGHT_PER_UNIT_MS,
+  AMBIENT_ITEM_SPAWN_CLEAR_RADIUS,
   STONE_MIN_THROW,
   STONE_MAX_THROW,
   STONE_DAMAGE,
@@ -61,6 +62,17 @@ function getMeta(state: GameState): BananaMeta {
 
 const clamp = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
 
+function randomAmbientBananaSpot(): { x: number; z: number } {
+  for (let i = 0; i < 80; i++) {
+    const spot = nearestFreeWorld(
+      (Math.random() * 2 - 1) * BANANA_SPAWN_RANGE,
+      (Math.random() * 2 - 1) * BANANA_SPAWN_RANGE,
+    );
+    if (Math.hypot(spot.x, spot.z) >= AMBIENT_ITEM_SPAWN_CLEAR_RADIUS) return spot;
+  }
+  return nearestFreeWorld(AMBIENT_ITEM_SPAWN_CLEAR_RADIUS, 0);
+}
+
 export function spawnBanana(state: GameState, x?: number, z?: number): Banana {
   const m = getMeta(state);
   const b = new Banana();
@@ -68,10 +80,7 @@ export function spawnBanana(state: GameState, x?: number, z?: number): Banana {
   const spot =
     x != null && z != null
       ? nearestFreeWorld(x, z)
-      : nearestFreeWorld(
-          (Math.random() * 2 - 1) * BANANA_SPAWN_RANGE,
-          (Math.random() * 2 - 1) * BANANA_SPAWN_RANGE,
-        );
+      : randomAmbientBananaSpot();
   b.x = spot.x;
   b.z = spot.z;
   state.bananas.set(b.id, b);

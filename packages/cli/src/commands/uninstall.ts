@@ -7,6 +7,7 @@ import {
   uninstallTunnelService,
 } from "../lib/cloudflare.js";
 import { loadConfig } from "../lib/config.js";
+import { removeWrapperGlobalCommands } from "../lib/globalCommand.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
 import { configPath } from "../lib/paths.js";
@@ -67,7 +68,12 @@ function removeInstallRecord(): void {
 }
 
 function removeGlobalCommand(): void {
+  const removedWrapper = removeWrapperGlobalCommands();
   if (!which("npm")) {
+    if (removedWrapper) {
+      log.ok("Global gorilator command removed.");
+      return;
+    }
     log.warn("npm not found; could not remove the global gorilator command.");
     return;
   }
@@ -77,6 +83,10 @@ function removeGlobalCommand(): void {
   }
   if (!isRoot() && tryRun("sudo", ["npm", "uninstall", "-g", "gorilator"])) {
     log.ok("Global gorilator command removed.");
+    return;
+  }
+  if (removedWrapper) {
+    log.ok("Global gorilator wrapper command removed.");
     return;
   }
   log.warn("Could not remove the global gorilator command; run: npm uninstall -g gorilator");

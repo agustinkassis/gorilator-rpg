@@ -174,7 +174,9 @@ export const POTION_COUNT = 6; // how many exist at once
 export const POTION_HEAL = 90; // HP restored when a potion is consumed from the inventory
 export const PICKUP_RADIUS = 1.3; // how close you must walk to grab one
 export const POTION_RESPAWN_MS = 7000; // delay before a collected potion is replaced
-export const GOBLIN_POTION_DROP_CHANCE = 0.4; // a slain goblin drops a health potion this often
+export const GOBLIN_POTION_DROP_CHANCE = 0.15; // a slain goblin drops a health potion this often
+export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.02; // rare berserker flask drop from slain goblins
+export const AMBIENT_ITEM_SPAWN_CLEAR_RADIUS = 24; // random pickups stay out of the central player spawn ring
 
 // Trees are choppable resources scattered across the map.
 export const TREE_COUNT = 120;
@@ -210,7 +212,7 @@ export const REALM_RESTART_MS = 10_000; // intermission length (10s)
 // Bananas: collectible ammo. Hold a banana's hotkey (Q/W/E/R) to charge a power
 // bar, release to throw toward the mouse; the charge sets distance, damage and
 // speed. (SPACE is the sprint key — see the Stamina section above.)
-export const STARTING_BANANAS = 21; // each player spawns with this many bananas to throw
+export const STARTING_BANANAS = 0; // players now collect bananas in-world instead of spawning with free ammo
 export const BANANA_MAX = 60; // max bananas lying on the map at once (6× the original 10)
 export const BANANA_RESPAWN_MS = 4000; // delay before a new ambient banana spawns
 export const BANANA_SPAWN_RANGE = 135; // scatter half-extent for ambient bananas

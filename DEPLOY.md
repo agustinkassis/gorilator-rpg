@@ -55,7 +55,8 @@ CLI as `npx gorilator install`. The installer, in order:
 3. `pnpm install`, builds the shared schema, builds the client, and builds the CLI.
 4. Generates `.env` — the server port, a random monitor password, **and** the server's Nostr key
    (`NOSTR_NSEC`, which signs players' progress saves).
-5. Registers a **systemd**/**launchd** service, starts it, and waits for `/healthz`.
+5. Creates a durable `gorilator` command in a standard global bin directory, then registers a
+   **systemd**/**launchd** service, starts it, and waits for `/healthz`.
 6. Prints the local URLs and the monitor credentials.
 
 > Already have the repo checked out (or using a fork)? Everything also runs through the bundled wrapper,

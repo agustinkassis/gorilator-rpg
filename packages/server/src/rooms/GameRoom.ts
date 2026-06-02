@@ -509,11 +509,10 @@ export class GameRoom extends Room<GameState> {
       if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: 1, dead: false });
     });
 
-    // fresh starter inventory for everyone (also clear any active berserk buffs)
+    // Fresh empty inventory for everyone; players collect bananas/flasks in-world.
     this.inventories.forEach((_inv, sid) => {
       const inv = makeInventory();
       addItem(inv, "banana", STARTING_BANANAS);
-      addItem(inv, "berserker_potion", 1);
       this.inventories.set(sid, inv);
       this.sendInventory(sid);
     });
@@ -609,11 +608,10 @@ export class GameRoom extends Room<GameState> {
     this.state.players.set(client.sessionId, p);
     realmTracker.noteNpub(p.pubkey); // track the npub in the live realm (no-op for anon / no realm)
 
-    // Inherit the old session's / saved inventory, or stock a fresh one.
+    // Inherit the old session's / saved inventory, or start empty.
     const inv = restore?.inventory ?? makeInventory();
     if (!restore?.inventory) {
       addItem(inv, "banana", STARTING_BANANAS);
-      addItem(inv, "berserker_potion", 1); // every new player gets one berserker potion
     }
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
