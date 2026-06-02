@@ -14,7 +14,7 @@ export class HotkeyBar {
   private slotEls: HTMLElement[] = [];
   private icons: HTMLElement[] = [];
   private counts: HTMLElement[] = [];
-  private binds: (ItemType | "")[] = ["banana", "", "", ""]; // Q defaults to the banana
+  private binds: (ItemType | "")[] = ["", "", "", ""]; // first collected item auto-fills Q
   private inv: InventorySlot[] = [];
   private autoFilled = new Set<string>(); // item types already auto-assigned a quick slot
   private dragSrc: number | null = null; // quick slot currently being dragged
@@ -133,7 +133,7 @@ export class HotkeyBar {
       const t = s.type;
       if (!t || s.count <= 0 || this.autoFilled.has(t)) continue;
       this.autoFilled.add(t); // consider each type only once
-      if (this.binds.includes(t)) continue; // already bound (e.g. Q's default banana)
+      if (this.binds.includes(t)) continue; // already bound by the player or an earlier pickup
       const empty = this.binds.indexOf("");
       if (empty >= 0) this.binds[empty] = t;
     }

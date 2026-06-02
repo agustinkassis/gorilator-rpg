@@ -81,6 +81,11 @@ export function dropPotion(state: GameState, x: number, z: number): void {
   dropItem(state, "potion", x, z);
 }
 
+/** Drop a single berserker potion at (x,z) — rare combat loot. */
+export function dropBerserkerPotion(state: GameState, x: number, z: number): void {
+  dropItem(state, "berserker_potion", x, z);
+}
+
 /** A structure was destroyed: roll its loot table. Each entry is rolled
  *  INDEPENDENTLY (Math.random() < probability) and, on success, drops `amount` of
  *  its item scattered around the structure's footprint. */
