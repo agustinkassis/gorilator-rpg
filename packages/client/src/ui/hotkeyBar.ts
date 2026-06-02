@@ -55,8 +55,10 @@ export class HotkeyBar {
         const type = e.dataTransfer?.getData("text/itemtype") as ItemType | "";
         if (!type) return;
         const src = e.dataTransfer?.getData("text/quicksrc");
+        // From another quick slot → swap the two bindings (this slot's current
+        // occupant moves back to the source). From the inventory → just bind here.
+        if (src !== "" && src != null && Number(src) !== i) this.binds[Number(src)] = this.binds[i];
         this.binds[i] = type;
-        if (src !== "" && src != null && Number(src) !== i) this.binds[Number(src)] = ""; // moved from another quick slot
         this.dropHandled = true;
         this.render();
       });
@@ -80,6 +82,15 @@ export class HotkeyBar {
         e.dataTransfer?.setData("text/quicksrc", String(i));
         this.dragSrc = i;
         this.dropHandled = false;
+        // Empty the slot the instant it's lifted so a drop outside the bar leaves it
+        // gone immediately (no native snap-back animation). Deferred one tick so the
+        // drag-image snapshot still shows the icon; a drop back onto a slot re-binds it.
+        setTimeout(() => {
+          if (this.dragSrc === i && this.binds[i]) {
+            this.binds[i] = "";
+            this.render();
+          }
+        }, 0);
       });
       slot.addEventListener("dragend", () => {
         if (this.dragSrc === i && !this.dropHandled) {

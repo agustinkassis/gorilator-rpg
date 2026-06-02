@@ -90,6 +90,6 @@ There's no automated test suite; verification is manual:
 
 ## Deploying
 
-See [`../DEPLOY.md`](../DEPLOY.md) (Docker + Cloudflare) and
+See [`../DEPLOY.md`](../DEPLOY.md) (native `npx gorilator install`, no Docker) and
 [`../RAILWAY.md`](../RAILWAY.md) (one-click). The `gorilator` CLI (`pnpm gorilator`)
 wraps the self-host flow.
