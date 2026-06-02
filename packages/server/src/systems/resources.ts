@@ -52,6 +52,16 @@ function dropItem(state: GameState, type: string, x: number, z: number): void {
       e.id = `potion-d${dropSeq++}`;
       e.x = spot.x;
       e.z = spot.z;
+      // default kind is "potion" (set by schema); no override needed
+      state.potions.set(e.id, e);
+      break;
+    }
+    case "berserker_potion": {
+      const e = new Potion();
+      e.id = `bpot-d${dropSeq++}`;
+      e.x = spot.x;
+      e.z = spot.z;
+      e.kind = "berserker_potion"; // signals the distinct green model + buff on collect
       state.potions.set(e.id, e);
       break;
     }
@@ -329,8 +339,10 @@ export function itemPickupSystem(
         state.bananas.delete(id);
         onCollect(pid, "banana");
       } else {
+        // Use the synced kind so berserker_potion gives the buff item, not a heal.
+        const kind = (potion!.kind ?? "potion") as ItemType;
         state.potions.delete(id);
-        onCollect(pid, "potion");
+        onCollect(pid, kind);
       }
       player.pickupTargetId = "";
     }
@@ -364,7 +376,18 @@ export function autoGrabSystem(
     };
     grab(state.logs, "log");
     grab(state.stones, "stone");
-    grab(state.potions, "potion");
     grab(state.bananas, "banana");
+    // Potions: check the kind field so berserker_potion gives the buff item.
+    const potionIds: string[] = [];
+    state.potions.forEach((item, id) => {
+      const dx = item.x - player.x;
+      const dz = item.z - player.z;
+      if (dx * dx + dz * dz <= r2) potionIds.push(id);
+    });
+    for (const id of potionIds) {
+      const kind = (state.potions.get(id)?.kind ?? "potion") as ItemType;
+      state.potions.delete(id);
+      onCollect(pid, kind);
+    }
   });
 }

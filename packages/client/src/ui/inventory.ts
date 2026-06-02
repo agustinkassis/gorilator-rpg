@@ -6,6 +6,7 @@ const ICONS: Record<string, string> = {
   potion: "🧪",
   stone: "🪨",
   banana: "🍌",
+  berserker_potion: "⚡",
 };
 
 /**

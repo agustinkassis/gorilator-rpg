@@ -28,6 +28,11 @@ import {
 import { CharacterFactory } from "../entities/CharacterFactory";
 import { Entity } from "../entities/Entity";
 import { buildPotion, PotionModel } from "../entities/models/potion";
+import {
+  buildBerserkerPotion,
+  preloadBerserkerPotion,
+  BerserkerPotionModel,
+} from "../entities/models/berserkerPotion";
 import { buildTree, TreeModel } from "../entities/models/tree";
 import { buildLog, LogModel } from "../entities/models/log";
 import { buildRock, RockModel } from "../entities/models/rock";
@@ -132,7 +137,7 @@ const DUMMY_TINT = new Color3(0.72, 0.3, 0.26);
  */
 export class Game {
   private entities = new Map<string, Entity>();
-  private potions = new Map<string, PotionModel & { bob: number; drop?: DropAnim }>();
+  private potions = new Map<string, (PotionModel | BerserkerPotionModel) & { bob: number; drop?: DropAnim }>();
   private trees = new Map<string, TreeModel & { hp: number; maxHp: number }>();
   private logs = new Map<string, LogModel & { bob: number; drop?: DropAnim }>();
   private rocks = new Map<string, RockModel & { hp: number; maxHp: number }>();
@@ -310,7 +315,12 @@ export class Game {
   // ---- potion callbacks ----
   addPotion(p: Potion, id: string) {
     if (this.potions.has(id)) return;
-    const model = buildPotion(this.camera.getScene());
+    const scene = this.camera.getScene();
+    // Use the appropriate model depending on the potion kind synced from the server.
+    const model =
+      p.kind === "berserker_potion"
+        ? buildBerserkerPotion(scene)
+        : buildPotion(scene);
     model.root.position.set(p.x, 0.2, p.z);
     model.root.metadata = { entityId: id, kind: "potion" };
     for (const mesh of model.meshes) {

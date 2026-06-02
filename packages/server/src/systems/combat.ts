@@ -18,17 +18,11 @@ import {
   PLAYER_RESPAWN_MS,
   DUMMY_RESPAWN_MS,
   GOBLIN_RESPAWN_MS,
-  DUMMY_MAX_HP,
-  DUMMY_ATTACK,
-  DUMMY_ARMOR,
-  DUMMY_CRIT_CHANCE,
-  DUMMY_LEVEL,
   WORLD_SIZE,
   AGENT_RADIUS,
   TREE_BANANA_DROP_CHANCE,
   ROCK_COLLISION_SCALE,
   GOBLIN_POTION_DROP_CHANCE,
-  statsForLevel,
 } from "@rpg/shared";
 import { setDestination, placeAtFreeSpot } from "./movement";
 import { nearestFreeWorld } from "./pathfinding";
@@ -63,33 +57,6 @@ function rollDamage(
   return { amount: Math.max(1, Math.round(dmg / DAMAGE_DIVISOR)), crit };
 }
 
-const DUMMY_SPOTS = [
-  { x: 6, z: 0 },
-  { x: -6, z: 4 },
-  { x: 1, z: -7 },
-];
-
-export function spawnDummies(state: GameState) {
-  const s = statsForLevel(
-    { maxHp: DUMMY_MAX_HP, attack: DUMMY_ATTACK, armor: DUMMY_ARMOR, critChance: DUMMY_CRIT_CHANCE },
-    DUMMY_LEVEL,
-  );
-  DUMMY_SPOTS.forEach((spot, i) => {
-    const e = new Enemy();
-    e.id = `dummy-${i}`;
-    e.kind = "dummy";
-    e.level = DUMMY_LEVEL;
-    e.x = spot.x;
-    e.z = spot.z;
-    e.hp = s.maxHp;
-    e.maxHp = s.maxHp;
-    e.attack = s.attack;
-    e.armor = s.armor;
-    e.critChance = s.critChance;
-    e.rotY = Math.atan2(-spot.x, -spot.z); // face roughly toward the centre
-    state.enemies.set(e.id, e);
-  });
-}
 
 function resolveTarget(state: GameState, id: string): Damageable | undefined {
   return (

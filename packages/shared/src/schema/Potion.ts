@@ -7,4 +7,6 @@ export class Potion extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") heal = POTION_HEAL;
+  /** "potion" = regular red health flask; "berserker_potion" = green power surge. */
+  @type("string") kind = "potion";
 }

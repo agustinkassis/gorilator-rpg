@@ -3,6 +3,7 @@ import { createScene } from "./scene/createScene";
 import { applyOrthoSize } from "./scene/camera";
 import { CharacterFactory } from "./entities/CharacterFactory";
 import { preloadBanana } from "./entities/models/banana";
+import { preloadBerserkerPotion } from "./entities/models/berserkerPotion";
 import { loadHouse } from "./entities/models/house";
 import { PropManager } from "./dev/PropManager";
 import { CharacterManager } from "./dev/CharacterManager";
@@ -130,7 +131,7 @@ let homeMaxHp = 0;
 async function start() {
   // Kick the (potentially slow) asset loads off immediately, in the background,
   // so they finish while the player is reading the splash and typing a name.
-  const preload = Promise.all([factory.preload(), preloadBanana(scene)]);
+  const preload = Promise.all([factory.preload(), preloadBanana(scene), preloadBerserkerPotion(scene)]);
 
   // Wait for the player to commit: a name, and optionally a verified Nostr id.
   // Progress persistence is fully server-side now: the server signs/owns each

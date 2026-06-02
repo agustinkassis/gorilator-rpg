@@ -51,7 +51,6 @@ import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } 
 import { staminaSystem } from "../systems/stamina";
 import {
   combatSystem,
-  spawnDummies,
   handleAttack,
   clampToWorld,
 } from "../systems/combat";
@@ -141,7 +140,6 @@ export class GameRoom extends Room<GameState> {
     // re-applies the configured HP to every existing tree/rock on each edit.
     loadResourceDrops(() => applyResourceConfig(this.state));
     loadStructureLoot(); // per-structure loot tables dropped on destroy (+ live reload of structures.json)
-    spawnDummies(this.state);
     spawnInitialPotions(this.state);
     spawnTrees(this.state);
     spawnRocks(this.state);
@@ -530,7 +528,6 @@ export class GameRoom extends Room<GameState> {
     this.state.potions.clear();
     this.state.bananas.clear();
     resetResources(this.state); // trees/rocks → full + alive; dropped logs/stones cleared
-    spawnDummies(this.state);
     spawnInitialPotions(this.state);
     spawnInitialBananas(this.state);
     this.refreshRockObstacles(); // rocks are alive again → their collision is back
