@@ -245,3 +245,13 @@ export const INV_COLS = 10;
 export const INV_ROWS = 5;
 export const INV_SLOTS = INV_COLS * INV_ROWS;
 export const MAX_STACK = 99;
+
+// Berserker Potion: a 1-minute power surge granted once per player per realm.
+export const BERSERKER_DURATION_MS = 60_000;   // 60-second buff
+export const BERSERKER_SPEED_MULT = 1.5;        // +50% move speed
+export const BERSERKER_ATTACK_MULT = 3.0;       // +200% attack (3×)
+export const BERSERKER_CRIT_CHANCE_ADD = 0.30;  // +30% crit chance (additive)
+export const BERSERKER_CRIT_DAMAGE_MULT = 1.30; // ×1.3 crit damage multiplier
+export const BERSERKER_ARMOR_MULT = 2.0;        // +100% armor (2×)
+export const BERSERKER_HP_MULT = 2.0;           // 2× max HP (current HP scales proportionally)
+export const BERSERKER_SCALE = 1.3;             // client-side: model grows 30% larger

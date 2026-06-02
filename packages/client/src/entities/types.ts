@@ -6,6 +6,8 @@ import { AnimGroups } from "./AnimationController";
 export const HIT_FLASH = new Color3(1, 1, 1);
 /** Dark-red flash for the LOCAL player taking damage (an intermittent "ow" pulse). */
 export const DAMAGE_FLASH = new Color3(0.6, 0, 0);
+/** Green shimmer overlay for the berserker power buff. */
+export const BERSERK_FLASH = new Color3(0.05, 1.0, 0.2);
 
 /**
  * A spawned character view. Skeletal models drive `groups` via AnimationController;

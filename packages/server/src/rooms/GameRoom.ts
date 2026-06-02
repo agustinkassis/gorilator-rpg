@@ -37,6 +37,14 @@ import {
   REALM_RESTART_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
+  CRIT_MULTIPLIER,
+  BERSERKER_DURATION_MS,
+  BERSERKER_SPEED_MULT,
+  BERSERKER_ATTACK_MULT,
+  BERSERKER_CRIT_CHANCE_ADD,
+  BERSERKER_CRIT_DAMAGE_MULT,
+  BERSERKER_ARMOR_MULT,
+  BERSERKER_HP_MULT,
   PlayerSave,
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
@@ -98,6 +106,12 @@ export class GameRoom extends Room<GameState> {
 
   /** Per-player inventory, kept off the synced state and sent only to its owner. */
   private inventories = new Map<string, InventorySlot[]>();
+
+  /** Pre-buff stats saved when a berserker potion is consumed; restored on expiry. */
+  private berserkerBase = new Map<string, {
+    attack: number; armor: number; critChance: number;
+    critMultiplier: number; moveSpeed: number; maxHp: number;
+  }>();
 
   /** Signs + publishes Nostr-logged-in players' progress with the SERVER key. */
   private serverSaver = new ServerSaver();
@@ -272,17 +286,44 @@ export class GameRoom extends Room<GameState> {
       const p = this.state.players.get(client.sessionId);
       if (!inv || !p || p.state === AnimState.DEAD) return;
       const slot = inv[msg.slot];
-      if (!slot || slot.type !== "potion" || slot.count <= 0) return;
-      if (p.hp >= p.maxHp) return; // don't waste a potion at full HP
-      const heal = Math.min(POTION_HEAL, p.maxHp - p.hp);
-      p.hp += heal;
-      slot.count -= 1;
-      if (slot.count <= 0) {
-        slot.type = "";
-        slot.count = 0;
+      if (!slot || slot.count <= 0) return;
+
+      if (slot.type === "potion") {
+        if (p.hp >= p.maxHp) return; // don't waste a potion at full HP
+        const heal = Math.min(POTION_HEAL, p.maxHp - p.hp);
+        p.hp += heal;
+        slot.count -= 1;
+        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
+        this.broadcast("heal", { targetId: client.sessionId, amount: heal });
+        this.sendInventory(client.sessionId);
+
+      } else if (slot.type === "berserker_potion") {
+        if (p.berserkerMs > 0) return; // already berserk — don't stack
+        const sid = client.sessionId;
+        // Save base stats so we can restore them exactly when the buff expires.
+        this.berserkerBase.set(sid, {
+          attack: p.attack,
+          armor: p.armor,
+          critChance: p.critChance,
+          critMultiplier: p.critMultiplier,
+          moveSpeed: p.moveSpeed,
+          maxHp: p.maxHp,
+        });
+        // Apply the berserker multipliers.
+        p.attack = p.attack * BERSERKER_ATTACK_MULT;
+        p.armor = p.armor * BERSERKER_ARMOR_MULT;
+        p.critChance = Math.min(1, p.critChance + BERSERKER_CRIT_CHANCE_ADD);
+        const baseCrit = p.critMultiplier > 0 ? p.critMultiplier : CRIT_MULTIPLIER;
+        p.critMultiplier = baseCrit * BERSERKER_CRIT_DAMAGE_MULT;
+        p.moveSpeed = p.moveSpeed * BERSERKER_SPEED_MULT;
+        const hpFraction = p.hp / p.maxHp;
+        p.maxHp = Math.round(p.maxHp * BERSERKER_HP_MULT);
+        p.hp = Math.min(p.maxHp, Math.round(hpFraction * p.maxHp));
+        p.berserkerMs = BERSERKER_DURATION_MS;
+        slot.count -= 1;
+        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
+        this.sendInventory(client.sessionId);
       }
-      this.broadcast("heal", { targetId: client.sessionId, amount: heal });
-      this.sendInventory(client.sessionId);
     });
 
     // Chat: trim/clamp the line and re-broadcast it to everyone (sender included),
@@ -341,6 +382,27 @@ export class GameRoom extends Room<GameState> {
         const dead = p.state === AnimState.DEAD;
         if (dead && !p.prevDead) p.deaths++;
         p.prevDead = dead;
+      });
+      // Berserker potion tick: count down the 60-second buff and restore base stats on expiry.
+      this.state.players.forEach((p, sid) => {
+        if (p.berserkerMs <= 0) return;
+        p.berserkerMs = Math.max(0, p.berserkerMs - scaledMs);
+        if (p.berserkerMs === 0) {
+          const base = this.berserkerBase.get(sid);
+          if (base) {
+            p.attack = base.attack;
+            p.armor = base.armor;
+            p.critChance = base.critChance;
+            p.critMultiplier = base.critMultiplier;
+            p.moveSpeed = base.moveSpeed;
+            const prevMaxHp = p.maxHp;
+            p.maxHp = base.maxHp;
+            // Scale current HP proportionally down; never kill the player on expiry
+            if (prevMaxHp > 0) p.hp = Math.max(1, Math.round(p.hp * (base.maxHp / prevMaxHp)));
+            if (p.hp > p.maxHp) p.hp = p.maxHp;
+            this.berserkerBase.delete(sid);
+          }
+        }
       });
       this.checkHomeFall(); // La Crypta fell? → wipe everyone to scratch + restart the round
       this.detectSaveTriggers(); // persist Nostr progress on level-up / death
@@ -449,13 +511,17 @@ export class GameRoom extends Room<GameState> {
       if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: 1, dead: false });
     });
 
-    // fresh starter inventory for everyone
+    // fresh starter inventory for everyone (also clear any active berserk buffs)
     this.inventories.forEach((_inv, sid) => {
       const inv = makeInventory();
       addItem(inv, "banana", STARTING_BANANAS);
+      addItem(inv, "berserker_potion", 1);
       this.inventories.set(sid, inv);
       this.sendInventory(sid);
     });
+    // reset any in-flight berserker buffs (realm wipe → everyone is fresh)
+    this.berserkerBase.clear();
+    this.state.players.forEach((p) => { p.berserkerMs = 0; p.critMultiplier = 0; });
 
     // Regenerate the whole world from scratch: clear any dropped items, restore all
     // structures to pristine, re-scatter fresh potions/bananas, respawn the training
@@ -548,7 +614,10 @@ export class GameRoom extends Room<GameState> {
 
     // Inherit the old session's / saved inventory, or stock a fresh one.
     const inv = restore?.inventory ?? makeInventory();
-    if (!restore?.inventory) addItem(inv, "banana", STARTING_BANANAS);
+    if (!restore?.inventory) {
+      addItem(inv, "banana", STARTING_BANANAS);
+      addItem(inv, "berserker_potion", 1); // every new player gets one berserker potion
+    }
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
 
@@ -618,6 +687,7 @@ export class GameRoom extends Room<GameState> {
     this.inventories.delete(client.sessionId);
     this.pendingThrows.delete(client.sessionId);
     this.saveTrack.delete(client.sessionId);
+    this.berserkerBase.delete(client.sessionId);
     console.log(`[room] ${client.sessionId} left`);
   }
 

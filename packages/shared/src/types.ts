@@ -10,7 +10,7 @@ export enum AnimState {
 }
 
 // Item types that can sit in the inventory.
-export type ItemType = "log" | "potion" | "stone" | "banana";
+export type ItemType = "log" | "potion" | "stone" | "banana" | "berserker_potion";
 
 export interface InventorySlot {
   type: ItemType | "";

@@ -55,6 +55,10 @@ export class Player extends Schema {
   // message). Synced so every client reflects the authoritative god state.
   @type("boolean") godMode = false;
 
+  // Berserker Potion buff: ms remaining (0 = no buff). Synced so every client
+  // can play the green aura + oversized model while the buff is active.
+  @type("number") berserkerMs = 0;
+
   // ---- server-only (not synced) ----
   prevDead = false; // was DEAD last tick — to count each death once on the alive→dead flip
   sprintHeld = false; // SPACE held? (input intent reported by the client)
@@ -72,4 +76,5 @@ export class Player extends Schema {
   attackTargetId = ""; // entity we are pursuing/attacking
   pendingHitId = ""; // damage to apply when the current swing connects
   pickupTargetId = ""; // log we are walking over to collect
+  critMultiplier = 0; // per-player crit multiplier (0 = use global CRIT_MULTIPLIER); set by berserker buff
 }

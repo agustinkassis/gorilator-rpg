@@ -54,6 +54,7 @@ interface ServerView {
   state: AnimState;
   level: number;
   sprinting?: boolean; // players only; enemies leave it undefined → no run-speed boost
+  berserkerMs?: number; // players only; ms remaining on the berserker buff (0 = none)
 }
 
 export interface PickResult {
@@ -717,6 +718,7 @@ export class Game {
     entity.teleport(view.x, view.z);
     entity.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
     entity.level = view.level;
+    entity.berserkerMs = view.berserkerMs ?? 0;
     entity.root.metadata = { entityId: entity.id, kind: isEnemy ? "enemy" : "player" };
     for (const mesh of entity.meshes) this.castAndReceive(mesh);
     this.hud.addCharacter(entity, isEnemy);
@@ -749,6 +751,7 @@ export class Game {
     }
     e.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
     e.level = view.level;
+    e.berserkerMs = view.berserkerMs ?? 0;
     this.refreshPickable(e); // dead → click-through, alive → targetable again
   }
 

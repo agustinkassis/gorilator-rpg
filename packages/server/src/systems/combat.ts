@@ -55,7 +55,11 @@ function rollDamage(
   const mitigation = target.armor / (target.armor + ARMOR_K);
   let dmg = raw * (1 - mitigation);
   const crit = Math.random() < attacker.critChance;
-  if (crit) dmg *= CRIT_MULTIPLIER;
+  if (crit) {
+    // Per-player multiplier (set by berserker buff); fall back to global constant.
+    const critMult = attacker.critMultiplier > 0 ? attacker.critMultiplier : CRIT_MULTIPLIER;
+    dmg *= critMult;
+  }
   return { amount: Math.max(1, Math.round(dmg / DAMAGE_DIVISOR)), crit };
 }
 

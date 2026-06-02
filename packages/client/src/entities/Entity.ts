@@ -1,7 +1,8 @@
-import { TransformNode, Scalar, AbstractMesh, Color3 } from "@babylonjs/core";
-import { AnimState, SPRINT_SPEED_MULT } from "@rpg/shared";
+import { TransformNode, Scalar, AbstractMesh, Color3, ParticleSystem } from "@babylonjs/core";
+import { AnimState, SPRINT_SPEED_MULT, BERSERKER_SCALE } from "@rpg/shared";
 import { AnimationController } from "./AnimationController";
-import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH } from "./types";
+import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH, BERSERK_FLASH } from "./types";
+import { makeBerserkerAura } from "../fx/berserkerFx";
 import { lerpAngle, smooth } from "../util/math";
 
 interface RespawnSeq {
@@ -83,6 +84,13 @@ export class Entity {
   private overlayOn = false; // current overlay on/off (HIT flash, damage flash, or select flash)
   private overlayColor: Color3 = HIT_FLASH; // current overlay tint
   private ghost = false; // Dev Mode: translucent + floating (paused free-roam)
+
+  // ---- Berserker buff visuals ----
+  /** ms remaining on the berserker buff (0 = inactive); set by Game.ts each server tick. */
+  berserkerMs = 0;
+  private berserkerActive = false;
+  private berserkerParticles: ParticleSystem | null = null;
+  private baseScaleX = -1; // lazy-read original scale; -1 = not yet sampled
 
   constructor(id: string, spawned: SpawnedCharacter, isLocal: boolean) {
     this.id = id;
@@ -257,8 +265,32 @@ export class Entity {
       this.sprinting && this.shownState === AnimState.WALK ? SPRINT_SPEED_MULT : 1,
     );
 
+    // Berserker buff: scale the model up 30%, run a green particle aura, and
+    // shimmer the overlay green while the buff is active. The buff state is driven
+    // by Game.ts writing entity.berserkerMs each server-state update.
+    const wasBerserk = this.berserkerActive;
+    this.berserkerActive = this.berserkerMs > 0;
+    if (this.berserkerActive && !wasBerserk) {
+      // buff just started — grow model and spawn the green aura
+      this.baseScaleX = this.root.scaling.x;
+      this.root.scaling.setAll(this.baseScaleX * BERSERKER_SCALE);
+      const scene = this.root.getScene();
+      if (scene) {
+        this.berserkerParticles = makeBerserkerAura(scene, this.root.position);
+      }
+    } else if (!this.berserkerActive && wasBerserk) {
+      // buff expired — restore original scale and stop the aura
+      if (this.baseScaleX > 0) this.root.scaling.setAll(this.baseScaleX);
+      if (this.berserkerParticles) {
+        this.berserkerParticles.stop();
+        this.berserkerParticles.dispose();
+        this.berserkerParticles = null;
+      }
+    }
+
     // Mesh overlay flash. While taking a HIT: EVERY character (the local player,
     // other players, and enemies alike) flashes intermittent DARK RED ("ow").
+    // Berserker: vivid green shimmer (lower priority than HIT damage flash).
     // Otherwise a brief WHITE blink when freshly picked as an attack target.
     if (this.selectFlashT > 0) this.selectFlashT -= dt;
     const selElapsed = SELECT_FLASH_MS - this.selectFlashT;
@@ -269,6 +301,9 @@ export class Entity {
     if (this.state === AnimState.HIT) {
       wantColor = DAMAGE_FLASH;
       wantOn = Math.floor(this.stateTime / DMG_BLINK_MS) % 2 === 0; // intermittent dark red
+    } else if (this.berserkerActive) {
+      wantColor = BERSERK_FLASH;
+      wantOn = Math.sin(this.stateTime * 8) > 0; // ~4 Hz sine shimmer → green glow
     } else if (selectBlink) {
       wantOn = true;
     }
@@ -335,6 +370,11 @@ export class Entity {
   }
 
   dispose() {
+    if (this.berserkerParticles) {
+      this.berserkerParticles.stop();
+      this.berserkerParticles.dispose();
+      this.berserkerParticles = null;
+    }
     this.anim.dispose();
     this.spawned.dispose();
   }
