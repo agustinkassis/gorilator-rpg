@@ -38,6 +38,7 @@ import {
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
 import { applyDeathXpPenalty } from "./leveling";
+import { dropStructureLoot } from "./resources";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -336,6 +337,7 @@ function connectGoblinAttack(state: GameState, g: Enemy, emitDamage: EmitDamage)
 function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamage) {
   const house = state.houses.get(g.aiTargetId);
   if (!house || !house.alive) return;
+  if (house.maxHp <= 0) return; // dev-set HP 0 ⇒ indestructible: swing connects but deals no damage
   const d = Math.hypot(house.x - g.x, house.z - g.z);
   if (d > house.radius + GOBLIN_ATTACK_RANGE * 1.4) return; // shoved out of reach
   const dmg = g.houseDamage || GOBLIN_HOUSE_DAMAGE; // per-spawner override
@@ -343,6 +345,7 @@ function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamag
   emitDamage({ targetId: house.id, amount: dmg, crit: false });
   if (house.hp <= 0) {
     house.alive = false;
+    dropStructureLoot(state, "house", house.x, house.z); // spill its loot table on collapse
     state.houses.delete(house.id); // collapsed — stops blocking throws; client hides it
   }
 }

@@ -34,6 +34,7 @@ import {
   PLAYER_CRIT_CHANCE,
   MOVE_SPEED,
   PLAYER_RESPAWN_MS,
+  REALM_RESTART_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
   PlayerSave,
@@ -66,6 +67,7 @@ import { spawnHouse } from "../systems/houses";
 import { loadPropObstacles } from "../systems/props";
 import { loadSpawners, spawnerSystem } from "../systems/spawners";
 import { loadResourceDrops } from "../systems/resourceDrops";
+import { loadStructureLoot } from "../systems/structureDrops";
 import { setRockObstacles } from "../systems/pathfinding";
 import { devMove, devDelete, devSet } from "../systems/devEdit";
 import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
@@ -124,6 +126,7 @@ export class GameRoom extends Room<GameState> {
     // per-kind tree/rock drop config (+ live reload of resources.json). The callback
     // re-applies the configured HP to every existing tree/rock on each edit.
     loadResourceDrops(() => applyResourceConfig(this.state));
+    loadStructureLoot(); // per-structure loot tables dropped on destroy (+ live reload of structures.json)
     spawnDummies(this.state);
     spawnInitialPotions(this.state);
     spawnTrees(this.state);
@@ -167,7 +170,12 @@ export class GameRoom extends Room<GameState> {
     // you back. No XP penalty (it's a deliberate self-respawn, not a combat death).
     this.onMessage("suicide", (client) => {
       const p = this.state.players.get(client.sessionId);
-      if (!p || p.state === AnimState.DEAD || p.godMode) return;
+      if (!p || p.state === AnimState.DEAD) return; // already dead — nothing to do
+      // A deliberate self-kill ALWAYS works — even with Dev-Mode god mode on. You
+      // explicitly asked to die, so immortality shouldn't veto it; god mode is
+      // cleared so the DEAD countdown can run, and the normal respawn flow brings
+      // you back to full HP at a free spot.
+      p.godMode = false;
       p.hp = 0;
       p.state = AnimState.DEAD;
       p.respawnTimer = PLAYER_RESPAWN_MS;
@@ -292,6 +300,14 @@ export class GameRoom extends Room<GameState> {
     // whole game freezes/slows/speeds for everyone. Direct edits (dev_move etc.)
     // still apply while paused since they mutate state outside this loop.
     this.setSimulationInterval((deltaMs) => {
+      // Realm over (La Crypta fell): freeze the whole world and tick down the
+      // intermission. When it hits zero the next realm spins up from scratch.
+      if (this.state.restartTimerMs > 0) {
+        this.state.restartTimerMs = Math.max(0, this.state.restartTimerMs - deltaMs);
+        if (this.state.restartTimerMs === 0) this.startNewRealm();
+        return; // no gameplay runs during the game-over countdown
+      }
+
       const scaledMs = deltaMs * this.state.timeScale;
       const dt = scaledMs / 1000;
       const emitDamage = (ev: DamageEvent) => this.broadcast("damage", ev);
@@ -320,6 +336,12 @@ export class GameRoom extends Room<GameState> {
       };
       itemPickupSystem(this.state, dt, collect); // walk-onto a clicked item
       autoGrabSystem(this.state, collect); // auto-collect anything nearby
+      // Tally each death the instant a player flips into the DEAD state (any cause).
+      this.state.players.forEach((p) => {
+        const dead = p.state === AnimState.DEAD;
+        if (dead && !p.prevDead) p.deaths++;
+        p.prevDead = dead;
+      });
       this.checkHomeFall(); // La Crypta fell? → wipe everyone to scratch + restart the round
       this.detectSaveTriggers(); // persist Nostr progress on level-up / death
       if (++this.realmTick >= TICK_RATE) {
@@ -349,7 +371,7 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  /** Detect La Crypta collapsing (no standing house) and trigger the wipe once. */
+  /** Detect La Crypta collapsing (no standing house) and end the realm once. */
   private checkHomeFall() {
     let standing = false;
     this.state.houses.forEach((h) => {
@@ -357,19 +379,48 @@ export class GameRoom extends Room<GameState> {
     });
     if (this.homeStanding && !standing) {
       this.homeStanding = false;
-      this.resetRound();
+      this.endRealm();
     }
   }
 
   /**
-   * La Crypta has fallen → wipe the round to scratch: every player dies and respawns
-   * a brand-new level-1 character with a starter inventory, the besieging horde is
-   * cleared, the house is rebuilt and the wave clock restarts. A "wipe" event lets
-   * clients show the defeat banner.
+   * La Crypta has fallen → the realm is OVER. Every defender falls with it, the
+   * besieging horde is cleared, and a countdown begins (state.restartTimerMs). The
+   * tick freezes all gameplay until it elapses, then startNewRealm() spins up the
+   * next realm. A "wipe" event lets clients flash the defeat banner; the synced
+   * restartTimerMs drives the "next realm in N" overlay on every screen.
    */
-  private resetRound() {
+  private endRealm() {
     const wave = this.state.waveNumber;
 
+    // Everyone dies with the home (they respawn fresh when the next realm starts).
+    this.state.players.forEach((p, sid) => {
+      p.hp = 0;
+      p.state = AnimState.DEAD;
+      p.respawnTimer = 0; // the intermission, not the per-player timer, gates respawn
+      p.attackTargetId = "";
+      p.pendingHitId = "";
+      p.pickupTargetId = "";
+      p.path = [];
+      p.pathIndex = 0;
+      // This forced defeat-death shouldn't persist as a Nostr save regression.
+      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: p.level, dead: true });
+    });
+
+    this.state.enemies.clear(); // disperse the horde so the game-over screen is calm
+    this.state.restartTimerMs = REALM_RESTART_MS; // freezes the world + starts the countdown
+    realmTracker.homeFell(); // this realm is over (a fresh one starts after the countdown)
+
+    this.broadcast("wipe", { wave }); // defeat banner
+    console.log(`[room] La Crypta fell on wave ${wave} — next realm in ${REALM_RESTART_MS / 1000}s`);
+  }
+
+  /**
+   * The intermission has elapsed → spin up a brand-new realm from scratch: every
+   * player respawns as a fresh level-1 character with a starter inventory, the
+   * whole world regenerates, La Crypta is rebuilt and the wave clock restarts.
+   */
+  private startNewRealm() {
     this.state.players.forEach((p, sid) => {
       // back to a brand-new level-1 character (the schema defaults)
       p.level = 1;
@@ -382,20 +433,20 @@ export class GameRoom extends Room<GameState> {
       p.critChance = PLAYER_CRIT_CHANCE;
       p.moveSpeed = MOVE_SPEED;
       p.throwPower = 1;
-      p.attackTargetId = "";
-      p.pendingHitId = "";
-      p.pickupTargetId = "";
       p.attackCooldown = 0;
       p.stateTimer = 0;
-      p.path = [];
-      p.pathIndex = 0;
-      // die now; the combat system respawns them fresh near the rebuilt home
-      p.hp = 0;
-      p.state = AnimState.DEAD;
-      p.respawnTimer = PLAYER_RESPAWN_MS;
-      // don't let this forced wipe-death clobber a Nostr player's saved character
-      // (their persisted progress then naturally follows their post-wipe play).
-      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: 1, dead: true });
+      p.respawnTimer = 0;
+      p.deaths = 0; // fresh realm → reset the death tally
+      // Respawn ALIVE at a fresh spot. The DEAD→IDLE flip plays the lightning-
+      // strike respawn on every client (placeAtFreeSpot sets x/z + targets + path).
+      const angle = Math.random() * Math.PI * 2;
+      const r = 12 + Math.random() * 4;
+      placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
+      p.rotY = Math.atan2(-p.x, -p.z);
+      p.hp = p.maxHp;
+      p.state = AnimState.IDLE;
+      p.prevDead = false;
+      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: 1, dead: false });
     });
 
     // fresh starter inventory for everyone
@@ -406,10 +457,10 @@ export class GameRoom extends Room<GameState> {
       this.sendInventory(sid);
     });
 
-    // Regenerate the whole world from scratch: clear the horde + every dropped item,
-    // restore all structures to pristine, re-scatter fresh potions/bananas, respawn
-    // the training dummies, rebuild La Crypta, and restart the waves.
-    this.state.enemies.clear(); // the besieging horde + the training dummies
+    // Regenerate the whole world from scratch: clear any dropped items, restore all
+    // structures to pristine, re-scatter fresh potions/bananas, respawn the training
+    // dummies, rebuild La Crypta, and restart the waves.
+    this.state.enemies.clear();
     this.state.potions.clear();
     this.state.bananas.clear();
     resetResources(this.state); // trees/rocks → full + alive; dropped logs/stones cleared
@@ -420,10 +471,9 @@ export class GameRoom extends Room<GameState> {
     spawnHouse(this.state);
     resetWaves(this.state);
     this.homeStanding = true;
-    realmTracker.homeFell(); // this realm is over (a fresh one starts on the respawn)
+    this.state.restartTimerMs = 0;
 
-    this.broadcast("wipe", { wave });
-    console.log(`[room] La Crypta fell on wave ${wave} — round reset to scratch`);
+    console.log(`[room] new realm started — everyone respawned from scratch`);
   }
 
   async onJoin(client: Client, options?: { name?: string; nostr?: NostrJoinPayload }) {

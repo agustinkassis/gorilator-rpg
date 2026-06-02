@@ -125,6 +125,15 @@ const charsPathFor = (root: string) => resolve(root, "public/characters.json");
 const npcsPathFor = (root: string) => resolve(root, "public/npcs.json");
 const spawnersPathFor = (root: string) => resolve(root, "public/spawners.json");
 const resourcesPathFor = (root: string) => resolve(root, "public/resources.json");
+const structuresPathFor = (root: string) => resolve(root, "public/structures.json");
+
+// Per-structure-kind loot table: a list of {item, amount, probability} rolled
+// independently when the structure is destroyed. Read live by the server.
+interface LootEntry {
+  item: string;
+  amount: number;
+  probability: number; // 0..1
+}
 
 // Per-resource-kind drop config: which item a tree/rock yields, how many, on hit
 // (progressive) or kill (full), and the resource's total HP (drives the drop rate:
@@ -532,6 +541,45 @@ function modelImporter(): Plugin {
             };
             writeFileSync(resourcesPathFor(root), JSON.stringify(drops, null, 2));
             sendJson(res, { ok: true, kind });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
+      // ======== Structure loot tables (items dropped when a structure is destroyed) ========
+      const readStructures = (): Record<string, { loot: LootEntry[] }> => {
+        const p = structuresPathFor(root);
+        if (!existsSync(p)) return {};
+        try {
+          const o = JSON.parse(readFileSync(p, "utf8"));
+          return o && typeof o === "object" ? o : {};
+        } catch {
+          return {};
+        }
+      };
+      server.middlewares.use("/__structures/list", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        sendJson(res, readStructures());
+      });
+      server.middlewares.use("/__structures/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}");
+            const kind = String(b.kind || "");
+            if (!kind) return fail(res, 400, "missing kind");
+            const loot: LootEntry[] = Array.isArray(b.loot)
+              ? b.loot.slice(0, 20).map((e: Record<string, unknown>) => ({
+                  item: String(e.item || "log"),
+                  amount: Math.max(0, Math.round(Number(e.amount) || 0)),
+                  probability: Math.max(0, Math.min(1, Number(e.probability) || 0)),
+                }))
+              : [];
+            const all = readStructures();
+            all[kind] = { loot };
+            writeFileSync(structuresPathFor(root), JSON.stringify(all, null, 2));
+            sendJson(res, { ok: true, kind, count: loot.length });
           } catch (e) {
             fail(res, 500, String(e));
           }

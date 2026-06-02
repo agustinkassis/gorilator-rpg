@@ -218,8 +218,10 @@ export class DevMode {
     this.net.sendGodMode(true);
     this.propManager.setPickable(true);
     this.charManager?.setPickable(true);
+    this.game?.setHousePickable(true); // the house is selectable only while editing
     void this.loadSpawners(); // reflect existing spawners in object inspectors
     void this.loadDrops(); // reflect existing tree/rock drop configs
+    void this.loadStructures(); // reflect existing structure loot tables
     this.btn.style.background = "#3a7a40";
     this.btn.style.color = "#fff";
     this.addBtn.style.display = "block";
@@ -237,6 +239,7 @@ export class DevMode {
     this.net.sendDevTime(1); // resume normal speed — never leave the game paused for everyone
     this.propManager.setPickable(false);
     this.charManager?.setPickable(false);
+    this.game?.setHousePickable(false); // back to click-through in normal play
     this.selection.clear();
     this.btn.style.background = "#2a3242";
     this.btn.style.color = "#9fe0a0";
@@ -525,8 +528,19 @@ export class DevMode {
         { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
       ];
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
+    } else if (sel.kind === "house") {
+      // A structure: editable HP, where 0 = INDESTRUCTIBLE (server ignores all damage).
+      const obj = this.entityObj("house", sel.id);
+      const hp = obj?.maxHp ?? 0;
+      fields = [
+        { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
+        { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
+        { kind: "number", label: "HP", value: hp, min: 0, step: 50, onChange: (v) => { this.net.sendDevSet("house", sel.id, "maxHp", Math.max(0, Math.round(v))); } },
+        { kind: "readonly", label: "note", value: hp <= 0 ? "⛨ indestructible (HP 0)" : "set HP 0 = indestructible" },
+      ];
+      this.appendLootFields("house", sel, fields, actions); // items dropped when destroyed
     } else {
-      // player / house / static: inspect-only (house collision is seeded → later phase)
+      // player / static: inspect-only
       const obj = this.entityObj(sel.kind, sel.id);
       fields = [
         { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
@@ -746,6 +760,105 @@ export class DevMode {
     this.dropSaveTimer = setTimeout(() => void this.saveDrop(kind), 300);
   }
 
+  // ---- structure loot tables (items dropped when a structure is destroyed) ----
+  private structures = new Map<string, LootEntry[]>(); // keyed by structure kind ("house")
+  private structureSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Pull the current per-structure loot tables so the inspector reflects them. */
+  async loadStructures() {
+    try {
+      const map = (await (await fetch("/__structures/list", { cache: "no-store" })).json()) as Record<string, { loot?: LootEntry[] }>;
+      this.structures.clear();
+      for (const [k, v] of Object.entries(map || {})) this.structures.set(k, Array.isArray(v?.loot) ? v.loot : []);
+    } catch {
+      /* no dev endpoint — nothing to load */
+    }
+  }
+
+  /** The loot table for a structure kind (a stable, mutable array the editor edits). */
+  private structureLoot(kind: string): LootEntry[] {
+    let l = this.structures.get(kind);
+    if (!l) {
+      l = [];
+      this.structures.set(kind, l);
+    }
+    return l;
+  }
+
+  /** Append the loot-table editor: one row per drop (item + amount + % chance) plus a
+   *  "＋ Add drop" action. Each item select carries a "✕ remove" option. On destroy the
+   *  server rolls each entry independently. */
+  private appendLootFields(kind: string, sel: Selectable, fields: Field[], actions: Action[]) {
+    const loot = this.structureLoot(kind);
+    fields.push({
+      kind: "readonly",
+      label: "drops on destroy",
+      value: loot.length ? `${loot.length} item${loot.length === 1 ? "" : "s"}` : "(none)",
+    });
+    loot.forEach((e, i) => {
+      fields.push({
+        kind: "select",
+        label: `• item ${i + 1}`,
+        value: e.item,
+        options: [...DROP_ITEMS, { value: "__remove__", label: "✕ remove" }],
+        onChange: (v) => {
+          if (v === "__remove__") {
+            loot.splice(i, 1);
+            this.scheduleStructureSave(kind);
+            this.showSelection(sel);
+            return;
+          }
+          e.item = v;
+          this.scheduleStructureSave(kind);
+        },
+      });
+      fields.push({
+        kind: "number",
+        label: "amount",
+        value: e.amount,
+        min: 0,
+        step: 1,
+        onChange: (v) => {
+          e.amount = Math.max(0, Math.round(v));
+          this.scheduleStructureSave(kind);
+        },
+      });
+      fields.push({
+        kind: "number",
+        label: "% chance",
+        value: Math.round(e.probability * 100),
+        min: 0,
+        max: 100,
+        step: 5,
+        onChange: (v) => {
+          e.probability = Math.max(0, Math.min(100, v)) / 100;
+          this.scheduleStructureSave(kind);
+        },
+      });
+    });
+    actions.push({
+      label: "＋ Add drop",
+      onClick: () => {
+        loot.push({ item: "log", amount: 1, probability: 1 });
+        this.scheduleStructureSave(kind);
+        this.showSelection(sel);
+      },
+    });
+  }
+
+  private async saveStructure(kind: string) {
+    const loot = this.structures.get(kind) ?? [];
+    await fetch("/__structures/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind, loot }),
+    }).catch((e) => console.warn("[structures] save failed", e));
+  }
+  private scheduleStructureSave(kind: string) {
+    if (this.structureSaveTimer) clearTimeout(this.structureSaveTimer);
+    this.structureSaveTimer = setTimeout(() => void this.saveStructure(kind), 300);
+  }
+
   /** Debounce prop persistence so dragging a slider/object doesn't spam the endpoint. */
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private schedulePersist(id: string) {
@@ -759,7 +872,7 @@ export class DevMode {
       | Record<string, { get(id: string): EntityView | undefined } | undefined>
       | undefined;
     if (!st) return null;
-    const map = kind === "tree" ? st.trees : kind === "potion" ? st.potions : kind === "enemy" ? st.enemies : kind === "rock" ? st.rocks : undefined;
+    const map = kind === "tree" ? st.trees : kind === "potion" ? st.potions : kind === "enemy" ? st.enemies : kind === "rock" ? st.rocks : kind === "house" ? st.houses : undefined;
     return map?.get(id) ?? null;
   }
 }
@@ -815,6 +928,13 @@ interface DropCfg {
   amount: number;
   trigger: "hit" | "kill";
   hp: number; // total health; progressive drop rate = hp / amount damage per item
+}
+
+/** One entry in a structure's loot table (mirrors the server/Vite LootEntry). */
+interface LootEntry {
+  item: string;
+  amount: number;
+  probability: number; // 0..1 independent chance to drop this entry on destroy
 }
 
 interface SpawnerCfg {

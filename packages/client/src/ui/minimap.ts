@@ -405,12 +405,13 @@ export class Minimap {
   /** Rebuild the connected-players panel (name · level · nostr badge). Nostr-verified
    *  players link out to njump.me for their npub. Only rebuilt when the roster changes. */
   private renderPlayerList(state: GameState | undefined, selfId: string | undefined) {
-    const rows: { id: string; name: string; level: number; verified: boolean; pubkey: string }[] = [];
+    const rows: { id: string; name: string; level: number; deaths: number; verified: boolean; pubkey: string }[] = [];
     state?.players.forEach((p, id) => {
       rows.push({
         id,
         name: p.name || "Anon",
         level: p.level,
+        deaths: p.deaths ?? 0,
         verified: !!p.nostrVerified && !!p.pubkey,
         pubkey: p.pubkey,
       });
@@ -421,7 +422,7 @@ export class Minimap {
       return b.level - a.level || a.name.localeCompare(b.name); // then by level, then name
     });
 
-    const sig = rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.verified ? 1 : 0}`).join("|");
+    const sig = rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.deaths}:${r.verified ? 1 : 0}`).join("|");
     if (sig === this.lastPlayerSig) return; // nothing changed → keep the DOM (stable links)
 
     const head = `<div id="mmPHead">Players · ${rows.length}</div>`;
@@ -442,7 +443,7 @@ export class Minimap {
           ? `<a class="mmLink" href="https://njump.me/${npub}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>`
           : `<span>${esc(r.name)}</span>`;
         const you = r.id === selfId ? `<span class="mmYou">(you)</span>` : "";
-        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span></div>`;
+        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span><span class="mmDeaths" title="times of death">☠ ${r.deaths}</span></div>`;
       })
       .join("");
     this.playerList.innerHTML = head + body;
@@ -694,7 +695,7 @@ export class Minimap {
       "#rpgMiniMap:hover{border-color:#8a6a3c}" +
       "body.preGame #rpgMiniMap{display:none!important}" +
       "body #hint{top:210px}" +
-      "#mmPlayers{position:absolute;top:12px;left:14px;z-index:2;pointer-events:auto;" +
+      "#mmPlayers{position:absolute;top:12px;right:14px;z-index:2;pointer-events:auto;" +
       "min-width:150px;max-width:46%;max-height:calc(100% - 70px);overflow-y:auto;" +
       "background:rgba(10,8,12,0.6);border:1px solid #6b4f2e;border-radius:8px;padding:8px 10px;" +
       "box-shadow:0 4px 16px rgba(0,0,0,0.5)}" +
@@ -704,6 +705,7 @@ export class Minimap {
       "font:600 13px system-ui,sans-serif;color:#e8e3d6;white-space:nowrap}" +
       ".mmRow .mmPName{overflow:hidden;text-overflow:ellipsis;max-width:170px}" +
       ".mmLvl{margin-left:auto;color:#c9a36a;font-size:12px}" +
+      ".mmDeaths{margin-left:8px;color:#e0726a;font-size:12px}" +
       ".mmNostr.on{color:#c08bff}.mmNostr.off{color:#5f5f68;font-size:11px}" +
       ".mmLink{color:#c08bff;text-decoration:none}" +
       ".mmLink:hover{text-decoration:underline;color:#d7b3ff}" +

@@ -31,6 +31,9 @@ export interface HouseModel {
   hide(): void;
   /** Rebuild the house: re-show the model and its shadow proxy (after a wipe). */
   show(): void;
+  /** Make the house click-selectable (Dev Mode only). Off in normal play so clicks
+   *  near/on the house fall through to the ground and just move the player. */
+  setPickable(on: boolean): void;
 }
 
 /**
@@ -118,8 +121,8 @@ export async function loadHouse(
       scene,
     );
     pick.position.copyFrom(proxy.position);
-    pick.visibility = 0; // transparent — invisible, but isVisible (so it stays pickable)
-    pick.isPickable = true;
+    pick.visibility = 0; // transparent — invisible, but isVisible (so it can be picked)
+    pick.isPickable = false; // Dev Mode only; normal-play clicks fall through to the ground
     pick.metadata = { entityId: "house-0", kind: "house" };
 
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
@@ -136,6 +139,9 @@ export async function loadHouse(
         proxy.setEnabled(true);
         pick.setEnabled(true);
         shadow.addShadowCaster(proxy); // ...and resume its shadow
+      },
+      setPickable: (on: boolean) => {
+        pick.isPickable = on;
       },
     };
   } catch (e) {

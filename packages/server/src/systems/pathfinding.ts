@@ -1,4 +1,12 @@
-import { OBSTACLES, BOULDERS, AGENT_RADIUS, NAV_CELL, WORLD_SIZE } from "@rpg/shared";
+import { OBSTACLES, BOULDERS, AGENT_RADIUS, NAV_CELL, WORLD_SIZE, HOUSE_CENTER } from "@rpg/shared";
+
+// La Crypta's VISIBLE footprint (~10.5 × 11, corners ~7.6 from centre) is wider
+// than its movement-collision circle (radius 5). Players may walk right up to the
+// collision edge during play, but they must never be SPAWNED under the visible
+// model — a restored Nostr save / takeover position can sit there. Spawns are
+// therefore pushed out to this ring (visual corner 7.6 + agent + margin), which
+// only affects placement, not movement collision.
+const HOUSE_SPAWN_CLEARANCE = 8.5;
 
 /**
  * Grid-based A* navigation over the static obstacle set. Obstacles are inflated
@@ -147,6 +155,67 @@ export function depenetrate(x: number, z: number): Pt {
     }
   }
   return { x: px, z: pz };
+}
+
+/**
+ * True when an agent centred at (x, z) overlaps NO solid obstacle — the precise
+ * circle test (house, crates, rocks, imported concrete props), not the grid
+ * approximation. This is the postcondition every player spawn must satisfy:
+ * if it holds, the player is provably not standing inside a concrete object.
+ */
+export function isClearWorld(x: number, z: number): boolean {
+  for (const o of allObstacles()) {
+    const r = o.radius + AGENT_RADIUS;
+    if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r) return false;
+  }
+  return true;
+}
+
+const clampWorld = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
+
+/**
+ * Resolve a requested spawn/teleport point to one GUARANTEED clear of every
+ * solid obstacle, so a player is never dropped inside a structure. Strategy:
+ *   1. Snap to the nearest free nav cell, then depenetrate — handles the common
+ *      case (a point near or inside a single obstacle like the house).
+ *   2. Verify the result with the precise circle test. The grid snap already
+ *      guarantees clearance in every normal case; this catches the degenerate
+ *      one where overlapping structures left the point embedded.
+ *   3. If still embedded, spiral outward from the request sampling points until
+ *      one tests clear. Only a world walled in almost solid falls through to the
+ *      best-effort depenetrated point.
+ */
+export function safeSpawnWorld(x: number, z: number): Pt {
+  // Keep the request clear of the house's VISIBLE footprint first (see
+  // HOUSE_SPAWN_CLEARANCE) — otherwise a restored save position drops you under
+  // the model. Push radially out along the request's bearing from the house.
+  let rx = x;
+  let rz = z;
+  const hx = rx - HOUSE_CENTER.x;
+  const hz = rz - HOUSE_CENTER.z;
+  const hd = Math.hypot(hx, hz);
+  if (hd < HOUSE_SPAWN_CLEARANCE) {
+    const ux = hd > 1e-6 ? hx / hd : 1; // dead-centre → deterministic +x bearing
+    const uz = hd > 1e-6 ? hz / hd : 0;
+    rx = clampWorld(HOUSE_CENTER.x + ux * HOUSE_SPAWN_CLEARANCE);
+    rz = clampWorld(HOUSE_CENTER.z + uz * HOUSE_SPAWN_CLEARANCE);
+  }
+  const snapped = nearestFreeWorld(rx, rz);
+  const best = depenetrate(snapped.x, snapped.z);
+  if (isClearWorld(best.x, best.z)) return best;
+  for (let ring = 1; ring <= GRID; ring++) {
+    const rad = ring * NAV_CELL;
+    const steps = Math.max(8, ring * 6);
+    for (let s = 0; s < steps; s++) {
+      const a = (s / steps) * Math.PI * 2;
+      const cand = depenetrate(
+        clampWorld(x + Math.cos(a) * rad),
+        clampWorld(z + Math.sin(a) * rad),
+      );
+      if (isClearWorld(cand.x, cand.z)) return cand;
+    }
+  }
+  return best; // world is essentially full — best effort
 }
 
 // --- A* ---

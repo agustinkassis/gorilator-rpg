@@ -82,5 +82,26 @@ export function devSet(
     }
     return false;
   }
+  if (kind === "house") {
+    const h = state.houses.get(id);
+    if (!h) return false;
+    if (field === "maxHp") {
+      // A structure's HP. 0 ⇒ INDESTRUCTIBLE: damage is ignored server-side
+      // (combat guards on maxHp), so the home never collapses.
+      const v = Math.max(0, Math.round(Number(value) || 0));
+      h.maxHp = v;
+      h.hp = v; // refill to the new HP (0 when indestructible)
+      h.alive = true; // editing HP keeps/brings the structure standing
+      return true;
+    }
+    if (field === "alive") {
+      // Toggle La Crypta's standing state. Collapsing it (alive=false) ends the
+      // realm and kicks off the next-realm countdown — handy for testing.
+      h.alive = !!value;
+      h.hp = h.alive ? h.maxHp : 0;
+      return true;
+    }
+    return false;
+  }
   return false;
 }

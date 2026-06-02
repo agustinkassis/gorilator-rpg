@@ -157,7 +157,7 @@ export const GOBLIN_SPAWN_NEAR_MAX = 34; // ...and at most this far (just beyond
 export const WAVE_INTERVAL_BASE_MS = 270000; // rest after wave 1 (4.5 min)
 export const WAVE_INTERVAL_STEP_MS = 30000; // each successive rest grows by this (0.5 min) → 4.5, 5, 5.5, …
 export const WAVE_INTERVAL_MAX_MS = 600000; // cap the growth here (10 min); raise/remove for unbounded
-export const WAVE_FIRST_DELAY_MS = 240000; // the very first wave lands at 4 min
+export const WAVE_FIRST_DELAY_MS = 150000; // the very first wave lands at 2.5 min
 export const WAVE_MARCH_SECONDS = 30; // a wave spawns this many seconds' walk from home...
 export const WAVE_SPAWN_DISTANCE = GOBLIN_CHASE_SPEED * WAVE_MARCH_SECONDS; // ...i.e. this far out (≈108u)
 export const WAVE_SPAWN_ARC = Math.PI * 0.7; // the horde fans out across this arc (approaches from ~one side)
@@ -170,9 +170,10 @@ export const GOBLIN_HOUSE_DAMAGE = 5; // flat HP a goblin's hit chips off the ho
 
 // Health potions scattered in the world (collected into the inventory).
 export const POTION_COUNT = 6; // how many exist at once
-export const POTION_HEAL = 30; // HP restored when a potion is consumed from the inventory
+export const POTION_HEAL = 90; // HP restored when a potion is consumed from the inventory
 export const PICKUP_RADIUS = 1.3; // how close you must walk to grab one
 export const POTION_RESPAWN_MS = 7000; // delay before a collected potion is replaced
+export const GOBLIN_POTION_DROP_CHANCE = 0.4; // a slain goblin drops a health potion this often
 
 // Trees are choppable resources scattered across the map.
 export const TREE_COUNT = 120;
@@ -200,6 +201,10 @@ export const ROCK_COLLISION_SCALE = 0.5; // a rock's collision/approach footprin
 // the client house model), so a ~5u collision radius covers its walls.
 export const HOUSE_HP = 300;
 export const HOUSE_COLLISION_RADIUS = 5;
+
+// When La Crypta falls the realm ends: the world freezes and a countdown runs
+// before the next realm spins up with every player respawned from scratch.
+export const REALM_RESTART_MS = 10_000; // intermission length (10s)
 
 // Bananas: collectible ammo. Hold a banana's hotkey (Q/W/E/R) to charge a power
 // bar, release to throw toward the mouse; the charge sets distance, damage and

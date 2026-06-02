@@ -435,6 +435,12 @@ export class Game {
     this.houseModel = model;
   }
 
+  /** Dev Mode: make the house click-selectable (off in normal play, so clicks near
+   *  the house move the player instead of being eaten by its footprint). */
+  setHousePickable(on: boolean) {
+    this.houseModel?.setPickable(on);
+  }
+
   addHouse(h: House, id: string) {
     if (this.houses.has(id)) return;
     const scene = this.camera.getScene();

@@ -44,6 +44,19 @@ export class HomeBar {
 
   /** Update the home's HP bar (alive=false → collapsed). */
   setHouse(hp: number, maxHp: number, alive: boolean) {
+    if (maxHp <= 0) {
+      // Dev-set indestructible structure (HP 0): always standing, no destructible bar.
+      if (this.fallen) {
+        this.fallen = false;
+        this.root.classList.remove("hbDead");
+      }
+      this.title.textContent = "🏛 La Crypta · ⛨";
+      this.fill.style.width = "100%";
+      this.fill.style.background = "#54d98c";
+      this.root.classList.remove("hbLow");
+      this.hpText.textContent = "∞";
+      return;
+    }
     if (!alive || hp <= 0) {
       if (!this.fallen) {
         this.fallen = true;

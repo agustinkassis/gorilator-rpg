@@ -34,11 +34,21 @@ const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const respawnOverlay = document.getElementById("respawnOverlay") as HTMLDivElement;
 const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDivElement;
+const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
+const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
 
 // Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
 // time by Vite with the package.json version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
 if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
+
+// DEV-only: `?mocknostr=gen|nsec1…|<hex>` installs a fake NIP-07 signer so the
+// Nostr login flow can be tested without a browser extension. Installed up-front
+// (before the splash) so window.nostr is ready when "Login with Nostr" is clicked.
+if (import.meta.env.DEV) {
+  const mockArg = new URLSearchParams(location.search).get("mocknostr");
+  if (mockArg) void import("./net/nostrMock").then((m) => m.installMockSigner(mockArg));
+}
 
 const engine = new Engine(canvas, true, { stencil: true }, true);
 const { scene, camera, ground, shadow } = createScene(engine);
@@ -355,12 +365,22 @@ engine.runRenderLoop(() => {
     homeBar.setWave(st.waveNumber, st.waveTimerMs);
   }
 
-  const respawnIn = game.respawnCountdown();
-  if (respawnIn === null) {
+  // Realm-over intermission (La Crypta fell): the whole-screen "next realm in N"
+  // countdown takes priority over the per-player respawn overlay.
+  const restartMs = net.room?.state.restartTimerMs ?? 0;
+  if (restartMs > 0) {
+    realmOverlay.style.display = "flex";
+    realmCountdownEl.textContent = String(Math.ceil(restartMs / 1000));
     if (respawnOverlay.style.display !== "none") respawnOverlay.style.display = "none";
   } else {
-    respawnOverlay.style.display = "flex";
-    respawnCountdownEl.textContent = `Respawning in ${Math.ceil(respawnIn)}`;
+    if (realmOverlay.style.display !== "none") realmOverlay.style.display = "none";
+    const respawnIn = game.respawnCountdown();
+    if (respawnIn === null) {
+      if (respawnOverlay.style.display !== "none") respawnOverlay.style.display = "none";
+    } else {
+      respawnOverlay.style.display = "flex";
+      respawnCountdownEl.textContent = `Respawning in ${Math.ceil(respawnIn)}`;
+    }
   }
 
   scene.render();

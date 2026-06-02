@@ -7,7 +7,7 @@ import {
   DynamicTexture,
   Texture,
 } from "@babylonjs/core";
-import { WORLD_SIZE, CRATES } from "@rpg/shared";
+import { WORLD_SIZE } from "@rpg/shared";
 
 export interface Environment {
   ground: Mesh;
@@ -155,17 +155,6 @@ export function createEnvironment(scene: Scene): Environment {
   scatterGrass(scene); // carpet the map with the 3-variation grass grid
 
   const shadowCasters: Mesh[] = [];
-
-  // ---- crate stacks (block movement; cast + receive shadows) ----
-  const crateMat = flat(scene, "crateMat", new Color3(0.5, 0.36, 0.2));
-  CRATES.forEach((c, i) => {
-    const box = MeshBuilder.CreateBox("crate", { size: 1.2 }, scene);
-    box.position.set(c.x, i % 3 === 2 ? 1.7 : 0.6, c.z); // every 3rd crate sits on top
-    box.rotation.y = c.rotY;
-    box.material = crateMat;
-    box.receiveShadows = true;
-    shadowCasters.push(box);
-  });
 
   // ---- center cross: a glowing "+" marker at the map origin (0,0) ----
   const crossMat = flat(scene, "centerCrossMat", new Color3(0.97, 0.9, 0.45));

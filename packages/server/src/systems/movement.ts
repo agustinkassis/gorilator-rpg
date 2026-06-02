@@ -6,7 +6,7 @@ import {
   SPRINT_SPEED_MULT,
   ARRIVE_THRESHOLD,
 } from "@rpg/shared";
-import { findPath, depenetrate, nearestFreeWorld } from "./pathfinding";
+import { findPath, depenetrate, safeSpawnWorld } from "./pathfinding";
 
 /** Route a player to (x,z) around obstacles and start them walking. */
 export function setDestination(player: Player, x: number, z: number) {
@@ -24,8 +24,7 @@ export function setDestination(player: Player, x: number, z: number) {
  *  unable to move). When the requested spot is already free this is a no-op, so it
  *  preserves an exact position (e.g. a takeover) whenever that position is valid. */
 export function placeAtFreeSpot(player: Player, x: number, z: number) {
-  const free = nearestFreeWorld(x, z);
-  const safe = depenetrate(free.x, free.z);
+  const safe = safeSpawnWorld(x, z); // guaranteed clear of every concrete object
   player.x = safe.x;
   player.z = safe.z;
   player.targetX = safe.x;

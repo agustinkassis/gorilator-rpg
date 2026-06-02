@@ -387,6 +387,51 @@
         letter-spacing: 0.5px;
         text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
       }
+      /* ---- Realm-over intermission (La Crypta fell → next realm countdown) ---- */
+      #realmOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9; /* above the per-player respawn overlay */
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        pointer-events: none;
+        text-align: center;
+        background: radial-gradient(
+          circle at 50% 45%,
+          rgba(40, 0, 0, 0.55),
+          rgba(0, 0, 0, 0.84)
+        );
+      }
+      #realmTitle {
+        font: 700 58px Georgia, "Times New Roman", serif;
+        color: #c9302c;
+        letter-spacing: 5px;
+        text-shadow:
+          0 2px 10px rgba(0, 0, 0, 0.9),
+          0 0 30px rgba(150, 0, 0, 0.7);
+      }
+      #realmSub {
+        font: 600 20px system-ui, sans-serif;
+        color: #e8d8c0;
+        letter-spacing: 1px;
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+      }
+      #realmCountdown {
+        font: 800 104px system-ui, sans-serif;
+        color: #ffd479;
+        line-height: 1;
+        text-shadow:
+          0 2px 10px rgba(0, 0, 0, 0.9),
+          0 0 30px rgba(255, 160, 40, 0.55);
+      }
+      #realmHint {
+        font: 500 15px system-ui, sans-serif;
+        color: #c4ab86;
+        letter-spacing: 0.5px;
+      }
       /* ---- XP / level bar (bottom centre) ---- */
       #xpBar {
         position: fixed;
@@ -1195,6 +1240,12 @@
     <div id="respawnOverlay">
       <div id="respawnTitle">YOU DIED</div>
       <div id="respawnCountdown">Respawning in 8</div>
+    </div>
+    <div id="realmOverlay">
+      <div id="realmTitle">LA CRYPTA HAS FALLEN</div>
+      <div id="realmSub">The realm is over</div>
+      <div id="realmCountdown">10</div>
+      <div id="realmHint">Next realm begins — everyone respawns from scratch</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

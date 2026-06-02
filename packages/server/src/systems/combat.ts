@@ -27,11 +27,12 @@ import {
   AGENT_RADIUS,
   TREE_BANANA_DROP_CHANCE,
   ROCK_COLLISION_SCALE,
+  GOBLIN_POTION_DROP_CHANCE,
   statsForLevel,
 } from "@rpg/shared";
 import { setDestination, placeAtFreeSpot } from "./movement";
 import { nearestFreeWorld } from "./pathfinding";
-import { onTreeCut, onTreeDamaged, onRockMined, onRockDamaged } from "./resources";
+import { onTreeCut, onTreeDamaged, onRockMined, onRockDamaged, dropPotion } from "./resources";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 
@@ -289,6 +290,11 @@ function connectHit(
           ? GOBLIN_RESPAWN_MS
           : DUMMY_RESPAWN_MS;
     grantXp(attacker, killXp(state, targetId), emitXp); // the killer gains XP
+    // 40% chance a slain goblin drops a health potion at its feet
+    if (state.enemies.get(targetId)?.kind === "goblin" &&
+        Math.random() < GOBLIN_POTION_DROP_CHANCE) {
+      dropPotion(state, pe.x, pe.z);
+    }
   } else if (pe.state !== AnimState.ATTACK && pe.state !== AnimState.THROW) {
     // hurt animation — but a hit never interrupts an attack/throw in progress
     pe.state = AnimState.HIT;

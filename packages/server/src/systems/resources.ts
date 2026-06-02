@@ -25,6 +25,7 @@ import {
 import { nearestFreeWorld } from "./pathfinding";
 import { spawnBanana } from "./bananas";
 import { dropConfig } from "./resourceDrops";
+import { structureLoot } from "./structureDrops";
 
 let dropSeq = 0; // id counter for misc drops (potions / future custom items)
 
@@ -61,6 +62,26 @@ function dropItem(state: GameState, type: string, x: number, z: number): void {
       e.z = spot.z;
       state.stones.set(e.id, e);
       break;
+    }
+  }
+}
+
+/** Drop a single health potion at (x,z) — e.g. loot from a slain goblin. */
+export function dropPotion(state: GameState, x: number, z: number): void {
+  dropItem(state, "potion", x, z);
+}
+
+/** A structure was destroyed: roll its loot table. Each entry is rolled
+ *  INDEPENDENTLY (Math.random() < probability) and, on success, drops `amount` of
+ *  its item scattered around the structure's footprint. */
+export function dropStructureLoot(state: GameState, kind: string, x: number, z: number): void {
+  for (const e of structureLoot(kind)) {
+    if (Math.random() >= e.probability) continue;
+    const n = Math.max(0, Math.round(e.amount));
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 1 + Math.random() * 3; // scatter around the structure footprint
+      dropItem(state, e.item, x + Math.cos(ang) * r, z + Math.sin(ang) * r);
     }
   }
 }

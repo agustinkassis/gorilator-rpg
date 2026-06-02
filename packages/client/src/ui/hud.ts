@@ -190,6 +190,14 @@ export class HUD {
       levelText.fontStyle = "bold";
       levelText.outlineColor = "black";
       levelText.outlineWidth = 3;
+      // Centre the number in the medallion (fill it + centre the glyph both ways).
+      levelText.resizeToFit = false;
+      levelText.widthInPixels = 40;
+      levelText.heightInPixels = 40;
+      levelText.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+      levelText.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+      levelText.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+      levelText.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
       circle.addControl(levelText);
     }
 
@@ -236,9 +244,9 @@ export class HUD {
     this.createBar({
       id: entity.id,
       link: entity.root,
-      // raised offset floats the name + level circle ~40% higher over the head;
-      // the name is top-aligned with the level circle tucked on the row beneath it.
-      linkOffsetY: -176,
+      // float the name + level over the head, lowered ~35% from the old -176 so they
+      // sit closer to the character (the name is top-aligned, level circle beneath it).
+      linkOffsetY: -114,
       width: 240,
       height: 124,
       barWidth: BAR_WIDTH,
