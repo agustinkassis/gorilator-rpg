@@ -149,6 +149,7 @@ export class Game {
   private dropsEnabled = false; // gate the loot-pop so the initial world sync doesn't all pop at once
   private damageFx: DamageFx | null = null; // local-player hurt feedback (flash/shake/low-HP)
   private audio: AudioManager | null = null; // sound effects + music (set after construction)
+  private focusOverride: { x: number; z: number } | null = null; // dev: hold camera off the player
   localId: string | null = null;
 
   constructor(
@@ -176,9 +177,74 @@ export class Game {
     this.audio = audio;
   }
 
+  /** Dev Mode: toggle the local player's ghost look (translucent + floating)
+   *  while the game is paused. Idempotent. */
+  setGhost(on: boolean) {
+    const local = this.localId ? this.entities.get(this.localId) : null;
+    local?.setGhost(on);
+  }
+
+  /** While paused, drive ONLY the local player (ghost free-roam) + camera at real
+   *  (unscaled) dt, so it roams as the rest of the world stays frozen. */
+  updateGhost(dt: number) {
+    const local = this.localId ? this.entities.get(this.localId) : null;
+    if (!local) return;
+    local.update(dt); // interpolate toward the server's ghost-moved position
+    const t = this.camera.target;
+    const f = smooth(dt, 0.12);
+    const focus = this.focusOverride; // dev: explorer may be holding the camera off the player
+    const tx = focus ? focus.x : local.root.position.x;
+    const tz = focus ? focus.z : local.root.position.z;
+    t.x += (tx - t.x) * f;
+    t.z += (tz - t.z) * f;
+    t.y = 1;
+  }
+
   /** Flash a character white when the player picks it as an attack target. */
   flashSelectTarget(id: string) {
     this.entities.get(id)?.flashSelect();
+  }
+
+  /** Dev Mode: pan the isometric camera to a world point and HOLD it there
+   *  (overriding the player-follow) until clearFocus(). The library explorer uses
+   *  this to jump to a selected entity anywhere on the map. */
+  focusOn(x: number, z: number) {
+    this.focusOverride = { x, z };
+  }
+  /** Stop holding a dev camera focus; the view resumes following the local player. */
+  clearFocus() {
+    this.focusOverride = null;
+  }
+
+  /** Dev Mode: resolve a synced entity's holder node + meshes by (kind, id) so the
+   *  editor can select/highlight it without a mesh pick. Props/characters are owned
+   *  by their own managers (not here); returns null if absent. */
+  nodeFor(kind: string, id: string): { root: TransformNode; meshes: AbstractMesh[] } | null {
+    const wrap = (root?: TransformNode | null) =>
+      root ? { root, meshes: root.getChildMeshes(false) } : null;
+    switch (kind) {
+      case "player":
+      case "enemy": {
+        const e = this.entities.get(id);
+        return e ? { root: e.root, meshes: e.meshes } : null;
+      }
+      case "tree":
+        return wrap(this.trees.get(id)?.root);
+      case "rock":
+        return wrap(this.rocks.get(id)?.root);
+      case "log":
+        return wrap(this.logs.get(id)?.root);
+      case "stone":
+        return wrap(this.stones.get(id)?.root);
+      case "potion":
+        return wrap(this.potions.get(id)?.root);
+      case "banana":
+        return wrap(this.bananas.get(id)?.root);
+      case "house":
+        return wrap(this.houses.get(id)?.anchor);
+      default:
+        return null;
+    }
   }
 
   // ---- player callbacks ----
@@ -351,6 +417,8 @@ export class Game {
     rm.hp = rock.hp;
     rm.maxHp = rock.maxHp;
     rm.setAlive(rock.alive);
+    rm.root.position.x = rock.x; // follow dev-mode relocation (HP bar is parented, tags along)
+    rm.root.position.z = rock.z;
   }
 
   removeRock(id: string) {
@@ -367,6 +435,12 @@ export class Game {
     this.houseModel = model;
   }
 
+  /** Dev Mode: make the house click-selectable (off in normal play, so clicks near
+   *  the house move the player instead of being eaten by its footprint). */
+  setHousePickable(on: boolean) {
+    this.houseModel?.setPickable(on);
+  }
+
   addHouse(h: House, id: string) {
     if (this.houses.has(id)) return;
     const scene = this.camera.getScene();
@@ -377,6 +451,7 @@ export class Game {
     const hm = { hp: h.hp, maxHp: h.maxHp, anchor };
     this.houses.set(id, hm);
     this.hud.addResource(id, anchor, () => hm.hp, () => hm.maxHp, "#d98c54");
+    if (h.alive) this.houseModel?.show(); // a (re)built house re-shows its model after a wipe
   }
 
   changeHouse(h: House, id: string) {
@@ -914,13 +989,17 @@ export class Game {
     }
 
     const local = this.localId ? this.entities.get(this.localId) : null;
-    if (local) {
+    const focus = this.focusOverride; // dev: explorer is holding the camera off the player
+    if (focus || local) {
       const f = smooth(dt, 0.12);
       const t = this.camera.target;
-      t.x += (local.root.position.x - t.x) * f;
-      t.z += (local.root.position.z - t.z) * f;
+      const tx = focus ? focus.x : local!.root.position.x;
+      const tz = focus ? focus.z : local!.root.position.z;
+      t.x += (tx - t.x) * f;
+      t.z += (tz - t.z) * f;
       t.y = 1;
-
+    }
+    if (local) {
       // keep the (fixed-size) shadow frustum centred on the player so shadows stay
       // crisp on the big map instead of being smeared across the whole world.
       const sun = this.shadow.getLight();

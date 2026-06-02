@@ -1,10 +1,14 @@
-import { Scene, Mesh, PickingInfo } from "@babylonjs/core";
+import { Scene, Mesh, PickingInfo, ArcRotateCamera } from "@babylonjs/core";
+import { setCameraZoom, getCameraZoom } from "../scene/camera";
 import { NetworkClient } from "../net/NetworkClient";
 import { PropManager } from "./PropManager";
 import { SelectionManager, Selectable } from "./Selection";
 import { Inspector, Field, Action } from "./Inspector";
 import { PropLibrary } from "./PropLibrary";
+import { LibraryExplorer } from "./LibraryExplorer";
 import { PropDef } from "../scene/props";
+import type { CharacterManager } from "./CharacterManager";
+import type { Game } from "../game/Game";
 
 /**
  * Dev Mode: a master toggle (button, or the ` backtick key) that turns the live
@@ -23,12 +27,71 @@ export class DevMode {
   private selection: SelectionManager;
   private inspector: Inspector;
   private library: PropLibrary;
+  private explorer: LibraryExplorer;
   private btn: HTMLButtonElement;
   private addBtn: HTMLButtonElement;
+  private entitiesBtn: HTMLButtonElement;
   private banner: HTMLElement;
   private timeBar: HTMLElement;
   private timeButtons: { scale: number; el: HTMLButtonElement }[] = [];
   private canvas: HTMLCanvasElement | null;
+  private charManager: CharacterManager | null = null; // wired post-construction (main.ts)
+  private game: Game | null = null; // wired post-construction (main.ts) — for focus + nodeFor
+
+  /** Wire in placed-character management so they're selectable/draggable/deletable. */
+  setCharacterManager(cm: CharacterManager) {
+    this.charManager = cm;
+  }
+
+  /** Wire in the Game so the library explorer can select + camera-focus entities. */
+  setGame(g: Game) {
+    this.game = g;
+  }
+
+  /** Library-explorer hook: select + highlight an entity by (kind,id), open its
+   *  inspector, and pan/hold the camera on it. Resolves props/characters via their
+   *  managers and synced entities via Game. Returns true if the entity was found. */
+  focusEntity(kind: string, id: string): boolean {
+    let sel: Selectable | null = null;
+    if (kind === "prop") {
+      const p = this.propManager.get(id);
+      if (p) sel = { kind: "prop", id, root: p.loaded.root, meshes: p.loaded.meshes };
+    } else if (kind === "character") {
+      const c = this.charManager?.get(id);
+      if (c) sel = { kind: "character", id, root: c.built.root, meshes: c.built.meshes };
+    } else {
+      const n = this.game?.nodeFor(kind, id);
+      if (n) sel = { kind, id, root: n.root, meshes: n.meshes };
+    }
+    if (!sel) return false;
+    this.drag = null; // focusing is not a drag
+    this.selection.select(sel);
+    this.showSelection(sel);
+    this.game?.focusOn(sel.root.position.x, sel.root.position.z);
+    return true;
+  }
+
+  /** Pan/hold the camera on a bare world point (for static structures like crates
+   *  that have no selectable mesh); clears any current selection. */
+  focusPos(x: number, z: number) {
+    this.selectNone();
+    this.game?.focusOn(x, z);
+  }
+
+  /** Release the camera so it resumes following the local player. */
+  clearFocus() {
+    this.game?.clearFocus();
+  }
+
+  /** Resolve a picked mesh to any selectable — props/synced entities, or a placed
+   *  custom character. */
+  private resolveSel(mesh: Parameters<SelectionManager["resolve"]>[0]): Selectable | null {
+    const s = this.selection.resolve(mesh);
+    if (s) return s;
+    const c = this.charManager?.resolve(mesh);
+    if (c) return { kind: "character", id: c.placement.id, root: c.built.root, meshes: c.built.meshes };
+    return null;
+  }
 
   constructor(
     private scene: Scene,
@@ -64,6 +127,25 @@ export class DevMode {
     addBtn.onclick = () => this.library.toggle();
     document.body.appendChild(addBtn);
     this.addBtn = addBtn;
+
+    // "Entities" opens the library explorer: browse + camera-focus every world entity.
+    const entitiesBtn = document.createElement("button");
+    entitiesBtn.textContent = "🗂 Entities";
+    entitiesBtn.style.cssText =
+      "position:fixed; right:16px; bottom:312px; z-index:40; cursor:pointer; display:none;" +
+      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
+      "padding:6px 10px; font:12px system-ui,sans-serif;";
+    entitiesBtn.onclick = () => this.explorer.toggle();
+    document.body.appendChild(entitiesBtn);
+    this.entitiesBtn = entitiesBtn;
+
+    this.explorer = new LibraryExplorer({
+      net: this.net,
+      propManager: this.propManager,
+      focusEntity: (kind, id) => this.focusEntity(kind, id),
+      focusPos: (x, z) => this.focusPos(x, z),
+      clearFocus: () => this.clearFocus(),
+    });
 
     const banner = document.createElement("div");
     banner.textContent = "DEV MODE — immortal · click to select";
@@ -111,6 +193,20 @@ export class DevMode {
         this.deleteSelection();
       }
     });
+
+    // Dev Mode only: scroll to zoom the camera out (up to 6×) to survey the map.
+    this.canvas?.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this.active) return;
+        const cam = this.scene.activeCamera as ArcRotateCamera | null;
+        if (!cam) return;
+        e.preventDefault();
+        const step = e.deltaY > 0 ? 1.15 : 1 / 1.15; // down = out, up = in
+        setCameraZoom(cam, getCameraZoom() * step);
+      },
+      { passive: false },
+    );
   }
 
   toggle() {
@@ -121,9 +217,15 @@ export class DevMode {
     this.active = true;
     this.net.sendGodMode(true);
     this.propManager.setPickable(true);
+    this.charManager?.setPickable(true);
+    this.game?.setHousePickable(true); // the house is selectable only while editing
+    void this.loadSpawners(); // reflect existing spawners in object inspectors
+    void this.loadDrops(); // reflect existing tree/rock drop configs
+    void this.loadStructures(); // reflect existing structure loot tables
     this.btn.style.background = "#3a7a40";
     this.btn.style.color = "#fff";
     this.addBtn.style.display = "block";
+    this.entitiesBtn.style.display = "block";
     this.banner.style.display = "block";
     this.timeBar.style.display = "flex";
     this.reflectScale(this.net.room?.state.timeScale ?? 1); // show current speed, don't change it
@@ -136,13 +238,20 @@ export class DevMode {
     this.net.sendGodMode(false);
     this.net.sendDevTime(1); // resume normal speed — never leave the game paused for everyone
     this.propManager.setPickable(false);
+    this.charManager?.setPickable(false);
+    this.game?.setHousePickable(false); // back to click-through in normal play
     this.selection.clear();
     this.btn.style.background = "#2a3242";
     this.btn.style.color = "#9fe0a0";
     this.addBtn.style.display = "none";
+    this.entitiesBtn.style.display = "none";
     this.banner.style.display = "none";
     this.timeBar.style.display = "none";
     this.library.close();
+    this.explorer?.close();
+    this.clearFocus(); // release the camera back to the player
+    const cam = this.scene.activeCamera as ArcRotateCamera | null;
+    if (cam) setCameraZoom(cam, 1); // back to the normal play zoom
     this.inspector.hide();
     this.setCursor("default");
   }
@@ -174,8 +283,11 @@ export class DevMode {
   /** The local player's position (place new props at the player), or origin. */
   private playerPos(): { x: number; z: number } {
     const r = this.net.room;
-    const me = r ? (r.state.players.get(r.sessionId) as { x?: number; z?: number } | undefined) : undefined;
-    return { x: +(me?.x ?? 0).toFixed(1), z: +(me?.z ?? 0).toFixed(1) };
+    const me = r
+      ? (r.state.players.get(r.sessionId) as { x?: number; z?: number; rotY?: number } | undefined)
+      : undefined;
+    if (!me) return { x: 0, z: 0 };
+    return frontOfPlayer({ x: me.x ?? 0, z: me.z ?? 0, rotY: me.rotY });
   }
 
   /** Place an existing model into the world (persist + select for editing). */
@@ -248,6 +360,9 @@ export class DevMode {
     } else if (sel.kind === "tree" || sel.kind === "enemy" || sel.kind === "potion") {
       this.net.sendDevDelete(sel.kind, sel.id);
       this.selectNone();
+    } else if (sel.kind === "character") {
+      void this.charManager?.remove(sel.id);
+      this.selectNone();
     }
   }
 
@@ -266,7 +381,7 @@ export class DevMode {
       this.endDrag();
       return true;
     }
-    const sel = this.selection.resolve(pick?.pickedMesh ?? null);
+    const sel = this.resolveSel(pick?.pickedMesh ?? null);
     if (sel) {
       this.selection.select(sel);
       this.showSelection(sel);
@@ -278,6 +393,7 @@ export class DevMode {
     // bare ground (or nothing actionable): deselect, but keep navigation working
     this.selectNone();
     if (pick?.hit && pick.pickedMesh === this.ground && pick.pickedPoint) {
+      this.clearFocus(); // walking again → camera resumes following the player
       this.net.sendMove(pick.pickedPoint.x, pick.pickedPoint.z);
     }
     return true;
@@ -293,7 +409,7 @@ export class DevMode {
       this.setCursor("grabbing");
       return true;
     }
-    const sel = this.selection.resolve(pick?.pickedMesh ?? null);
+    const sel = this.resolveSel(pick?.pickedMesh ?? null);
     this.setCursor(sel ? "grab" : "default");
     return true;
   };
@@ -311,6 +427,8 @@ export class DevMode {
     if (!sel) return;
     if (sel.kind === "prop") {
       void this.propManager.persistUpdate(sel.id);
+    } else if (sel.kind === "character") {
+      void this.charManager?.persist(sel.id);
     } else {
       const o = this.entityObj(sel.kind, sel.id);
       if (o?.x !== undefined && o?.z !== undefined) this.net.sendDevMove(sel.kind, sel.id, o.x, o.z);
@@ -334,6 +452,8 @@ export class DevMode {
       placed.def.z = round(pz);
       this.propManager.applyDef(sel.id);
       this.schedulePersist(sel.id);
+    } else if (sel.kind === "character") {
+      this.charManager?.move(sel.id, round(px), round(pz)); // live; persisted on release
     } else {
       const now = performance.now();
       if (now - this.lastDragSend < 80) return; // throttle server moves
@@ -348,7 +468,8 @@ export class DevMode {
 
   /** Render the selection's properties + editing controls. Props edit locally and
    *  persist to props.json; synced entities send authoritative edits to the server
-   *  (which sync back to every client). Rocks/players are inspect-only for now. */
+   *  (which sync back to every client; rocks also refresh pathfinding collision).
+   *  Players/house are inspect-only for now. */
   private showSelection(sel: Selectable) {
     const persist = () => this.schedulePersist(sel.id);
     let fields: Field[] = [];
@@ -368,7 +489,19 @@ export class DevMode {
         { kind: "checkbox", label: "concrete", value: (d.collisionRadius ?? 0) > 0, onChange: (on) => { d.collisionRadius = on ? +(d.scale / 2).toFixed(2) : 0; void this.propManager.persistUpdate(sel.id); } },
       ];
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
-    } else if (sel.kind === "tree" || sel.kind === "enemy") {
+    } else if (sel.kind === "character") {
+      const cm = this.charManager;
+      const c = cm?.get(sel.id);
+      const px = round(c?.placement.x ?? sel.root.position.x);
+      const pz = round(c?.placement.z ?? sel.root.position.z);
+      fields = [
+        { kind: "readonly", label: "name", value: c?.def.name ?? sel.id },
+        { kind: "number", label: "x", value: px, step: 0.5, onChange: (v) => { cm?.move(sel.id, v, cm?.get(sel.id)?.placement.z ?? pz); void cm?.persist(sel.id); } },
+        { kind: "number", label: "z", value: pz, step: 0.5, onChange: (v) => { cm?.move(sel.id, cm?.get(sel.id)?.placement.x ?? px, v); void cm?.persist(sel.id); } },
+        { kind: "range", label: "rot°", value: deg(c?.placement.rotationY ?? 0), min: 0, max: 360, step: 1, onChange: (v) => { cm?.setRotation(sel.id, (v * Math.PI) / 180); void cm?.persist(sel.id); } },
+      ];
+      actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
+    } else if (sel.kind === "tree" || sel.kind === "enemy" || sel.kind === "rock") {
       const obj = this.entityObj(sel.kind, sel.id);
       const x = obj?.x ?? sel.root.position.x;
       const z = obj?.z ?? sel.root.position.z;
@@ -377,11 +510,15 @@ export class DevMode {
         { kind: "number", label: "z", value: round(z), step: 0.5, onChange: (v) => this.net.sendDevMove(sel.kind, sel.id, this.entityObj(sel.kind, sel.id)?.x ?? x, v) },
       ];
       if (sel.kind === "tree") {
+        // HP is owned per-kind by the Drops "total HP" control (applies to every tree),
+        // so no per-instance maxHp here — just the alive/stump toggle.
         fields.push({ kind: "checkbox", label: "alive", value: !!obj?.alive, onChange: (on) => this.net.sendDevSet("tree", sel.id, "alive", on) });
-        if (obj?.maxHp !== undefined) fields.push({ kind: "number", label: "maxHp", value: obj.maxHp, min: 1, step: 10, onChange: (v) => this.net.sendDevSet("tree", sel.id, "maxHp", v) });
       }
       if (sel.kind === "enemy" && obj?.maxHp !== undefined) {
         fields.push({ kind: "number", label: "maxHp", value: obj.maxHp, min: 1, step: 10, onChange: (v) => this.net.sendDevSet("enemy", sel.id, "maxHp", v) });
+      }
+      if (sel.kind === "rock" && obj?.radius !== undefined) {
+        fields.push({ kind: "readonly", label: "radius", value: obj.radius.toFixed(2) }); // collision follows the move
       }
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
     } else if (sel.kind === "potion") {
@@ -391,18 +528,335 @@ export class DevMode {
         { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
       ];
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
+    } else if (sel.kind === "house") {
+      // A structure: editable HP, where 0 = INDESTRUCTIBLE (server ignores all damage).
+      const obj = this.entityObj("house", sel.id);
+      const hp = obj?.maxHp ?? 0;
+      fields = [
+        { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
+        { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
+        { kind: "number", label: "HP", value: hp, min: 0, step: 50, onChange: (v) => { this.net.sendDevSet("house", sel.id, "maxHp", Math.max(0, Math.round(v))); } },
+        { kind: "readonly", label: "note", value: hp <= 0 ? "⛨ indestructible (HP 0)" : "set HP 0 = indestructible" },
+      ];
+      this.appendLootFields("house", sel, fields, actions); // items dropped when destroyed
     } else {
-      // rock / player / house / static: inspect-only (seeded collision → later phase)
+      // player / static: inspect-only
       const obj = this.entityObj(sel.kind, sel.id);
       fields = [
         { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
         { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
       ];
       if (obj?.radius !== undefined) fields.push({ kind: "readonly", label: "radius", value: obj.radius.toFixed(2) });
-      if (sel.kind === "rock" || sel.kind === "house") fields.push({ kind: "readonly", label: "note", value: "edit in a later phase" });
     }
 
+    // Trees & rocks are resources — let the editor tune what/how much they drop.
+    if (isResource(sel.kind)) this.appendDropFields(sel, fields);
+    // Any object (house/prop/tree/rock) can be turned into a goblin spawner.
+    if (spawnable(sel.kind)) this.appendSpawnerFields(sel, fields);
     this.inspector.setSelection(`${sel.kind} · ${shortId(sel.id)}`, fields, actions);
+  }
+
+  // ---- goblin spawners (objects that spawn goblins) ----
+  private spawners = new Map<string, SpawnerCfg>();
+  private spawnerSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Pull the current spawner configs so the inspector reflects them. */
+  async loadSpawners() {
+    try {
+      const list = (await (await fetch("/__spawners/list", { cache: "no-store" })).json()) as SpawnerCfg[];
+      this.spawners.clear();
+      for (const s of list) this.spawners.set(s.id, { ...s, behavior: s.behavior ?? {} });
+    } catch {
+      /* no dev endpoint — nothing to load */
+    }
+  }
+
+  /** Append the "spawns goblins" toggle + frequency/cap + per-spawner goblin
+   *  behavior to an object's inspector. 0 in a behavior field = use the default. */
+  private appendSpawnerFields(sel: Selectable, fields: Field[]) {
+    const existing = this.spawners.get(sel.id);
+    fields.push({
+      kind: "checkbox",
+      label: "spawns goblins",
+      value: !!existing,
+      onChange: (on) => {
+        if (on) {
+          const sp: SpawnerCfg = existing ?? {
+            id: sel.id,
+            x: round(sel.root.position.x),
+            z: round(sel.root.position.z),
+            intervalMs: 4000,
+            cap: 3,
+            behavior: {},
+          };
+          this.spawners.set(sel.id, sp);
+          void this.saveSpawner(sel.id);
+        } else {
+          this.spawners.delete(sel.id);
+          void this.deleteSpawner(sel.id);
+        }
+        this.showSelection(sel); // re-render to show/hide the controls
+      },
+    });
+    const sp = this.spawners.get(sel.id);
+    if (!sp) return;
+    const num = (label: string, value: number, step: number, set: (v: number) => void): Field => ({
+      kind: "number",
+      label,
+      value,
+      min: 0,
+      step,
+      onChange: (v) => {
+        set(v);
+        sp.x = round(sel.root.position.x); // keep the spawner at the object
+        sp.z = round(sel.root.position.z);
+        this.scheduleSpawnerSave(sel.id);
+      },
+    });
+    const b = sp.behavior;
+    fields.push(
+      num("interval s", sp.intervalMs / 1000, 0.5, (v) => (sp.intervalMs = Math.max(200, Math.round(v * 1000)))),
+      num("max alive", sp.cap, 1, (v) => (sp.cap = Math.max(0, Math.round(v)))),
+      num("goblin hp", b.hp ?? 0, 5, (v) => (b.hp = v || undefined)),
+      num("goblin dmg", b.attack ?? 0, 5, (v) => (b.attack = v || undefined)),
+      num("aggro range", b.aggroRadius ?? 0, 1, (v) => (b.aggroRadius = v || undefined)),
+      num("chase spd", b.chaseSpeed ?? 0, 0.5, (v) => (b.chaseSpeed = v || undefined)),
+      num("atk cd ms", b.attackCooldownMs ?? 0, 100, (v) => (b.attackCooldownMs = v || undefined)),
+      num("house dmg", b.houseDamage ?? 0, 1, (v) => (b.houseDamage = v || undefined)),
+    );
+  }
+
+  private async saveSpawner(id: string) {
+    const sp = this.spawners.get(id);
+    if (!sp) return;
+    await fetch("/__spawners/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(sp),
+    }).catch((e) => console.warn("[spawner] save failed", e));
+  }
+  private async deleteSpawner(id: string) {
+    await fetch("/__spawners/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch((e) => console.warn("[spawner] delete failed", e));
+  }
+  private scheduleSpawnerSave(id: string) {
+    if (this.spawnerSaveTimer) clearTimeout(this.spawnerSaveTimer);
+    this.spawnerSaveTimer = setTimeout(() => void this.saveSpawner(id), 300);
+  }
+
+  // ---- resource drops (trees & rocks: which item, how much) ----
+  private drops = new Map<string, DropCfg>(); // keyed by resource kind ("tree"/"rock")
+  private dropSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Pull the current per-kind drop configs so resource inspectors reflect them. */
+  async loadDrops() {
+    try {
+      const map = (await (await fetch("/__resources/list", { cache: "no-store" })).json()) as Record<string, DropCfg>;
+      this.drops.clear();
+      for (const [k, v] of Object.entries(map || {})) this.drops.set(k, v);
+    } catch {
+      /* no dev endpoint — inspectors fall back to the built-in defaults */
+    }
+  }
+
+  /** Drop config for a resource kind: the authored value, else the built-in default
+   *  (mirrors the server's DEFAULTS, incl. HP = TREE_HP 60 / ROCK_HP 560). Backfills
+   *  any missing fields so an older resources.json (no hp/trigger) still resolves. */
+  private dropCfg(kind: string): DropCfg {
+    const def: DropCfg =
+      kind === "tree"
+        ? { item: "log", amount: 1, trigger: "kill", hp: 60 }
+        : { item: "stone", amount: 4, trigger: "hit", hp: 560 };
+    const c = this.drops.get(kind);
+    if (!c) {
+      this.drops.set(kind, def);
+      return def;
+    }
+    const m = c as Partial<DropCfg>; // backfill in place (stable reference for edits)
+    if (m.item == null) m.item = def.item;
+    if (m.amount == null) m.amount = def.amount;
+    if (m.trigger == null) m.trigger = def.trigger;
+    if (m.hp == null) m.hp = def.hp;
+    return c;
+  }
+
+  /** Append the "Drops" controls to a tree/rock inspector: which item, how many,
+   *  total HP, and the trigger (full-on-kill vs progressive-on-hit). HP/amount drives
+   *  the progressive drop rate. Edits apply to EVERY resource of this kind (per-type
+   *  config), committed server-side on save. */
+  private appendDropFields(sel: Selectable, fields: Field[]) {
+    const c = this.dropCfg(sel.kind);
+    fields.push({
+      kind: "select",
+      label: "drops",
+      value: c.item,
+      options: DROP_ITEMS,
+      onChange: (v) => {
+        c.item = v;
+        this.scheduleDropSave(sel.kind);
+      },
+    });
+    fields.push({
+      kind: "number",
+      label: "amount",
+      value: c.amount,
+      min: 0,
+      step: 1,
+      onChange: (v) => {
+        c.amount = Math.max(0, Math.round(v));
+        this.scheduleDropSave(sel.kind);
+        this.showSelection(sel); // refresh the dmg/item hint
+      },
+    });
+    fields.push({
+      kind: "number",
+      label: "total HP",
+      value: c.hp,
+      min: 1,
+      step: 10,
+      onChange: (v) => {
+        c.hp = Math.max(1, Math.round(v));
+        this.scheduleDropSave(sel.kind);
+        this.showSelection(sel); // refresh the dmg/item hint
+      },
+    });
+    fields.push({
+      kind: "select",
+      label: "trigger",
+      value: c.trigger,
+      options: [
+        { value: "kill", label: "On kill (full)" },
+        { value: "hit", label: "Progressive (hit)" },
+      ],
+      onChange: (v) => {
+        c.trigger = v === "kill" ? "kill" : "hit";
+        this.scheduleDropSave(sel.kind);
+        this.showSelection(sel); // show/hide the dmg/item hint
+      },
+    });
+    if (c.trigger === "hit") {
+      fields.push({
+        kind: "readonly",
+        label: "dmg / item",
+        value: (c.hp / Math.max(1, c.amount)).toFixed(1),
+      });
+    }
+  }
+
+  private async saveDrop(kind: string) {
+    const c = this.drops.get(kind);
+    if (!c) return;
+    await fetch("/__resources/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind, ...c }),
+    }).catch((e) => console.warn("[drops] save failed", e));
+  }
+  private scheduleDropSave(kind: string) {
+    if (this.dropSaveTimer) clearTimeout(this.dropSaveTimer);
+    this.dropSaveTimer = setTimeout(() => void this.saveDrop(kind), 300);
+  }
+
+  // ---- structure loot tables (items dropped when a structure is destroyed) ----
+  private structures = new Map<string, LootEntry[]>(); // keyed by structure kind ("house")
+  private structureSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Pull the current per-structure loot tables so the inspector reflects them. */
+  async loadStructures() {
+    try {
+      const map = (await (await fetch("/__structures/list", { cache: "no-store" })).json()) as Record<string, { loot?: LootEntry[] }>;
+      this.structures.clear();
+      for (const [k, v] of Object.entries(map || {})) this.structures.set(k, Array.isArray(v?.loot) ? v.loot : []);
+    } catch {
+      /* no dev endpoint — nothing to load */
+    }
+  }
+
+  /** The loot table for a structure kind (a stable, mutable array the editor edits). */
+  private structureLoot(kind: string): LootEntry[] {
+    let l = this.structures.get(kind);
+    if (!l) {
+      l = [];
+      this.structures.set(kind, l);
+    }
+    return l;
+  }
+
+  /** Append the loot-table editor: one row per drop (item + amount + % chance) plus a
+   *  "＋ Add drop" action. Each item select carries a "✕ remove" option. On destroy the
+   *  server rolls each entry independently. */
+  private appendLootFields(kind: string, sel: Selectable, fields: Field[], actions: Action[]) {
+    const loot = this.structureLoot(kind);
+    fields.push({
+      kind: "readonly",
+      label: "drops on destroy",
+      value: loot.length ? `${loot.length} item${loot.length === 1 ? "" : "s"}` : "(none)",
+    });
+    loot.forEach((e, i) => {
+      fields.push({
+        kind: "select",
+        label: `• item ${i + 1}`,
+        value: e.item,
+        options: [...DROP_ITEMS, { value: "__remove__", label: "✕ remove" }],
+        onChange: (v) => {
+          if (v === "__remove__") {
+            loot.splice(i, 1);
+            this.scheduleStructureSave(kind);
+            this.showSelection(sel);
+            return;
+          }
+          e.item = v;
+          this.scheduleStructureSave(kind);
+        },
+      });
+      fields.push({
+        kind: "number",
+        label: "amount",
+        value: e.amount,
+        min: 0,
+        step: 1,
+        onChange: (v) => {
+          e.amount = Math.max(0, Math.round(v));
+          this.scheduleStructureSave(kind);
+        },
+      });
+      fields.push({
+        kind: "number",
+        label: "% chance",
+        value: Math.round(e.probability * 100),
+        min: 0,
+        max: 100,
+        step: 5,
+        onChange: (v) => {
+          e.probability = Math.max(0, Math.min(100, v)) / 100;
+          this.scheduleStructureSave(kind);
+        },
+      });
+    });
+    actions.push({
+      label: "＋ Add drop",
+      onClick: () => {
+        loot.push({ item: "log", amount: 1, probability: 1 });
+        this.scheduleStructureSave(kind);
+        this.showSelection(sel);
+      },
+    });
+  }
+
+  private async saveStructure(kind: string) {
+    const loot = this.structures.get(kind) ?? [];
+    await fetch("/__structures/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind, loot }),
+    }).catch((e) => console.warn("[structures] save failed", e));
+  }
+  private scheduleStructureSave(kind: string) {
+    if (this.structureSaveTimer) clearTimeout(this.structureSaveTimer);
+    this.structureSaveTimer = setTimeout(() => void this.saveStructure(kind), 300);
   }
 
   /** Debounce prop persistence so dragging a slider/object doesn't spam the endpoint. */
@@ -418,7 +872,7 @@ export class DevMode {
       | Record<string, { get(id: string): EntityView | undefined } | undefined>
       | undefined;
     if (!st) return null;
-    const map = kind === "tree" ? st.trees : kind === "potion" ? st.potions : kind === "enemy" ? st.enemies : kind === "rock" ? st.rocks : undefined;
+    const map = kind === "tree" ? st.trees : kind === "potion" ? st.potions : kind === "enemy" ? st.enemies : kind === "rock" ? st.rocks : kind === "house" ? st.houses : undefined;
     return map?.get(id) ?? null;
   }
 }
@@ -436,10 +890,68 @@ interface EntityView {
 const round = (v: number) => Math.round(v * 10) / 10;
 const deg = (r: number) => Math.round((r * 180) / Math.PI);
 
+/** A spawn point a few units in front of the player's facing, so newly-created
+ *  entities (props, characters) land NEXT TO the player instead of clipping through
+ *  them. `rotY` is the player's facing (forward = sin/cos rotY, as the sim uses). */
+export function frontOfPlayer(
+  p: { x: number; z: number; rotY?: number },
+  dist = 4,
+): { x: number; z: number } {
+  const a = p.rotY ?? 0;
+  return { x: round(p.x + Math.sin(a) * dist), z: round(p.z + Math.cos(a) * dist) };
+}
+
 /** Kinds the editor can relocate by dragging. Potions are excluded (the client
- *  has no potion-change channel to reflect a move); rocks/houses are seeded-static
- *  collision and players are dynamic. */
-const draggable = (kind: string) => kind === "prop" || kind === "tree" || kind === "enemy";
+ *  has no potion-change channel to reflect a move); the house is seeded-static
+ *  collision (later phase) and players are dynamic. */
+const draggable = (kind: string) =>
+  kind === "prop" || kind === "tree" || kind === "enemy" || kind === "rock" || kind === "character";
+
+/** Kinds that can be turned into a goblin spawner (any non-character object). */
+const spawnable = (kind: string) =>
+  kind === "prop" || kind === "tree" || kind === "rock" || kind === "house";
+
+/** Resource kinds with a tunable drop table (what/how much they yield). */
+const isResource = (kind: string) => kind === "tree" || kind === "rock";
+
+/** Items a resource can be configured to drop (must match the server's dropItem). */
+const DROP_ITEMS = [
+  { value: "log", label: "Log" },
+  { value: "stone", label: "Stone" },
+  { value: "banana", label: "Banana" },
+  { value: "potion", label: "Potion" },
+];
+
+/** Per-resource-kind drop config (mirrors the server/Vite DropCfg). */
+interface DropCfg {
+  item: string;
+  amount: number;
+  trigger: "hit" | "kill";
+  hp: number; // total health; progressive drop rate = hp / amount damage per item
+}
+
+/** One entry in a structure's loot table (mirrors the server/Vite LootEntry). */
+interface LootEntry {
+  item: string;
+  amount: number;
+  probability: number; // 0..1 independent chance to drop this entry on destroy
+}
+
+interface SpawnerCfg {
+  id: string;
+  x: number;
+  z: number;
+  intervalMs: number;
+  cap: number;
+  behavior: {
+    hp?: number;
+    attack?: number;
+    aggroRadius?: number;
+    chaseSpeed?: number;
+    attackCooldownMs?: number;
+    houseDamage?: number;
+  };
+}
 
 /** Trim long ids (prop ids are model urls) for the panel title. */
 const shortId = (id: string) => (id.length > 22 ? "…" + id.slice(-20) : id);

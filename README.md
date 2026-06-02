@@ -41,6 +41,13 @@ Then open <http://localhost:5173>.
 - **Open a second tab** → a second knight appears; movement/combat sync across both.
 - Live room state inspector: <http://localhost:2567/colyseus>.
 
+## Documentation
+
+Full docs live in [`docs/`](docs/README.md): [getting started](docs/getting-started.md),
+[architecture & structure](docs/architecture.md), [game dynamics](docs/gameplay.md),
+[entities & objects](docs/entities.md), [configuration & tuning](docs/configuration.md),
+and [Nostr events](docs/nostr.md). Server/realm discovery for external apps: [REALMS.md](REALMS.md).
+
 ## Character model
 
 The demo runs out of the box with a **capsule placeholder** (procedural idle/walk/attack/hit/death feedback).

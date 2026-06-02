@@ -22,15 +22,15 @@ import { AnimationController } from "../entities/AnimationController";
 import {
   nostrLogin,
   hasNostrExtension,
-  NostrAuthPayload,
   NostrCredentials,
   NostrPhase,
 } from "../net/nostr";
 
-/** What the player commits at the splash: a name, optionally a verified Nostr id. */
+/** What the player commits at the splash: a name, optionally a verified Nostr id
+ *  (the full credentials — main.ts derives the server join payload from them). */
 export interface SplashCredentials {
   name: string;
-  nostr?: NostrAuthPayload;
+  nostr?: NostrCredentials;
 }
 
 /** Passed to CharacterFactory.spawn; ignored by the textured glb (and dummy). */
@@ -82,6 +82,8 @@ export class SplashScreen {
 
   /** A verified Nostr identity once the player connects one (else anonymous). */
   private nostr?: NostrCredentials;
+  /** Times the level-reveal → profile-card hand-off in the logged-in reframe. */
+  private revealTimer?: number;
 
   // ---- connect-progress log (terminal-style, paced flush) ----
   private logQueue: Array<{ text: string; cls: string; pct?: number }> = [];
@@ -582,8 +584,9 @@ export class SplashScreen {
     }
   }
 
-  /** Reframe the splash into the logged-in layout: a big avatar beside the
-   *  gorilla, the display name + level, and one big JOIN button. */
+  /** Reframe the splash into the logged-in layout. The gorilla's current level
+   *  flashes up FIRST; a beat later the profile card (avatar + name + level) and
+   *  the big JOIN button rise into place. */
   private showNostrProfile(creds: NostrCredentials) {
     const nameText = document.getElementById("nhNameText") as HTMLElement;
     const img = document.getElementById("nhAvatarImg") as HTMLImageElement;
@@ -597,12 +600,24 @@ export class SplashScreen {
       img.style.display = "none";
       img.removeAttribute("src");
     }
-    this.el.classList.add("nostr"); // hides the roster/name controls, shows #nostrHero
+
+    // The gorilla's current level: recovered from the server-signed save, or 1
+    // for a brand-new npub. Shown big in the reveal AND in the profile card.
+    const level = creds.recovered?.level ?? 1;
+    (document.getElementById("nhLevel") as HTMLElement).textContent = `Lv. ${level}`;
+    (document.getElementById("nhLevelReveal") as HTMLElement).textContent = `Level ${level}`;
+
+    // `revealing` shows only the big level (CSS holds the card/actions hidden);
+    // dropping it after a beat fades the card + JOIN button in.
+    this.el.classList.add("nostr", "revealing");
+    window.clearTimeout(this.revealTimer);
+    this.revealTimer = window.setTimeout(() => this.el.classList.remove("revealing"), 1300);
   }
 
   private clearNostr() {
     this.nostr = undefined;
-    this.el.classList.remove("nostr");
+    window.clearTimeout(this.revealTimer);
+    this.el.classList.remove("nostr", "revealing");
     const btn = document.getElementById("nostrBtn") as HTMLButtonElement;
     btn.hidden = false;
     btn.disabled = false;
@@ -630,12 +645,7 @@ export class SplashScreen {
     this.input.disabled = true;
     const resolve = this.resolveCreds;
     this.resolveCreds = undefined;
-    resolve({
-      name,
-      nostr: this.nostr
-        ? { auth: this.nostr.auth, profile: this.nostr.profile }
-        : undefined,
-    });
+    resolve({ name, nostr: this.nostr });
   }
 }
 

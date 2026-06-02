@@ -128,14 +128,45 @@ export class ChatLog {
     }
   }
 
-  /** Append a received chat line to the log (newest at the bottom). */
-  add(name: string, text: string, isSelf: boolean) {
+  /** Append a received chat line to the log (newest at the bottom). Nostr senders
+   *  (signature-verified) get their avatar on the left and a roomier, tinted row. */
+  add(
+    name: string,
+    text: string,
+    isSelf: boolean,
+    identity?: { picture?: string; nostrVerified?: boolean },
+  ) {
     const line = document.createElement("div");
     line.className = "chatLine";
+
+    if (identity?.nostrVerified) {
+      line.classList.add("nostr");
+      const avatar = document.createElement("span");
+      avatar.className = "chatAvatar";
+      if (identity.picture) {
+        const img = document.createElement("img");
+        img.referrerPolicy = "no-referrer"; // some nostr image hosts block hotlinking
+        img.alt = "";
+        img.onerror = () => {
+          avatar.textContent = "🦍"; // broken URL → gorilla fallback
+          img.remove();
+        };
+        img.src = identity.picture;
+        avatar.appendChild(img);
+      } else {
+        avatar.textContent = "🦍"; // verified but no picture → gorilla fallback
+      }
+      line.appendChild(avatar);
+    }
+
+    const body = document.createElement("span");
+    body.className = "chatBody";
     const who = document.createElement("span");
     who.className = isSelf ? "chatNameSelf" : "chatName";
     who.textContent = `${name}: `;
-    line.append(who, document.createTextNode(text));
+    body.append(who, document.createTextNode(text));
+    line.appendChild(body);
+
     this.log.appendChild(line);
     // Cap the history so the DOM doesn't grow without bound over a long session.
     while (this.log.childElementCount > 80) this.log.firstElementChild?.remove();
@@ -167,15 +198,17 @@ function injectChatStyles() {
       right: 12px;
       top: 46px;
       width: min(34vw, 340px);
-      max-height: 40vh;
       display: flex;
       flex-direction: column;
       gap: 6px;
       pointer-events: none; /* only the log catches events; empty area passes through */
       font: 500 13px/1.42 system-ui, -apple-system, sans-serif;
     }
+    /* The history sizes to its content: ~0 when empty, growing with each message
+       up to max-height, then it caps and scrolls (newest kept in view by add()). */
     #chatLog {
       overflow-y: auto;
+      max-height: 40vh;
       display: flex;
       flex-direction: column;
       gap: 2px;
@@ -200,6 +233,37 @@ function injectChatStyles() {
     }
     .chatName { color: #bcd3ee; font-weight: 700; }
     .chatNameSelf { color: #ffe08a; font-weight: 700; }
+
+    /* Nostr (signature-verified) senders: avatar on the left + a roomier, faintly
+       purple-tinted row so their messages stand out and take a bit more space. */
+    .chatLine.nostr {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      margin: 3px 0;
+      padding: 4px 6px;
+      border-radius: 8px;
+      background: rgba(168, 111, 224, 0.14);
+      box-shadow: inset 0 0 0 1px rgba(168, 111, 224, 0.22);
+    }
+    .chatLine.nostr .chatBody { flex: 1 1 auto; min-width: 0; }
+    .chatAvatar {
+      flex: none;
+      width: 22px;
+      height: 22px;
+      margin-top: 1px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+      background: radial-gradient(circle at 50% 35%, #3a2a1a, #160f08);
+      border: 1.5px solid #a86fe0;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+    }
+    .chatAvatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
     #chatInput {
       flex: 0 0 auto;
@@ -228,8 +292,8 @@ function injectChatStyles() {
       top: 50%;
       transform: translate(-50%, -50%);
       width: min(92vw, 560px);
-      height: min(70vh, 440px);
-      max-height: 70vh;
+      height: auto; /* size to the log + input, not a fixed box */
+      max-height: min(78vh, 500px);
       padding: 12px;
       gap: 10px;
       background: rgba(14, 11, 16, 0.94);
@@ -245,8 +309,9 @@ function injectChatStyles() {
     }
     #chatDock.active:hover { opacity: 1; }
     #chatDock.active #chatLog {
-      flex: 1 1 auto;
+      flex: 0 1 auto; /* grow with content, don't stretch to fill the window */
       min-height: 0;
+      max-height: min(60vh, 380px);
       opacity: 1;
       cursor: default;
       background: transparent;

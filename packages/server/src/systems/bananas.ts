@@ -32,6 +32,7 @@ import {
 } from "@rpg/shared";
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
+import { dropStructureLoot } from "./resources";
 
 /** A banana mid-flight, resolved when its landing time arrives. */
 interface InFlight {
@@ -322,11 +323,13 @@ function landBanana(
         house = h;
       }
     });
-    if (house) {
+    if (house && house.maxHp > 0) {
+      // maxHp 0 ⇒ dev-set indestructible: the throw lands but chips no HP.
       house.hp = Math.max(0, house.hp - f.dmg);
       emitDamage({ targetId: house.id, amount: f.dmg, crit: false });
       if (house.hp <= 0) {
         house.alive = false;
+        dropStructureLoot(state, "house", house.x, house.z); // spill its loot table on collapse
         state.houses.delete(house.id); // collapsed — stops blocking throws; client hides it
       }
     }

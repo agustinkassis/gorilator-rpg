@@ -1,0 +1,37 @@
+[
+  {
+    "id": "def_test_gorilla",
+    "name": "Crimson Gorilla",
+    "category": "Characters",
+    "baseModel": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Character_output.glb",
+    "anims": {
+      "IDLE": {
+        "file": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Animation_Idle_11_withSkin.glb",
+        "speed": 1
+      },
+      "WALK": {
+        "file": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Animation_Running_withSkin.glb",
+        "speed": 1
+      },
+      "ATTACK": {
+        "file": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Animation_Attack_withSkin.glb",
+        "speed": 1
+      },
+      "THROW": {
+        "file": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Animation_baseball_pitching_withSkin.glb",
+        "speed": 1
+      },
+      "HIT": {
+        "file": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Animation_Hit_Reaction_1_withSkin.glb",
+        "speed": 1
+      },
+      "DEAD": {
+        "file": "/models/characters/crimson_gorilla_1780347694673/Meshy_AI_Crimson_Gorilla_biped_Animation_Dead_withSkin.glb",
+        "speed": 1
+      }
+    },
+    "yaw": 0,
+    "scale": 1,
+    "stats": {}
+  }
+]

@@ -42,12 +42,11 @@
         color: #8b93a7;
         pointer-events: none;
       }
-      /* Local-player identity badge (top-centre): avatar + name + level. */
+      /* Local-player identity badge (lower-left, above the health orb): avatar + name + level. */
       #playerBadge {
         position: fixed;
-        top: 12px;
-        left: 50%;
-        transform: translateX(-50%);
+        left: 24px;
+        bottom: 156px;
         z-index: 30;
         display: flex;
         align-items: center;
@@ -388,6 +387,51 @@
         letter-spacing: 0.5px;
         text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
       }
+      /* ---- Realm-over intermission (La Crypta fell → next realm countdown) ---- */
+      #realmOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9; /* above the per-player respawn overlay */
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        pointer-events: none;
+        text-align: center;
+        background: radial-gradient(
+          circle at 50% 45%,
+          rgba(40, 0, 0, 0.55),
+          rgba(0, 0, 0, 0.84)
+        );
+      }
+      #realmTitle {
+        font: 700 58px Georgia, "Times New Roman", serif;
+        color: #c9302c;
+        letter-spacing: 5px;
+        text-shadow:
+          0 2px 10px rgba(0, 0, 0, 0.9),
+          0 0 30px rgba(150, 0, 0, 0.7);
+      }
+      #realmSub {
+        font: 600 20px system-ui, sans-serif;
+        color: #e8d8c0;
+        letter-spacing: 1px;
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+      }
+      #realmCountdown {
+        font: 800 104px system-ui, sans-serif;
+        color: #ffd479;
+        line-height: 1;
+        text-shadow:
+          0 2px 10px rgba(0, 0, 0, 0.9),
+          0 0 30px rgba(255, 160, 40, 0.55);
+      }
+      #realmHint {
+        font: 500 15px system-ui, sans-serif;
+        color: #c4ab86;
+        letter-spacing: 0.5px;
+      }
       /* ---- XP / level bar (bottom centre) ---- */
       #xpBar {
         position: fixed;
@@ -488,6 +532,22 @@
       body.preGame #playerBadge,
       body.preGame #invBtn { display: none !important; }
 
+      /* Tiny always-on version tag, pinned to the bottom-right corner — above the
+         splash + HUD, and never intercepts clicks. */
+      #versionTag {
+        position: fixed;
+        right: 9px;
+        bottom: 7px;
+        z-index: 9999;
+        font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.5px;
+        color: #fff;
+        opacity: 0.32;
+        pointer-events: none;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+        user-select: none;
+      }
+
       #splash {
         position: fixed;
         inset: 0;
@@ -554,6 +614,9 @@
       #splashBottom {
         position: relative;
         width: 100%;
+        /* Shared width for every control row below, so the cards, the name+ENTER
+           row and the Nostr button all line up to the same left/right edges. */
+        --ctl-w: 460px;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -570,35 +633,43 @@
       #charRow {
         display: flex;
         gap: 16px;
-        flex-wrap: wrap;
-        justify-content: center;
+        width: 100%;
+        max-width: var(--ctl-w);
       }
       .charCard {
         pointer-events: auto;
-        width: 128px;
+        flex: 1 1 0; /* the cards share the row equally → fill the full width */
+        min-width: 0;
         padding: 12px 10px;
         text-align: center;
-        background: linear-gradient(#241a12, #140e09);
-        border: 2px solid #6b4f2e;
-        border-radius: 12px;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 18px rgba(0, 0, 0, 0.5);
+        /* Glassmorphism: a warm-tinted frosted pane that blurs the hero behind it
+           (a diagonal sheen + a light top edge sell the "glass"). */
+        background: linear-gradient(150deg, rgba(255, 236, 205, 0.14), rgba(30, 21, 14, 0.34));
+        backdrop-filter: blur(10px) saturate(1.3);
+        -webkit-backdrop-filter: blur(10px) saturate(1.3);
+        border: 1px solid rgba(255, 224, 178, 0.22);
+        border-radius: 14px;
+        box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.16);
         cursor: pointer;
         transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
       }
       .charCard:not(.locked):hover {
         transform: translateY(-3px);
+        border-color: rgba(255, 224, 178, 0.4);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.22);
       }
       .charCard.selected {
-        border-color: #ffd479;
+        border-color: rgba(255, 212, 121, 0.9);
+        background: linear-gradient(150deg, rgba(255, 226, 170, 0.2), rgba(48, 32, 14, 0.4));
         box-shadow:
-          0 0 0 1px #ffd479,
-          0 8px 24px rgba(0, 0, 0, 0.55),
+          0 0 0 1px rgba(255, 212, 121, 0.55),
+          0 10px 28px rgba(0, 0, 0, 0.5),
           0 0 26px rgba(255, 170, 40, 0.35),
-          inset 0 0 18px rgba(120, 60, 0, 0.35);
+          inset 0 1px 0 rgba(255, 255, 255, 0.2);
       }
       .charCard.locked {
-        opacity: 0.5;
-        filter: grayscale(0.6);
+        opacity: 0.6;
+        filter: grayscale(0.45);
         cursor: not-allowed;
       }
       .charArt {
@@ -634,12 +705,12 @@
         display: flex;
         gap: 10px;
         pointer-events: auto;
-        flex-wrap: wrap;
-        justify-content: center;
+        width: 100%;
+        max-width: var(--ctl-w);
       }
       #nameInput {
-        width: 280px;
-        max-width: 70vw;
+        flex: 1 1 auto; /* grow to fill the row beside the ENTER button */
+        min-width: 0;
         padding: 12px 14px;
         font: 600 16px system-ui, sans-serif;
         color: #fff;
@@ -701,8 +772,11 @@
         align-items: center;
         gap: 8px;
         pointer-events: auto;
+        width: 100%;
+        max-width: var(--ctl-w);
       }
       #nostrBtn {
+        width: 100%; /* full-width CTA, aligned with the rows above */
         padding: 10px 18px;
         font: 700 14px system-ui, sans-serif;
         letter-spacing: 0.5px;
@@ -733,6 +807,51 @@
         pointer-events: none; /* re-enabled on the interactive children */
       }
       #splash.nostr #nostrHero { display: block; }
+
+      /* Level reveal: on login the gorilla's CURRENT level flashes up first, big
+         and centred over the hero; a beat later the profile card + JOIN button
+         rise in (JS drops the `revealing` class). */
+      #nhLevelReveal {
+        display: none;
+        position: absolute;
+        left: 50%;
+        top: 37%;
+        transform: translate(-50%, -50%);
+        white-space: nowrap;
+        text-align: center;
+        font: 900 clamp(40px, 9vw, 108px) / 1 system-ui, sans-serif;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        color: #ffe6a8;
+        text-shadow: 0 4px 20px rgba(0, 0, 0, 0.85), 0 0 46px rgba(255, 180, 60, 0.6);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.5s ease;
+        z-index: 7;
+      }
+      #splash.nostr #nhLevelReveal { display: block; }
+      #splash.nostr.revealing #nhLevelReveal {
+        opacity: 1;
+        animation: levelPop 0.7s cubic-bezier(0.2, 0.9, 0.25, 1.25) both;
+      }
+      @keyframes levelPop {
+        0% { opacity: 0; transform: translate(-50%, -50%) scale(0.55); }
+        55% { opacity: 1; transform: translate(-50%, -50%) scale(1.14); }
+        100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      }
+      /* While revealing, hold the card + actions hidden a touch below their
+         resting spot; dropping `revealing` fades/rises them into place. */
+      #nhStage, #nhActions { transition: opacity 0.5s ease, transform 0.5s ease; }
+      #splash.nostr.revealing #nhStage {
+        opacity: 0;
+        transform: translate(-50%, calc(-50% + 14px));
+        pointer-events: none;
+      }
+      #splash.nostr.revealing #nhActions {
+        opacity: 0;
+        transform: translate(-50%, 14px);
+        pointer-events: none;
+      }
 
       #nhStage {
         position: absolute;
@@ -1011,8 +1130,8 @@
         <div id="charRow">
           <div class="charCard selected" data-char="gorilla">
             <div class="charArt">🦍</div>
-            <div class="charName">Crimson Gorilla</div>
-            <div class="charTag">Brawler</div>
+            <div class="charName">Red Gorilla</div>
+            <div class="charTag">La Crypta</div>
           </div>
           <div class="charCard locked">
             <div class="charArt">?</div>
@@ -1044,6 +1163,7 @@
       <!-- Logged-in (Nostr) reframe: a big avatar beside the gorilla, the display
            name + level, and one big JOIN button. Shown when #splash has .nostr. -->
       <div id="nostrHero">
+        <div id="nhLevelReveal"></div>
         <div id="nhStage">
           <div id="nhAvatar">
             <span class="nhFallback">🦍</span>
@@ -1081,6 +1201,8 @@
       <b>Enter</b> to chat
     </div>
     <div id="status">connecting…</div>
+    <!-- Tiny build version, always visible in the bottom-right (set in main.ts). -->
+    <div id="versionTag"></div>
     <!-- Local-player identity (top-center): Nostr avatar + name + level. -->
     <div id="playerBadge" hidden>
       <div id="pbAvatar">
@@ -1118,6 +1240,12 @@
     <div id="respawnOverlay">
       <div id="respawnTitle">YOU DIED</div>
       <div id="respawnCountdown">Respawning in 8</div>
+    </div>
+    <div id="realmOverlay">
+      <div id="realmTitle">LA CRYPTA HAS FALLEN</div>
+      <div id="realmSub">The realm is over</div>
+      <div id="realmCountdown">10</div>
+      <div id="realmHint">Next realm begins — everyone respawns from scratch</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

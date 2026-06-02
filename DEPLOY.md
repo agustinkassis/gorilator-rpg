@@ -39,7 +39,8 @@ The installer will, in order:
    - `api.<domain>` → the game server (port 2567)
 6. Open a **Cloudflare authorization** link (paste it into any browser, pick your
    domain), then auto-create the tunnel, the two DNS records, and the ingress.
-7. Generate `.env` (incl. a random monitor password) and **build + start** the stack.
+7. Generate `.env` — a random monitor password **and** the server's Nostr key
+   (`NOSTR_NSEC`, which signs players' progress saves) — then **build + start** the stack.
 8. Install a **systemd service** so the game and the tunnel come back on reboot.
 
 When it finishes it prints your live URLs and the monitor credentials.
@@ -112,8 +113,10 @@ docker compose up -d --build
   **password-protected** by default (HTTP Basic auth, random password in `.env`,
   shown by `gorilator monitor`). Change it by editing `MONITOR_PASS` in `.env`
   and running `gorilator restart`.
-- `.env` contains that password and is world-readable on the host; keep the
-  server to trusted admins, or `chmod 600 .env` and run `gorilator` with `sudo`.
+- `.env` contains that password **and `NOSTR_NSEC`** (the key the server signs
+  player saves with) and is world-readable on the host; keep the server to
+  trusted admins, or `chmod 600 .env` and run `gorilator` with `sudo`. Keep
+  `NOSTR_NSEC` stable across redeploys — changing it orphans every saved player.
 - No game ports are exposed to the public internet directly — all traffic
   arrives through the Cloudflare tunnel.
 

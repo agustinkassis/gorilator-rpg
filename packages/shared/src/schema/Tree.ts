@@ -13,4 +13,5 @@ export class Tree extends Schema {
 
   // ---- server-only ----
   regrowTimer = 0;
+  damageSinceDrop = 0; // accumulates chop damage; sheds an item each (hp/amount) when the drop is progressive
 }

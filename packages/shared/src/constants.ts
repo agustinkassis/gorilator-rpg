@@ -10,6 +10,19 @@ export const SERVER_PORT = 2567;
  *  message for this code instead of the generic "disconnected". */
 export const NOSTR_TAKEOVER_CODE = 4001;
 
+/** A player's progress is saved to relays as a NIP-78 (kind 30078) app-data
+ *  *parameterized replaceable* event. The SERVER signs it with its own key
+ *  (`NOSTR_NSEC`), so one author holds every player's save — the `d` tag carries
+ *  the player's pubkey (see `saveDTag`) to keep one latest save per player.
+ *  Recovered on login; re-published on level-up / death / logout. */
+export const NOSTR_SAVE_KIND = 30078;
+export const NOSTR_SAVE_D = "gorilator-save-v1";
+
+/** The `d` (identifier) tag for a player's save event: the base id plus the
+ *  player's hex pubkey, so the server's single key stores one replaceable save
+ *  per player. Client + server must agree, hence it lives in shared. */
+export const saveDTag = (pubkey: string): string => `${NOSTR_SAVE_D}:${pubkey}`;
+
 // Movement
 export const MOVE_SPEED = 4.5; // world units / second
 export const ARRIVE_THRESHOLD = 0.15; // stop when this close to target
@@ -46,15 +59,15 @@ export const STAMINA_SPRINT_REENGAGE = 20; // once emptied, must recover to this
 // Leveling: characters gain XP from kills and level up on an escalating curve.
 export const XP_BASE = 100; // XP to go from level 1 → 2
 export const XP_GROWTH = 1.5; // each level needs XP_BASE * level^this
-export const HP_PER_LEVEL = 15; // maxHp gained per level
-export const ATTACK_PER_LEVEL = 3; // attack gained per level
+export const HP_PER_LEVEL = 17.25; // maxHp gained per level (+15%, was 15)
+export const ATTACK_PER_LEVEL = 3.45; // attack gained per level (+15%, was 3)
 export const ARMOR_PER_LEVEL = 2; // armor gained per level
 export const CRIT_PER_LEVEL = 0.02; // +2% critical chance per level...
 export const CRIT_CHANCE_MAX = 0.6; // ...capped here so it never trivialises combat
-export const SPEED_PER_LEVEL = 0.18; // run speed (units/sec) gained per level
+export const SPEED_PER_LEVEL = 0.207; // run speed (units/sec) gained per level (+15%, was 0.18)
 export const THROW_POWER_PER_LEVEL = 0.07; // +7% banana reach & damage per level
 export const DUMMY_XP_REWARD = 12; // XP for killing a training dummy
-export const GOBLIN_XP_REWARD = 35; // XP for killing a goblin
+export const GOBLIN_XP_REWARD = 60; // XP for killing a goblin (+70%, was 35)
 export const PLAYER_KILL_XP = 60; // XP for killing another player
 export const TREE_XP_REWARD = 8; // XP for chopping down a tree
 export const ROCK_XP_REWARD = 14; // XP for mining a boulder
@@ -95,7 +108,8 @@ export function statsForLevel(base: BaseStats, level: number): BaseStats {
 //   on crit (chance = attacker.critChance): damage *= CRIT_MULTIPLIER
 export const ATTACK_VARIANCE = 0.15; // ±15% random roll per hit
 export const ARMOR_K = 50; // armor mitigation constant (diminishing returns)
-export const CRIT_MULTIPLIER = 2; // critical-hit damage multiplier
+export const CRIT_MULTIPLIER = 2.4; // critical-hit damage multiplier (+20%, was 2)
+export const CRIT_KNOCKBACK_DISTANCE = 8; // a crit blows the target back this far (≈2 seconds of travel)
 
 // Default combat stats per entity type.
 export const PLAYER_ATTACK = 58; // 2× base, then +20% melee damage (48 → 58)
@@ -111,7 +125,7 @@ export const GOBLIN_COUNT = 8; // starting goblin seed (centre guardian + a pack
 export const GOBLIN_PACK_SIZE = 3; // goblins spawn in clustered packs of this many
 export const GOBLIN_PACK_SPREAD = 5; // pack-mates spawn within this radius of the pack centre
 export const GOBLIN_MAX_HP = 45;
-export const GOBLIN_ATTACK = 78; // 3× harder-hitting → ~8 dmg/hit after player armor & DAMAGE_DIVISOR
+export const GOBLIN_ATTACK = 70; // −10% (was 78) → ~7 dmg/hit after player armor & DAMAGE_DIVISOR
 export const GOBLIN_ARMOR = 8;
 export const GOBLIN_CRIT_CHANCE = 0; // (goblin hits on players don't crit)
 export const GOBLIN_PATROL_SPEED = 2.0; // units/s while wandering
@@ -120,7 +134,7 @@ export const GOBLIN_AGGRO_RADIUS = 9; // start chasing when a player is this clo
 export const GOBLIN_DEAGGRO_RADIUS = 16; // give up once the player gets this far away
 export const GOBLIN_LEASH = 20; // ...or once chased this far from its home — then it returns
 export const GOBLIN_ATTACK_RANGE = 2.3; // melee reach
-export const GOBLIN_ATTACK_COOLDOWN_MS = 1400; // min time between swings
+export const GOBLIN_ATTACK_COOLDOWN_MS = 1540; // min time between swings (−10% attack speed, was 1400)
 export const GOBLIN_ATTACK_WINDUP_MS = 500; // ATTACK state before the hit lands
 export const GOBLIN_RESPAWN_MS = 4000; // dead → corpse lingers this long, then the goblin is removed (a felled tower-defense wave is consumed, not respawned)
 export const GOBLIN_WANDER_RADIUS = 14; // patrol within this of home
@@ -136,11 +150,30 @@ export const GOBLIN_CAP_PER_PLAYER = 8; // ...plus this many more allowed per li
 export const GOBLIN_SPAWN_NEAR_MIN = 22; // fresh goblins appear at least this far from the player they hunt...
 export const GOBLIN_SPAWN_NEAR_MAX = 34; // ...and at most this far (just beyond their give-up range)
 
+// Tower-defense waves: a horde spawns a long march from the home (≈ WAVE_MARCH_SECONDS
+// of walking out) and converges on the house, fighting any player that engages them on
+// the way. The REST between waves grows each wave (more time to rebuild as it escalates):
+// after wave N the gap is BASE + STEP·(N-1), capped at MAX — i.e. 2.5min, 3min, 3.5min…
+export const WAVE_INTERVAL_BASE_MS = 270000; // rest after wave 1 (4.5 min)
+export const WAVE_INTERVAL_STEP_MS = 30000; // each successive rest grows by this (0.5 min) → 4.5, 5, 5.5, …
+export const WAVE_INTERVAL_MAX_MS = 600000; // cap the growth here (10 min); raise/remove for unbounded
+export const WAVE_FIRST_DELAY_MS = 150000; // the very first wave lands at 2.5 min
+export const WAVE_MARCH_SECONDS = 30; // a wave spawns this many seconds' walk from home...
+export const WAVE_SPAWN_DISTANCE = GOBLIN_CHASE_SPEED * WAVE_MARCH_SECONDS; // ...i.e. this far out (≈108u)
+export const WAVE_SPAWN_ARC = Math.PI * 0.7; // the horde fans out across this arc (approaches from ~one side)
+export const WAVE_SIZE_BASE = 4; // goblins in the first wave...
+export const WAVE_SIZE_PER_PLAYER = 2; // ...plus this many per live defender...
+export const WAVE_SIZE_PER_WAVE = 1; // ...plus this many more each successive wave (escalation)
+export const WAVE_SIZE_MAX = 30; // hard cap on a single wave
+export const GOBLIN_LIVE_CAP = 70; // hold the next wave while this many goblins are already alive (perf + fairness)
+export const GOBLIN_HOUSE_DAMAGE = 5; // flat HP a goblin's hit chips off the house
+
 // Health potions scattered in the world (collected into the inventory).
 export const POTION_COUNT = 6; // how many exist at once
-export const POTION_HEAL = 30; // HP restored when a potion is consumed from the inventory
+export const POTION_HEAL = 90; // HP restored when a potion is consumed from the inventory
 export const PICKUP_RADIUS = 1.3; // how close you must walk to grab one
 export const POTION_RESPAWN_MS = 7000; // delay before a collected potion is replaced
+export const GOBLIN_POTION_DROP_CHANCE = 0.4; // a slain goblin drops a health potion this often
 
 // Trees are choppable resources scattered across the map.
 export const TREE_COUNT = 120;
@@ -161,12 +194,17 @@ export const ROCK_HP = 560; // 8× tougher (was 70)
 export const ROCK_ARMOR = 12;
 export const ROCK_REGROW_MS = 30000; // rubble regrows into a rock after this
 export const STONE_DROP_DAMAGE = 12; // a mined rock sheds one stone for every this much damage dealt to it
+export const ROCK_COLLISION_SCALE = 0.5; // a rock's collision/approach footprint is this fraction of its visual radius (so players can walk right up to it + reach its dropped stones)
 
 // The Viking house on the map origin is a destructible structure: throw bananas
 // or stones at it to chip its HP; at 0 it collapses. Footprint ≈ 11u across (see
 // the client house model), so a ~5u collision radius covers its walls.
 export const HOUSE_HP = 300;
 export const HOUSE_COLLISION_RADIUS = 5;
+
+// When La Crypta falls the realm ends: the world freezes and a countdown runs
+// before the next realm spins up with every player respawned from scratch.
+export const REALM_RESTART_MS = 10_000; // intermission length (10s)
 
 // Bananas: collectible ammo. Hold a banana's hotkey (Q/W/E/R) to charge a power
 // bar, release to throw toward the mouse; the charge sets distance, damage and

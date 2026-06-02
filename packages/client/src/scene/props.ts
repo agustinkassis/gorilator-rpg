@@ -44,11 +44,54 @@ export function bounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 } {
   return { min, max };
 }
 
+/** A glb just written under public/ can momentarily resolve to Vite's SPA fallback
+ *  (index.html is returned for the not-yet-served path), so Babylon parses "<!do…"
+ *  and throws "Unexpected magic". This signature spots that HTML-instead-of-binary
+ *  case (vs a genuine 404/network error, which we don't want to sit and retry on). */
+function looksLikeNotServedYet(e: unknown): boolean {
+  const m = String((e as { message?: string })?.message ?? e);
+  return /magic|unexpected token|<!doctype|<html|not valid json/i.test(m);
+}
+
+/** Poll a model URL until the dev server actually serves the binary (not its HTML
+ *  SPA fallback), so a load that raced a fresh upload can be retried. Cheap: a
+ *  1-byte ranged request, judged by content-type; the body is cancelled unread. */
+async function waitUntilServed(url: string, tries = 8, gapMs = 200): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, { headers: { Range: "bytes=0-0" }, cache: "no-store" });
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const served = res.ok && !!ct && !ct.includes("html");
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* body already consumed/absent */
+      }
+      if (served) return true;
+    } catch {
+      /* dev server hiccup — keep polling */
+    }
+    await new Promise((r) => setTimeout(r, gapMs));
+  }
+  return false;
+}
+
+/** Import the meshes, transparently recovering from the fresh-upload race: if the
+ *  first load fails because the file isn't being served yet, wait for it + retry. */
+async function loadMeshes(scene: Scene, url: string) {
+  try {
+    // Force the glTF-binary loader. An uploaded blob: URL has no ".glb" extension for
+    // Babylon to sniff, so without this hint it tries to JSON-parse the binary → fails.
+    return await SceneLoader.ImportMeshAsync("", url, "", scene, null, ".glb");
+  } catch (e) {
+    if (url.startsWith("blob:") || !looksLikeNotServedYet(e) || !(await waitUntilServed(url))) throw e;
+    return await SceneLoader.ImportMeshAsync("", url, "", scene, null, ".glb");
+  }
+}
+
 /** Load a glb under a holder node, matte + opaque its materials. */
 export async function importModel(scene: Scene, url: string): Promise<LoadedProp> {
-  // Force the glTF-binary loader. An uploaded blob: URL has no ".glb" extension for
-  // Babylon to sniff, so without this hint it tries to JSON-parse the binary → fails.
-  const r = await SceneLoader.ImportMeshAsync("", url, "", scene, null, ".glb");
+  const r = await loadMeshes(scene, url);
   const gltfRoot = (r.meshes.find((m) => !m.parent) ?? r.meshes[0]) as AbstractMesh;
   const holder = new TransformNode("propHolder", scene);
   gltfRoot.parent = holder;

@@ -8,9 +8,9 @@ import { GameState, AnimState, WORLD_SIZE } from "@rpg/shared";
  * only the authored props (props.json) persist across restarts. Durable authored
  * entities are a later, manifest-driven phase.
  *
- * Rocks are intentionally excluded: a rock is also a seeded static collision
- * circle (BOULDERS), so relocating one here would desync pathfinding. That's
- * handled together with crates/house in the static-object phase.
+ * Rocks are supported too: a rock is also a collision circle, so after a rock
+ * move/delete the room calls refreshRockObstacles() to rebuild the nav grid from
+ * the live Rock entities (see GameRoom). Crates/house remain static for now.
  */
 
 type EditableMap = { get(id: string): { x: number; z: number } | undefined; delete(id: string): boolean };
@@ -24,8 +24,10 @@ function mapFor(state: GameState, kind: string): EditableMap | null {
       return state.potions as unknown as EditableMap;
     case "enemy":
       return state.enemies as unknown as EditableMap;
+    case "rock":
+      return state.rocks as unknown as EditableMap; // collision is refreshed by the room
     default:
-      return null; // rock/player/static handled elsewhere
+      return null; // player/static handled elsewhere
   }
 }
 
@@ -76,6 +78,27 @@ export function devSet(
     if (field === "maxHp") {
       e.maxHp = Math.max(1, Number(value) || e.maxHp);
       e.hp = Math.min(e.hp, e.maxHp);
+      return true;
+    }
+    return false;
+  }
+  if (kind === "house") {
+    const h = state.houses.get(id);
+    if (!h) return false;
+    if (field === "maxHp") {
+      // A structure's HP. 0 ⇒ INDESTRUCTIBLE: damage is ignored server-side
+      // (combat guards on maxHp), so the home never collapses.
+      const v = Math.max(0, Math.round(Number(value) || 0));
+      h.maxHp = v;
+      h.hp = v; // refill to the new HP (0 when indestructible)
+      h.alive = true; // editing HP keeps/brings the structure standing
+      return true;
+    }
+    if (field === "alive") {
+      // Toggle La Crypta's standing state. Collapsing it (alive=false) ends the
+      // realm and kicks off the next-realm countdown — handy for testing.
+      h.alive = !!value;
+      h.hp = h.alive ? h.maxHp : 0;
       return true;
     }
     return false;

@@ -19,15 +19,9 @@ export interface Circle {
 /** Collision radius of a character for nav/pathfinding (gorillas are bulky). */
 export const AGENT_RADIUS = 0.6;
 
-/** Crate stacks (clustered to read as solid blobs). */
-export const CRATES: Array<Vec2 & { rotY: number }> = [
-  { x: -10, z: -8, rotY: 0.4 },
-  { x: -10.9, z: -7.2, rotY: 1.1 },
-  { x: -10.2, z: -8.7, rotY: 0.2 },
-  { x: 22, z: 14, rotY: 0.6 },
-  { x: 22.9, z: 14.7, rotY: 1.3 },
-  { x: 21.4, z: 14.4, rotY: 0.1 },
-];
+/** Crate stacks — removed from the map. Kept as an empty list so the renderer,
+ *  the collision map (OBSTACLES) and the Dev-Mode entity list stay valid. */
+export const CRATES: Array<Vec2 & { rotY: number }> = [];
 
 /** Deterministic PRNG so the server and every client generate the SAME boulders. */
 function mulberry32(seed: number): () => number {

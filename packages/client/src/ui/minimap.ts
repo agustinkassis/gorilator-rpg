@@ -2,6 +2,7 @@ import { WORLD_SIZE, HOUSE_CENTER, HOUSE_RADIUS } from "@rpg/shared";
 import type { GameState } from "@rpg/shared";
 import { npubEncode } from "nostr-tools/nip19";
 import type { NetworkClient } from "../net/NetworkClient";
+import type { PropManager } from "../dev/PropManager";
 
 /** Escape user-provided text before putting it in innerHTML (names come from
  *  players / nostr profiles, so they must never be trusted as markup). */
@@ -11,6 +12,17 @@ function esc(s: string): string {
   );
 }
 
+/** Pick a map icon for an imported prop from its name/model + concreteness:
+ *  tree-like → tree, stone/timber-like → rock, any other concrete prop → a generic
+ *  marker, and non-concrete clutter → null (not shown). */
+function propIcon(def: { name: string; model: string; collisionRadius?: number }): "tree" | "rock" | "object" | null {
+  const s = (def.name + " " + def.model).toLowerCase();
+  if (/tree|pine|bush|palm|oak|shrub|fern/.test(s)) return "tree";
+  if (/stone|rock|timber|boulder|cliff|ore|crystal/.test(s)) return "rock";
+  if ((def.collisionRadius ?? 0) > 0) return "object"; // any other concrete element
+  return null;
+}
+
 /**
  * Maps drawn on 2D canvases over the WebGL view, rotated to match the isometric
  * camera so directions line up with the 3D world (read straight off the synced
@@ -18,7 +30,7 @@ function esc(s: string): string {
  *
  *   • RADAR  — a small always-on minimap in the top-left, centred on you.
  *   • SAMPLE — hold TAB for a bigger, 3×-zoomed peek centred on you.
- *   • FULL   — the "Map" button (or Esc to close) shows the whole world.
+ *   • FULL   — press M (Esc to close) shows the whole world.
  *
  * Trees and stones (boulders) are drawn everywhere; the central house (the
  * objective) is always shown, oversized, on top of the fog; other characters are
@@ -73,20 +85,28 @@ export class Minimap {
   private panel!: HTMLElement;
   private overlayCtx: CanvasRenderingContext2D;
   private title!: HTMLElement;
-  private button!: HTMLButtonElement;
   private corner!: HTMLElement; // the top-left radar wrapper
   private cornerCtx: CanvasRenderingContext2D;
   private playerList!: HTMLElement; // connected-players panel on the big map
   private lastPlayerSig = ""; // rebuild the list only when the roster changes
+  private avatars = new Map<string, HTMLImageElement>(); // nostr avatar url → image (lazy-loaded)
+  private tooltip!: HTMLElement; // hover tooltip on the big map
+  private overlayView = { cx: 0, cz: 0, scale: BASE_SCALE }; // last big-map transform (for hit-testing)
 
   private tabHeld = false; // hold TAB → sample view
-  private fullOpen = false; // "Map" button / Esc → full view
+  private fullOpen = false; // M / Esc → full view
+  private props?: PropManager; // imported world props (trees/rocks/concrete elements)
 
   constructor(private net: NetworkClient) {
     const { overlayCanvas, cornerCanvas } = this.buildDom();
     this.overlayCtx = overlayCanvas.getContext("2d")!;
     this.cornerCtx = cornerCanvas.getContext("2d")!;
     this.bindKeys();
+  }
+
+  /** Wire in the imported-prop registry so the map can icon them. */
+  setProps(props: PropManager) {
+    this.props = props;
   }
 
   /** Called every frame by the render loop (only runs in-game). Draws the corner
@@ -101,6 +121,7 @@ export class Minimap {
       this.title.textContent = full ? "WORLD MAP" : "LOCAL MAP";
       const scale = full ? BASE_SCALE * FULL_FIT : BASE_SCALE * SAMPLE_ZOOM;
       this.renderMap(this.overlayCtx, OVERLAY_PX, full ? 0 : px, full ? 0 : pz, scale);
+      this.overlayView = { cx: full ? 0 : px, cz: full ? 0 : pz, scale }; // for hover hit-testing
       this.renderPlayerList(this.net.room?.state, this.net.room?.sessionId);
     } else {
       // corner radar is always centred on the player
@@ -153,21 +174,32 @@ export class Minimap {
     ctx.fillStyle = GROUND_FILL;
     ctx.fill();
 
-    // ---- trees & stones (whole world; fog dims the far ones) ----
+    // ---- trees, stones & imported props as simple icons (fog dims far ones) ----
     if (state) {
       state.rocks.forEach((r) => {
         if (!r.alive) return;
         const [x, y] = proj(r.x, r.z);
         if (!onScreen(x, y)) return;
-        this.dot(ctx, x, y, Math.max(2, r.radius * scale * 0.95), COLORS.stone, "rgba(0,0,0,0.45)");
+        this.rockIcon(ctx, x, y, Math.max(2.5, r.radius * scale));
       });
-      const treeR = 2.4 * Math.sqrt(scale / BASE_SCALE); // grow a little with zoom so they read
+      const treeS = 3 * Math.sqrt(scale / BASE_SCALE); // grow a little with zoom so they read
       state.trees.forEach((t) => {
         if (!t.alive) return;
         const [x, y] = proj(t.x, t.z);
         if (!onScreen(x, y)) return;
-        this.dot(ctx, x, y, treeR, COLORS.tree, "rgba(0,0,0,0.4)");
+        this.treeIcon(ctx, x, y, treeS);
       });
+    }
+    // imported props (Dev Mode): trees, rocks/timber, and other concrete elements
+    for (const p of this.props?.all() ?? []) {
+      const kind = propIcon(p.def);
+      if (!kind) continue;
+      const [x, y] = proj(p.def.x, p.def.z);
+      if (!onScreen(x, y)) continue;
+      const s = Math.min(9, Math.max(2.6, p.def.scale * 0.5 * scale));
+      if (kind === "tree") this.treeIcon(ctx, x, y, s);
+      else if (kind === "rock") this.rockIcon(ctx, x, y, s);
+      else this.propMarker(ctx, x, y, s);
     }
 
     // ---- fog of war: clear around the player, soft ramp to dark beyond ----
@@ -194,10 +226,11 @@ export class Minimap {
     const r2 = REVEAL_RADIUS * REVEAL_RADIUS;
     const inSight = (x: number, z: number) => (x - meX) ** 2 + (z - meZ) ** 2 <= r2;
     if (state) {
+      // other players — their nostr avatar if they have one, else a blue dot
       state.players.forEach((p, id) => {
         if (p.hp <= 0 || id === selfId || !inSight(p.x, p.z)) return;
         const [x, y] = proj(p.x, p.z);
-        this.dot(ctx, x, y, 4.4, COLORS.ally, "rgba(0,0,0,0.5)");
+        this.playerMarker(ctx, x, y, false, p.nostrVerified && p.picture ? p.picture : "");
       });
       state.enemies.forEach((e) => {
         if (e.hp <= 0 || !inSight(e.x, e.z)) return;
@@ -207,13 +240,60 @@ export class Minimap {
       });
     }
 
-    // you — a larger cyan dot ringed in white so you're easy to find
-    this.dot(ctx, fx, fy, 5.8, COLORS.self, "rgba(0,0,0,0.55)");
-    ctx.beginPath();
-    ctx.arc(fx, fy, 8.8, 0, Math.PI * 2);
-    ctx.lineWidth = 2.2;
-    ctx.strokeStyle = "#ffffff";
-    ctx.stroke();
+    // you — always shown, on top: your nostr avatar (if logged in) or a ringed dot
+    this.playerMarker(ctx, fx, fy, true, me?.nostrVerified && me.picture ? me.picture : "");
+  }
+
+  /** Load (and cache) a nostr avatar by url. Returns the image only once it's ready
+   *  to draw, so callers fall back to a dot until then. No crossOrigin: avatars live
+   *  on arbitrary hosts and we only ever draw them (never read the canvas back). */
+  private avatar(url: string): HTMLImageElement | null {
+    let img = this.avatars.get(url);
+    if (!img) {
+      img = new Image();
+      img.decoding = "async";
+      img.src = url;
+      this.avatars.set(url, img);
+    }
+    return img.complete && img.naturalWidth > 0 ? img : null;
+  }
+
+  /** Draw a player's map marker: a circular nostr avatar (with a faction ring) if
+   *  they're logged in with one, otherwise the usual coloured dot. */
+  private playerMarker(ctx: CanvasRenderingContext2D, px: number, py: number, isSelf: boolean, pictureUrl: string) {
+    const ring = isSelf ? COLORS.self : COLORS.ally;
+    const img = pictureUrl ? this.avatar(pictureUrl) : null;
+    if (img) {
+      const r = isSelf ? 8 : 6.2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(img, px - r, py - r, r * 2, r * 2);
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.lineWidth = Math.max(1.6, r * 0.28);
+      ctx.strokeStyle = ring;
+      ctx.stroke();
+      if (isSelf) {
+        ctx.beginPath();
+        ctx.arc(px, py, r + 1.8, 0, Math.PI * 2);
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+      }
+    } else {
+      this.dot(ctx, px, py, isSelf ? 5.8 : 4.4, ring, "rgba(0,0,0,0.55)");
+      if (isSelf) {
+        ctx.beginPath();
+        ctx.arc(px, py, 8.8, 0, Math.PI * 2);
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+      }
+    }
   }
 
   /** The central house (La Crypta — the objective). Drawn ON TOP of the fog so it's
@@ -280,15 +360,58 @@ export class Minimap {
     }
   }
 
+  /** Simple pine icon (brown trunk + green triangle), half-size `s`. */
+  private treeIcon(ctx: CanvasRenderingContext2D, px: number, py: number, s: number) {
+    ctx.fillStyle = "#5a3b1e";
+    ctx.fillRect(px - s * 0.14, py + s * 0.35, s * 0.28, s * 0.55); // trunk
+    ctx.beginPath();
+    ctx.moveTo(px, py - s);
+    ctx.lineTo(px + s * 0.85, py + s * 0.45);
+    ctx.lineTo(px - s * 0.85, py + s * 0.45);
+    ctx.closePath();
+    ctx.fillStyle = COLORS.tree;
+    ctx.fill();
+    ctx.lineWidth = Math.max(0.7, s * 0.14);
+    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx.stroke();
+  }
+
+  /** Simple angular boulder icon, half-size `s`. */
+  private rockIcon(ctx: CanvasRenderingContext2D, px: number, py: number, s: number) {
+    ctx.beginPath();
+    ctx.moveTo(px - s, py + s * 0.45);
+    ctx.lineTo(px - s * 0.55, py - s * 0.5);
+    ctx.lineTo(px + s * 0.2, py - s * 0.72);
+    ctx.lineTo(px + s, py - s * 0.05);
+    ctx.lineTo(px + s * 0.55, py + s * 0.6);
+    ctx.closePath();
+    ctx.fillStyle = COLORS.stone;
+    ctx.fill();
+    ctx.lineWidth = Math.max(0.7, s * 0.14);
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.stroke();
+  }
+
+  /** Generic "concrete element" icon — a small amber block, half-size `s`. */
+  private propMarker(ctx: CanvasRenderingContext2D, px: number, py: number, s: number) {
+    const c = s * 0.78;
+    ctx.fillStyle = "#cdb27a";
+    ctx.fillRect(px - c, py - c, c * 2, c * 2);
+    ctx.lineWidth = Math.max(0.7, s * 0.14);
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.strokeRect(px - c, py - c, c * 2, c * 2);
+  }
+
   /** Rebuild the connected-players panel (name · level · nostr badge). Nostr-verified
    *  players link out to njump.me for their npub. Only rebuilt when the roster changes. */
   private renderPlayerList(state: GameState | undefined, selfId: string | undefined) {
-    const rows: { id: string; name: string; level: number; verified: boolean; pubkey: string }[] = [];
+    const rows: { id: string; name: string; level: number; deaths: number; verified: boolean; pubkey: string }[] = [];
     state?.players.forEach((p, id) => {
       rows.push({
         id,
         name: p.name || "Anon",
         level: p.level,
+        deaths: p.deaths ?? 0,
         verified: !!p.nostrVerified && !!p.pubkey,
         pubkey: p.pubkey,
       });
@@ -299,7 +422,7 @@ export class Minimap {
       return b.level - a.level || a.name.localeCompare(b.name); // then by level, then name
     });
 
-    const sig = rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.verified ? 1 : 0}`).join("|");
+    const sig = rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.deaths}:${r.verified ? 1 : 0}`).join("|");
     if (sig === this.lastPlayerSig) return; // nothing changed → keep the DOM (stable links)
 
     const head = `<div id="mmPHead">Players · ${rows.length}</div>`;
@@ -320,11 +443,113 @@ export class Minimap {
           ? `<a class="mmLink" href="https://njump.me/${npub}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>`
           : `<span>${esc(r.name)}</span>`;
         const you = r.id === selfId ? `<span class="mmYou">(you)</span>` : "";
-        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span></div>`;
+        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span><span class="mmDeaths" title="times of death">☠ ${r.deaths}</span></div>`;
       })
       .join("");
     this.playerList.innerHTML = head + body;
     this.lastPlayerSig = sig; // set last, so an error can't strand the list empty
+  }
+
+  /** Find the map element under a big-map canvas pixel (mx,my) and build its tooltip,
+   *  or null. Mirrors what renderMap draws (vision-gated characters, all world props). */
+  private hitTest(mx: number, my: number): { title: string; lines: string[] } | null {
+    const { cx, cz, scale } = this.overlayView;
+    const S = OVERLAY_PX;
+    const px = (x: number, z: number) => S / 2 + ((x - cx) * ISO_RX + (z - cz) * ISO_RZ) * scale;
+    const py = (x: number, z: number) => S / 2 - ((x - cx) * ISO_UX + (z - cz) * ISO_UZ) * scale;
+
+    const state = this.net.room?.state;
+    const selfId = this.net.room?.sessionId;
+    const me = selfId ? state?.players.get(selfId) : undefined;
+    const meX = me?.x ?? 0;
+    const meZ = me?.z ?? 0;
+    const r2 = REVEAL_RADIUS * REVEAL_RADIUS;
+    const inSight = (x: number, z: number) => (x - meX) ** 2 + (z - meZ) ** 2 <= r2;
+
+    let bestD = Infinity;
+    let best: { title: string; lines: string[] } | null = null;
+    const consider = (x: number, z: number, hit: number, build: () => { title: string; lines: string[] }) => {
+      const d = Math.hypot(px(x, z) - mx, py(x, z) - my);
+      if (d <= hit && d < bestD) {
+        bestD = d;
+        best = build();
+      }
+    };
+
+    if (state) {
+      state.players.forEach((p, id) => {
+        if (p.hp <= 0 || (id !== selfId && !inSight(p.x, p.z))) return;
+        consider(p.x, p.z, 13, () => {
+          const lines = [`Player · Lv.${p.level}`, `HP ${Math.round(p.hp)} / ${p.maxHp}`];
+          if (p.nostrVerified && p.pubkey) {
+            lines.push("⚡ Nostr verified");
+            try {
+              const n = npubEncode(p.pubkey);
+              lines.push(n.slice(0, 12) + "…" + n.slice(-6));
+            } catch {
+              /* bad key — skip the npub line */
+            }
+          } else {
+            lines.push("Anonymous");
+          }
+          return { title: (p.name || "Anon") + (id === selfId ? " (you)" : ""), lines };
+        });
+      });
+      state.enemies.forEach((e) => {
+        if (e.hp <= 0 || !inSight(e.x, e.z)) return;
+        const goblin = e.kind === "goblin";
+        consider(e.x, e.z, 12, () => ({
+          title: goblin ? "Goblin" : "Training Dummy",
+          lines: [`${goblin ? "Enemy" : "Neutral"} · Lv.${e.level}`, `HP ${Math.round(e.hp)} / ${e.maxHp}`],
+        }));
+      });
+    }
+    // central objective
+    consider(HOUSE_CENTER.x, HOUSE_CENTER.z, 22, () => ({
+      title: "La Crypta",
+      lines: ["The objective — defend it"],
+    }));
+    // imported props
+    for (const pr of this.props?.all() ?? []) {
+      const kind = propIcon(pr.def);
+      if (!kind) continue;
+      consider(pr.def.x, pr.def.z, 12, () => ({
+        title: pr.def.name || "Prop",
+        lines: [kind === "tree" ? "Tree" : kind === "rock" ? "Rock" : "Concrete prop"],
+      }));
+    }
+    // trees & stones
+    if (state) {
+      state.trees.forEach((t) => {
+        if (!t.alive) return;
+        consider(t.x, t.z, 8, () => ({ title: "Tree", lines: [`HP ${Math.round(t.hp)} / ${t.maxHp}`] }));
+      });
+      state.rocks.forEach((rk) => {
+        if (!rk.alive) return;
+        consider(rk.x, rk.z, 9, () => ({ title: "Boulder", lines: [`HP ${Math.round(rk.hp)} / ${rk.maxHp}`] }));
+      });
+    }
+    return best;
+  }
+
+  private showTooltip(clientX: number, clientY: number, info: { title: string; lines: string[] }) {
+    this.tooltip.innerHTML =
+      `<div class="mmTtTitle">${esc(info.title)}</div>` +
+      info.lines.map((l) => `<div class="mmTtSub">${esc(l)}</div>`).join("");
+    this.tooltip.style.display = "block";
+    const pad = 16;
+    const tw = this.tooltip.offsetWidth;
+    const th = this.tooltip.offsetHeight;
+    let tx = clientX + pad;
+    let ty = clientY + pad;
+    if (tx + tw > window.innerWidth - 4) tx = clientX - pad - tw;
+    if (ty + th > window.innerHeight - 4) ty = clientY - pad - th;
+    this.tooltip.style.left = Math.max(4, tx) + "px";
+    this.tooltip.style.top = Math.max(4, ty) + "px";
+  }
+
+  private hideTooltip() {
+    if (this.tooltip) this.tooltip.style.display = "none";
   }
 
   // ---- open / close ----
@@ -333,14 +558,16 @@ export class Minimap {
     const open = this.tabHeld || full;
     this.overlay.style.display = open ? "flex" : "none";
     this.corner.style.display = open ? "none" : "block"; // hide the radar while the big map is up
-    // M / Map button → a full-screen map with a dark backdrop; the TAB peek stays a
-    // smaller, see-through centred panel.
+    // M / clicking the radar → a full-screen map with a dark backdrop; the TAB peek
+    // stays a smaller, see-through centred panel.
     this.overlay.style.background = full ? "rgba(0,0,0,0.62)" : "transparent";
     const side = full ? "min(100vw, 100vh)" : "86vmin";
     this.panel.style.width = side;
     this.panel.style.height = side;
     this.panel.style.borderRadius = full ? "0" : "14px";
-    this.button.classList.toggle("active", full);
+    // hover tooltips only on the full map (the TAB peek stays click-through)
+    this.overlayCtx.canvas.style.pointerEvents = full ? "auto" : "none";
+    if (!full) this.hideTooltip();
   }
 
   private bindKeys() {
@@ -373,8 +600,8 @@ export class Minimap {
     });
   }
 
-  /** Build the corner radar, the centred overlay (frame + canvas + title + legend)
-   *  and the toggle button, then mount them. */
+  /** Build the corner radar and the centred overlay (frame + canvas + title +
+   *  legend), then mount them. */
   private buildDom(): { overlayCanvas: HTMLCanvasElement; cornerCanvas: HTMLCanvasElement } {
     // ---- top-left corner radar (always on) ----
     const corner = document.createElement("div");
@@ -447,32 +674,28 @@ export class Minimap {
     panel.append(overlayCanvas, title, legend, playerList);
     overlay.append(panel);
 
-    // ---- full-map toggle button (matches the inventory button) ----
-    const button = document.createElement("button");
-    button.id = "rpgMapBtn";
-    button.type = "button";
-    button.textContent = "🗺 Map (M)";
-    button.title = "Open the full-screen map — press M (hold TAB for a quick local map)";
-    button.style.cssText =
-      "position:fixed;left:24px;bottom:162px;z-index:61;padding:10px 14px;" +
-      "font:600 14px system-ui,sans-serif;color:#f0e6d2;cursor:pointer;" +
-      "background:linear-gradient(#3a2c1e,#241a12);border:2px solid #6b4f2e;" +
-      "border-radius:8px;box-shadow:0 3px 10px rgba(0,0,0,0.5);";
-    button.addEventListener("click", () => {
-      this.fullOpen = !this.fullOpen;
-      this.refresh();
+    // ---- hover tooltip (big map only) ----
+    const tooltip = document.createElement("div");
+    tooltip.id = "mmTooltip";
+    overlayCanvas.addEventListener("mousemove", (e) => {
+      if (!this.fullOpen) return; // hover only on the full map
+      const rect = overlayCanvas.getBoundingClientRect();
+      const mx = ((e.clientX - rect.left) / rect.width) * OVERLAY_PX;
+      const my = ((e.clientY - rect.top) / rect.height) * OVERLAY_PX;
+      const info = this.hitTest(mx, my);
+      if (info) this.showTooltip(e.clientX, e.clientY, info);
+      else this.hideTooltip();
     });
+    overlayCanvas.addEventListener("mouseleave", () => this.hideTooltip());
 
     // Hover/active styling, hide map UI during the splash, and push the help hint
     // below the corner radar so they don't overlap.
     const style = document.createElement("style");
     style.textContent =
-      "#rpgMapBtn:hover{background:linear-gradient(#4a3826,#2e2117)}" +
-      "#rpgMapBtn.active{border-color:#ffd479;color:#ffd479}" +
       "#rpgMiniMap:hover{border-color:#8a6a3c}" +
-      "body.preGame #rpgMapBtn,body.preGame #rpgMiniMap{display:none!important}" +
+      "body.preGame #rpgMiniMap{display:none!important}" +
       "body #hint{top:210px}" +
-      "#mmPlayers{position:absolute;top:12px;left:14px;z-index:2;pointer-events:auto;" +
+      "#mmPlayers{position:absolute;top:12px;right:14px;z-index:2;pointer-events:auto;" +
       "min-width:150px;max-width:46%;max-height:calc(100% - 70px);overflow-y:auto;" +
       "background:rgba(10,8,12,0.6);border:1px solid #6b4f2e;border-radius:8px;padding:8px 10px;" +
       "box-shadow:0 4px 16px rgba(0,0,0,0.5)}" +
@@ -482,20 +705,27 @@ export class Minimap {
       "font:600 13px system-ui,sans-serif;color:#e8e3d6;white-space:nowrap}" +
       ".mmRow .mmPName{overflow:hidden;text-overflow:ellipsis;max-width:170px}" +
       ".mmLvl{margin-left:auto;color:#c9a36a;font-size:12px}" +
+      ".mmDeaths{margin-left:8px;color:#e0726a;font-size:12px}" +
       ".mmNostr.on{color:#c08bff}.mmNostr.off{color:#5f5f68;font-size:11px}" +
       ".mmLink{color:#c08bff;text-decoration:none}" +
       ".mmLink:hover{text-decoration:underline;color:#d7b3ff}" +
-      ".mmYou{color:#79e0ff;margin-left:5px;font-size:11px}";
+      ".mmYou{color:#79e0ff;margin-left:5px;font-size:11px}" +
+      "#mmTooltip{position:fixed;z-index:70;display:none;pointer-events:none;" +
+      "background:rgba(12,10,14,0.96);border:1px solid #6b4f2e;border-radius:7px;" +
+      "padding:6px 9px;font:12px system-ui,sans-serif;color:#e8e3d6;max-width:240px;" +
+      "box-shadow:0 6px 18px rgba(0,0,0,0.65)}" +
+      "#mmTooltip .mmTtTitle{font-weight:700;color:#ffd479;margin-bottom:2px}" +
+      "#mmTooltip .mmTtSub{color:#c3bbab;font-size:11px;line-height:1.45}";
 
     document.head.append(style);
-    document.body.append(corner, overlay, button);
+    document.body.append(corner, overlay, tooltip);
 
     this.overlay = overlay;
     this.panel = panel;
     this.title = title;
-    this.button = button;
     this.corner = corner;
     this.playerList = playerList;
+    this.tooltip = tooltip;
     return { overlayCanvas, cornerCanvas };
   }
 }

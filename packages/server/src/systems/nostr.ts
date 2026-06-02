@@ -1,5 +1,19 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { verifyEvent } from "nostr-tools";
+import { getServerIdentity } from "./nostrIdentity";
+import {
+  PlayerSave,
+  InventorySlot,
+  WORLD_SIZE,
+  INV_SLOTS,
+  MAX_STACK,
+  PLAYER_MAX_HP,
+  PLAYER_MAX_STAMINA,
+  PLAYER_ATTACK,
+  PLAYER_ARMOR,
+  PLAYER_CRIT_CHANCE,
+  MOVE_SPEED,
+} from "@rpg/shared";
 
 /** A signed Nostr event (NIP-01 shape). */
 export interface NostrEvent {
@@ -32,30 +46,55 @@ const APP_TAG = "gorilator"; // ties a signature to this game (not reusable else
 const CHALLENGE_TTL_MS = 5 * 60_000;
 const FRESHNESS_S = 300; // the signed event's created_at must be within this of now
 
-/** challenge -> expiry (ms epoch). One process, so an in-memory store is fine. */
-const challenges = new Map<string, number>();
+/**
+ * Challenges are STATELESS: `${nonce}.${expiryMs}.${hmac}`, where the hmac is
+ * keyed by the server's own secret key. Verification needs only that key, so a
+ * challenge issued just before a restart still validates after it — fixing the
+ * old in-memory Map that was wiped on every (tsx-watch / deploy) restart, which
+ * silently rejected any login that was in flight ("invalid or replayed
+ * challenge" → join rejected → a blank, map-less game).
+ *
+ * Replay within the TTL is blocked by a best-effort used-nonce set. It resets on
+ * restart, but the short TTL plus the auth event's own created_at freshness
+ * check keep the replay window tiny — fine for a game login.
+ */
+const usedNonces = new Map<string, number>(); // nonce -> expiry (ms epoch)
 
-function prune(now: number) {
-  for (const [c, exp] of challenges) if (exp < now) challenges.delete(c);
+function challengeMac(payload: string): Buffer {
+  return createHmac("sha256", Buffer.from(getServerIdentity().sk)).update(payload).digest();
 }
 
 /**
- * Issue a one-time random challenge the client must embed in the event it signs.
- * Single-use + TTL means a captured signature can't be replayed to log in again.
+ * Issue a single-use, TTL-bounded challenge the client must embed in the event
+ * it signs. Stateless + HMAC-signed, so it survives a server restart.
  */
 export function issueChallenge(now = Date.now()): string {
-  prune(now);
-  const challenge = randomBytes(32).toString("hex");
-  challenges.set(challenge, now + CHALLENGE_TTL_MS);
-  return challenge;
+  const payload = `${randomBytes(18).toString("hex")}.${now + CHALLENGE_TTL_MS}`;
+  return `${payload}.${challengeMac(payload).toString("hex")}`;
 }
 
-/** Consume a challenge (single use). True only if it was issued and unexpired. */
+/** Consume a challenge. True only if WE signed it (HMAC), it's unexpired, and it
+ *  hasn't already been used in this process lifetime. */
 function consumeChallenge(challenge: string, now: number): boolean {
-  const exp = challenges.get(challenge);
-  if (exp === undefined) return false;
-  challenges.delete(challenge); // one-time use → no replay
-  return exp >= now;
+  const parts = challenge.split(".");
+  if (parts.length !== 3) return false;
+  const [nonce, expStr, macHex] = parts;
+  const exp = Number(expStr);
+  if (!Number.isInteger(exp) || exp < now) return false; // malformed / expired
+
+  let mac: Buffer;
+  try {
+    mac = Buffer.from(macHex, "hex");
+  } catch {
+    return false;
+  }
+  const want = challengeMac(`${nonce}.${expStr}`);
+  if (mac.length !== want.length || !timingSafeEqual(mac, want)) return false; // not ours
+
+  for (const [n, e] of usedNonces) if (e < now) usedNonces.delete(n); // sweep
+  if (usedNonces.has(nonce)) return false; // already used → no replay
+  usedNonces.set(nonce, exp);
+  return true;
 }
 
 function tagValue(ev: NostrEvent, name: string): string | undefined {
@@ -115,4 +154,59 @@ export function verifyNostrLogin(
   }
 
   return { pubkey, name, picture, nip05 };
+}
+
+const clampW = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
+const finite = (v: unknown, def: number) => (Number.isFinite(Number(v)) ? Number(v) : def);
+
+/**
+ * Parse + sanitize a save's JSON into a sane PlayerSave. Coerces every field to
+ * a finite number, clamps to legal ranges, and normalizes the inventory — so a
+ * truncated/garbage save can't NaN-poison the simulation. The save is signed by
+ * the SERVER's own key (it's authoritative), so this is purely NaN/range hygiene.
+ */
+export function sanitizeSaveContent(content: string): PlayerSave | null {
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== "object") return null;
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const maxHp = Math.max(1, finite(raw.maxHp, PLAYER_MAX_HP));
+  const maxStamina = Math.max(1, finite(raw.maxStamina, PLAYER_MAX_STAMINA));
+  return {
+    v: Math.floor(finite(raw.v, 1)),
+    level: Math.max(1, Math.floor(finite(raw.level, 1))),
+    xp: Math.max(0, finite(raw.xp, 0)),
+    maxHp,
+    hp: Math.max(0, Math.min(maxHp, finite(raw.hp, maxHp))),
+    maxStamina,
+    stamina: Math.max(0, Math.min(maxStamina, finite(raw.stamina, maxStamina))),
+    x: clampW(finite(raw.x, 0)),
+    z: clampW(finite(raw.z, 0)),
+    rotY: finite(raw.rotY, 0),
+    attack: Math.max(0, finite(raw.attack, PLAYER_ATTACK)),
+    armor: Math.max(0, finite(raw.armor, PLAYER_ARMOR)),
+    critChance: Math.max(0, Math.min(1, finite(raw.critChance, PLAYER_CRIT_CHANCE))),
+    moveSpeed: Math.max(0, finite(raw.moveSpeed, MOVE_SPEED)),
+    throwPower: Math.max(0, finite(raw.throwPower, 1)),
+    hue: finite(raw.hue, 0),
+    inventory: sanitizeInventory(raw.inventory),
+  };
+}
+
+/** Normalize an inventory to exactly INV_SLOTS valid slots. */
+function sanitizeInventory(raw: unknown): InventorySlot[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const types = new Set(["log", "potion", "stone", "banana"]);
+  const out: InventorySlot[] = [];
+  for (let i = 0; i < INV_SLOTS; i++) {
+    const s = arr[i] as { type?: unknown; count?: unknown } | undefined;
+    const type = typeof s?.type === "string" && types.has(s.type) ? s.type : "";
+    const count = Math.max(0, Math.min(MAX_STACK, Math.floor(finite(s?.count, 0))));
+    out.push({ type: count > 0 ? (type as InventorySlot["type"]) : "", count: type && count > 0 ? count : 0 });
+  }
+  return out;
 }

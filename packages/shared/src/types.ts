@@ -17,6 +17,33 @@ export interface InventorySlot {
   count: number;
 }
 
+/**
+ * The full recoverable state of a player, stored as the JSON content of the
+ * nostr save event (kind NOSTR_SAVE_KIND, d = saveDTag(pubkey)). The SERVER signs
+ * + writes it (with its NOSTR_NSEC key) on level-up / death / logout, and reads
+ * it back to restore a returning npub.
+ */
+export interface PlayerSave {
+  v: number; // save schema version
+  level: number;
+  xp: number;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  x: number;
+  z: number;
+  rotY: number; // orientation
+  attack: number;
+  armor: number;
+  critChance: number;
+  moveSpeed: number;
+  throwPower: number;
+  hue: number;
+  inventory: InventorySlot[];
+  ts?: number; // wall-clock save time (ms)
+}
+
 // Client -> server message payloads.
 export interface MoveMessage {
   x: number;
