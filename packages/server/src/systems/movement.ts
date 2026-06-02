@@ -18,15 +18,20 @@ export function setDestination(player: Player, x: number, z: number) {
   player.targetZ = last.z;
 }
 
-/** Drop a player onto the nearest free spot (used on spawn/respawn). */
+/** Drop a player onto the nearest free spot (used on spawn/respawn/takeover).
+ *  Snaps to the nearest open nav cell, then nudges fully clear of every collision
+ *  circle — so a player can never start INSIDE a solid object (where they'd be
+ *  unable to move). When the requested spot is already free this is a no-op, so it
+ *  preserves an exact position (e.g. a takeover) whenever that position is valid. */
 export function placeAtFreeSpot(player: Player, x: number, z: number) {
   const free = nearestFreeWorld(x, z);
-  player.x = free.x;
-  player.z = free.z;
-  player.targetX = free.x;
-  player.targetZ = free.z;
-  player.prevX = free.x; // so staminaSystem sees no "movement" from the spawn/respawn jump
-  player.prevZ = free.z;
+  const safe = depenetrate(free.x, free.z);
+  player.x = safe.x;
+  player.z = safe.z;
+  player.targetX = safe.x;
+  player.targetZ = safe.z;
+  player.prevX = safe.x; // so staminaSystem sees no "movement" from the spawn/respawn jump
+  player.prevZ = safe.z;
   player.path = [];
   player.pathIndex = 0;
 }
@@ -36,7 +41,30 @@ export function placeAtFreeSpot(player: Player, x: number, z: number) {
  * and facing; ATTACK/HIT/DEAD players are "busy" and don't walk. A depenetration
  * pass guarantees nobody ends up overlapping a solid obstacle.
  */
+/** Dev Mode "ghost" free-roam while the game is paused: glide every player
+ *  straight toward its target, ignoring obstacles. Driven by REAL (unscaled) time
+ *  so the player can roam while the rest of the world is frozen. Moves at 1.08×
+ *  normal speed (the original 0.6× ghost speed bumped +80%) so dev navigation is
+ *  snappy. Only players who set a fresh target (clicked) actually move. */
+const GHOST_SPEED_MULT = 1.08;
+export function ghostMovementSystem(state: GameState, dt: number) {
+  const speed = MOVE_SPEED * GHOST_SPEED_MULT;
+  state.players.forEach((p) => {
+    if (p.state === AnimState.DEAD) return;
+    const dx = p.targetX - p.x;
+    const dz = p.targetZ - p.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist <= 0.05) return;
+    const step = Math.min(dist, speed * dt);
+    p.x += (dx / dist) * step;
+    p.z += (dz / dist) * step;
+    p.rotY = Math.atan2(dx, dz);
+    // no depenetration — a ghost passes freely through rocks/walls/props
+  });
+}
+
 export function movementSystem(state: GameState, dt: number) {
+  if (dt <= 0) return; // paused (timeScale 0): normal movement frozen — ghostMovementSystem roams instead
   state.players.forEach((p) => {
     const busy =
       p.state === AnimState.ATTACK ||

@@ -48,15 +48,8 @@ export class CharacterDebugWindow {
   private yaw = 0;
 
   constructor() {
-    const btn = document.createElement("button");
-    btn.textContent = "🐛 Model (B)";
-    btn.style.cssText =
-      "position:fixed; right:16px; bottom:60px; z-index:40; cursor:pointer;" +
-      "background:#2a3242; color:#f0d27a; border:1px solid #c9a24a; border-radius:6px;" +
-      "padding:6px 10px; font:12px monospace;";
-    btn.onclick = () => this.toggle();
-    document.body.appendChild(btn);
-
+    // No visible toolbar button (it cluttered gameplay) — this dev model inspector
+    // is toggled with the B key instead (see the keydown handler below).
     const panel = document.createElement("div");
     panel.id = "charDebugPanel";
     panel.style.cssText =

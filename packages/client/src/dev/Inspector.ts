@@ -26,7 +26,14 @@ export type Field =
       step: number;
       onChange: (v: number) => void;
     }
-  | { kind: "checkbox"; label: string; value: boolean; onChange: (v: boolean) => void };
+  | { kind: "checkbox"; label: string; value: boolean; onChange: (v: boolean) => void }
+  | {
+      kind: "select";
+      label: string;
+      value: string;
+      options: { value: string; label: string }[];
+      onChange: (v: string) => void;
+    };
 
 export interface Action {
   label: string;
@@ -114,6 +121,20 @@ export class Inspector {
       input.style.cssText = "width:150px;";
       input.oninput = () => f.onChange(input.value);
       row.appendChild(input);
+      return row;
+    }
+    if (f.kind === "select") {
+      const sel = document.createElement("select");
+      sel.style.cssText = "width:150px;";
+      for (const o of f.options) {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        if (o.value === f.value) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.onchange = () => f.onChange(sel.value);
+      row.appendChild(sel);
       return row;
     }
     if (f.kind === "range") {

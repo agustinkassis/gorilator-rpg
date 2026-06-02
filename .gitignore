@@ -8,5 +8,8 @@ dist/
 .vite/
 packages/*/dist/
 
+# Realm-tracker lifetime stats (runtime state; mirrored to the Nostr event)
+.server-realms.json
+
 # Local agent/tooling state (not for the public repo)
 .claude/

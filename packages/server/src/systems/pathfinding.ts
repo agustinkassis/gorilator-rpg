@@ -1,4 +1,4 @@
-import { OBSTACLES, AGENT_RADIUS, NAV_CELL, WORLD_SIZE } from "@rpg/shared";
+import { OBSTACLES, BOULDERS, AGENT_RADIUS, NAV_CELL, WORLD_SIZE } from "@rpg/shared";
 
 /**
  * Grid-based A* navigation over the static obstacle set. Obstacles are inflated
@@ -21,21 +21,41 @@ const worldToCell = (w: number) =>
   Math.min(GRID - 1, Math.max(0, Math.floor((w + WORLD_SIZE) / NAV_CELL)));
 const cellCenter = (c: number) => -WORLD_SIZE + (c + 0.5) * NAV_CELL;
 
-// The shared static obstacles, plus any registered at runtime (imported concrete
-// props). Kept here so the nav grid + depenetration see them all.
+// Collision circles in three groups:
+//  • STATIC      — crates + house (fixed seed; boulders are intentionally dropped
+//                  here, since they're driven by the live Rock entities instead).
+//  • rockObstacles — the boulders, sourced from the live Rock entities so the dev
+//                  editor can relocate/remove them and movement collision follows.
+//  • propObstacles — imported concrete props (from props.json).
+// `combined` is the flattened set the nav grid + depenetration read each tick.
 type Circle = { x: number; z: number; radius: number };
-const extraObstacles: Circle[] = [];
+const STATIC: Circle[] = OBSTACLES.filter((o) => !BOULDERS.includes(o)); // crates + house
+let rockObstacles: Circle[] = [];
+let propObstacles: Circle[] = [];
+let combined: Circle[] = [...STATIC];
 
-/** Every collision circle: the static set + any dynamically registered props. */
-export function allObstacles(): ReadonlyArray<Circle> {
-  return extraObstacles.length ? [...OBSTACLES, ...extraObstacles] : OBSTACLES;
+function rebuildCombined(): void {
+  combined = [...STATIC, ...rockObstacles, ...propObstacles];
 }
 
-/** Replace the runtime collision circles (imported concrete props) + rebuild the
- *  nav grid. Replacing (not appending) keeps re-reads of props.json idempotent. */
+/** Every collision circle the nav grid + depenetration see. */
+export function allObstacles(): ReadonlyArray<Circle> {
+  return combined;
+}
+
+/** Replace the imported-prop collision circles + rebuild the nav grid. Replacing
+ *  (not appending) keeps re-reads of props.json idempotent. */
 export function setPropObstacles(circles: Circle[]): void {
-  extraObstacles.length = 0;
-  extraObstacles.push(...circles);
+  propObstacles = circles;
+  rebuildCombined();
+  buildGrid();
+}
+
+/** Replace the rock/boulder collision circles (from the live Rock entities) +
+ *  rebuild the nav grid, so relocating/removing a rock updates pathfinding. */
+export function setRockObstacles(circles: Circle[]): void {
+  rockObstacles = circles;
+  rebuildCombined();
   buildGrid();
 }
 
@@ -111,9 +131,18 @@ export function depenetrate(x: number, z: number): Pt {
       const dz = pz - o.z;
       const d2 = dx * dx + dz * dz;
       if (d2 < r * r) {
-        const d = Math.sqrt(d2) || 0.0001;
-        px = o.x + (dx / d) * r;
-        pz = o.z + (dz / d) * r;
+        // Push to the circle's edge along the centre→point direction. If the point
+        // sits exactly on the centre there's no direction to push, so pick a
+        // deterministic one (+x) — otherwise an agent dropped dead-centre of a solid
+        // object would stay stuck inside it forever.
+        const d = Math.sqrt(d2);
+        if (d > 1e-6) {
+          px = o.x + (dx / d) * r;
+          pz = o.z + (dz / d) * r;
+        } else {
+          px = o.x + r;
+          pz = o.z;
+        }
       }
     }
   }

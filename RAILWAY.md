@@ -55,6 +55,11 @@ See Railway's [Create a Template](https://docs.railway.com/templates/create) and
 
 ## Options
 
+- **Persist player progress**: Nostr-logged-in players' saves are signed with the
+  server's own key. Add a `NOSTR_NSEC` variable (an `nsec1…`) so progress survives
+  redeploys — generate one with `node cli/gen-nsec.mjs`. Leave it unset and the
+  server mints an ephemeral key each boot (saves reset on redeploy; the generated
+  key is printed to the deploy logs if you want to copy it back).
 - **Lock the live monitor**: the room inspector at `/<your-domain>/colyseus` is open
   by default. To require a password, add `MONITOR_USER` and `MONITOR_PASS` variables
   to the service and redeploy.

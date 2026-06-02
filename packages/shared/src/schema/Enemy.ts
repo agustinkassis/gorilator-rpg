@@ -41,4 +41,11 @@ export class Enemy extends Schema {
   wanderTimer = 0; // until the next patrol point is picked
   wanderRadius = 14; // how far it roams from home (small for the centre guardian)
   aggro = false; // chasing a player vs patrolling
+
+  // ---- dev-spawner overrides (0 / "" ⇒ use the global goblin defaults) ----
+  spawnerId = ""; // which dev spawner produced this goblin ("" = wave / initial)
+  aggroRadius = 0; // pull-off-home range
+  chaseSpeed = 0; // units/sec while chasing/marching
+  atkCooldownMs = 0; // ms between swings
+  houseDamage = 0; // damage per swing on the home
 }

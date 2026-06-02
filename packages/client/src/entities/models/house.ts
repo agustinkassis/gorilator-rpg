@@ -29,6 +29,8 @@ function hierarchyBounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 }
 export interface HouseModel {
   /** Collapse the house: hide the model and its shadow proxy. */
   hide(): void;
+  /** Rebuild the house: re-show the model and its shadow proxy (after a wipe). */
+  show(): void;
 }
 
 /**
@@ -106,13 +108,34 @@ export async function loadHouse(
     proxy.isPickable = false;
     shadow.addShadowCaster(proxy); // ...but it still casts a shadow
 
+    // A cheap, transparent, *pickable* proxy so Dev Mode can SELECT the house (the
+    // real glb is ~6M verts — far too heavy to hover-pick). Tagged as the house
+    // entity so Selection resolves it; a normal-play click just no-ops (the server
+    // has no attackable "house" target). Lets you turn the house into a spawner.
+    const pick = MeshBuilder.CreateBox(
+      "housePickProxy",
+      { width: b.max.x - b.min.x, height: b.max.y - b.min.y, depth: b.max.z - b.min.z },
+      scene,
+    );
+    pick.position.copyFrom(proxy.position);
+    pick.visibility = 0; // transparent — invisible, but isVisible (so it stays pickable)
+    pick.isPickable = true;
+    pick.metadata = { entityId: "house-0", kind: "house" };
+
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
 
     return {
       hide: () => {
         root.setEnabled(false); // collapse: hide the whole model...
         proxy.setEnabled(false);
+        pick.setEnabled(false);
         shadow.removeShadowCaster(proxy); // ...and stop it casting a shadow
+      },
+      show: () => {
+        root.setEnabled(true); // rebuilt after a wipe: show it again...
+        proxy.setEnabled(true);
+        pick.setEnabled(true);
+        shadow.addShadowCaster(proxy); // ...and resume its shadow
       },
     };
   } catch (e) {

@@ -16,6 +16,9 @@ export class HotkeyBar {
   private counts: HTMLElement[] = [];
   private binds: (ItemType | "")[] = ["banana", "", "", ""]; // Q defaults to the banana
   private inv: InventorySlot[] = [];
+  private autoFilled = new Set<string>(); // item types already auto-assigned a quick slot
+  private dragSrc: number | null = null; // quick slot currently being dragged
+  private dropHandled = false; // a drag that landed on a quick slot (so dragend won't clear it)
 
   constructor(private useSlot: (index: number) => void) {
     const bar = document.createElement("div");
@@ -50,10 +53,12 @@ export class HotkeyBar {
         e.preventDefault();
         slot.style.borderColor = "#b58b3a";
         const type = e.dataTransfer?.getData("text/itemtype") as ItemType | "";
-        if (type) {
-          this.binds[i] = type;
-          this.render();
-        }
+        if (!type) return;
+        const src = e.dataTransfer?.getData("text/quicksrc");
+        this.binds[i] = type;
+        if (src !== "" && src != null && Number(src) !== i) this.binds[Number(src)] = ""; // moved from another quick slot
+        this.dropHandled = true;
+        this.render();
       });
       // clearing: right-click empties the slot
       slot.addEventListener("contextmenu", (e) => {
@@ -62,6 +67,27 @@ export class HotkeyBar {
         this.render();
       });
       slot.addEventListener("click", () => this.activate(i));
+
+      // drag a bound slot to rearrange it (drop on another slot) or remove it (drop
+      // anywhere outside the quick bar)
+      slot.draggable = true;
+      slot.addEventListener("dragstart", (e) => {
+        if (!this.binds[i]) {
+          e.preventDefault();
+          return;
+        }
+        e.dataTransfer?.setData("text/itemtype", this.binds[i]);
+        e.dataTransfer?.setData("text/quicksrc", String(i));
+        this.dragSrc = i;
+        this.dropHandled = false;
+      });
+      slot.addEventListener("dragend", () => {
+        if (this.dragSrc === i && !this.dropHandled) {
+          this.binds[i] = ""; // dropped outside the bar → unbind
+          this.render();
+        }
+        this.dragSrc = null;
+      });
 
       bar.appendChild(slot);
       this.slotEls.push(slot);
@@ -84,7 +110,22 @@ export class HotkeyBar {
 
   setInventory(slots: InventorySlot[]) {
     this.inv = slots;
+    this.autoFill();
     this.render();
+  }
+
+  /** The first items acquired auto-fill the quick bar's empty slots (each item type
+   *  once); once the bar is full, further loot just stacks in the inventory. A type
+   *  the player later drags off the bar won't re-fill (it's remembered here). */
+  private autoFill() {
+    for (const s of this.inv) {
+      const t = s.type;
+      if (!t || s.count <= 0 || this.autoFilled.has(t)) continue;
+      this.autoFilled.add(t); // consider each type only once
+      if (this.binds.includes(t)) continue; // already bound (e.g. Q's default banana)
+      const empty = this.binds.indexOf("");
+      if (empty >= 0) this.binds[empty] = t;
+    }
   }
 
   /** The item type bound to a keyboard key (Q/W/E/R), or "". */

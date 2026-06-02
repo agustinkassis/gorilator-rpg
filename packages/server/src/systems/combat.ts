@@ -12,6 +12,7 @@ import {
   ATTACK_VARIANCE,
   ARMOR_K,
   CRIT_MULTIPLIER,
+  CRIT_KNOCKBACK_DISTANCE,
   DAMAGE_DIVISOR,
   HIT_STATE_MS,
   PLAYER_RESPAWN_MS,
@@ -25,10 +26,12 @@ import {
   WORLD_SIZE,
   AGENT_RADIUS,
   TREE_BANANA_DROP_CHANCE,
+  ROCK_COLLISION_SCALE,
   statsForLevel,
 } from "@rpg/shared";
 import { setDestination, placeAtFreeSpot } from "./movement";
-import { onTreeCut, onRockMined, onRockDamaged } from "./resources";
+import { nearestFreeWorld } from "./pathfinding";
+import { onTreeCut, onTreeDamaged, onRockMined, onRockDamaged } from "./resources";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 
@@ -96,7 +99,9 @@ function resolveTarget(state: GameState, id: string): Damageable | undefined {
  *  not the centre, so the reach must include it. Other targets are points. */
 function targetRadius(t: Damageable): number {
   const r = (t as { radius?: number }).radius;
-  return typeof r === "number" ? r : 0;
+  // only rocks carry a radius; use a fraction of it so the player walks right up
+  // to the boulder to mine it (and ends up amid the stones it drops).
+  return typeof r === "number" ? r * ROCK_COLLISION_SCALE : 0;
 }
 
 /** How close to a target's centre you can land a hit (its surface + melee reach). */
@@ -254,23 +259,25 @@ function connectHit(
   if (tree) {
     // every chop has a chance to shake a banana loose
     if (Math.random() < TREE_BANANA_DROP_CHANCE) spawnBanana(state, tree.x, tree.z);
+    onTreeDamaged(state, tree, amount); // progressive-drop trees shed as they're chopped
     if (tree.hp <= 0) {
-      onTreeCut(state, tree);
+      onTreeCut(state, tree); // kill-drop trees yield their full amount here
       grantXp(attacker, killXp(state, targetId), emitXp); // felling a tree grants XP
     }
     return;
   }
   const rock = state.rocks.get(targetId);
   if (rock) {
-    onRockDamaged(state, rock, amount); // sheds a stone every STONE_DROP_DAMAGE while mined
+    onRockDamaged(state, rock, amount); // progressive-drop rocks shed items while mined
     if (rock.hp <= 0) {
-      onRockMined(rock);
+      onRockMined(state, rock); // kill-drop rocks yield their full amount here
       grantXp(attacker, killXp(state, targetId), emitXp); // mining a rock grants XP
     }
     return;
   }
 
   const pe = target as Player | Enemy;
+  if (crit) applyKnockback(pe, attacker.x, attacker.z); // a crit blows the target back
   if (pe.hp <= 0) {
     pe.state = AnimState.DEAD;
     if (state.players.has(targetId)) {
@@ -286,6 +293,30 @@ function connectHit(
     // hurt animation — but a hit never interrupts an attack/throw in progress
     pe.state = AnimState.HIT;
     pe.stateTimer = HIT_STATE_MS;
+  }
+}
+
+/** A crit knocks the struck character back, away from the attacker — a hard shove
+ *  to a free spot. Clears a player's path so they don't instantly stroll back;
+ *  goblins just resume their march from the new spot. The client lerps to the new
+ *  position, so it reads as a fast slide. */
+function applyKnockback(target: Player | Enemy, fromX: number, fromZ: number) {
+  const dx = target.x - fromX;
+  const dz = target.z - fromZ;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-3) return; // attacker on top of target → no direction to shove
+  const spot = nearestFreeWorld(
+    clampToWorld(target.x + (dx / len) * CRIT_KNOCKBACK_DISTANCE),
+    clampToWorld(target.z + (dz / len) * CRIT_KNOCKBACK_DISTANCE),
+  );
+  target.x = spot.x;
+  target.z = spot.z;
+  if ("path" in target) {
+    const p = target as Player;
+    p.path = [];
+    p.pathIndex = 0;
+    p.targetX = spot.x;
+    p.targetZ = spot.z;
   }
 }
 

@@ -25,6 +25,8 @@ export class InventoryUI {
   }));
   private held: number | null = null;
   private open = false;
+  private totals: Partial<Record<ItemType, number>> = {}; // per-type totals, to detect pickups
+  private primed = false; // first inventory is the baseline (no pop); later ones animate gains
 
   constructor(
     private onMove: (from: number, to: number) => void,
@@ -34,6 +36,12 @@ export class InventoryUI {
     this.grid = document.getElementById("invGrid") as HTMLElement;
     this.cursor = document.getElementById("invCursor") as HTMLElement;
     this.btn = document.getElementById("invBtn") as HTMLElement;
+    // bag icon (replaces the "Inventory (I)" label)
+    this.btn.textContent = "🎒";
+    this.btn.title = "Inventory (I)";
+    this.btn.style.fontSize = "26px";
+    this.btn.style.lineHeight = "1";
+    this.btn.style.padding = "8px 12px";
     this.grid.style.gridTemplateColumns = `repeat(${INV_COLS}, 48px)`;
 
     for (let i = 0; i < INV_SLOTS; i++) {
@@ -83,9 +91,56 @@ export class InventoryUI {
   }
 
   setInventory(slots: InventorySlot[]) {
+    // Detect pickups (a type's total went up) → fly that item into the bag. The very
+    // first inventory is the baseline (starting bananas etc.) so it doesn't all pop.
+    const next: Partial<Record<ItemType, number>> = {};
+    for (const s of slots) if (s.type) next[s.type] = (next[s.type] ?? 0) + s.count;
+    if (this.primed) {
+      for (const t of Object.keys(next) as ItemType[]) {
+        if ((next[t] ?? 0) > (this.totals[t] ?? 0)) this.flyToBag(t);
+      }
+    }
+    this.totals = next;
+    this.primed = true;
+
     this.slots = slots;
     this.drop(); // a server update invalidates any in-progress drag
     this.render();
+  }
+
+  /** Pickup feedback (local player only): the item flies from the player to the bag
+   *  icon, zooming in mid-flight, then shrinks into the bag. */
+  private flyToBag(type: ItemType) {
+    const icon = ICONS[type];
+    if (!icon) return;
+    const bag = this.btn.getBoundingClientRect();
+    const bx = bag.left + bag.width / 2;
+    const by = bag.top + bag.height / 2;
+    const sx = window.innerWidth / 2; // the camera-followed player sits at screen centre
+    const sy = window.innerHeight / 2;
+    const mx = (sx + bx) / 2;
+    const my = (sy + by) / 2 - 70; // arc upward on the way to the bag
+
+    const el = document.createElement("div");
+    el.textContent = icon;
+    el.style.cssText =
+      "position:fixed;left:0;top:0;z-index:80;pointer-events:none;font-size:30px;" +
+      "filter:drop-shadow(0 2px 4px rgba(0,0,0,0.6));will-change:transform,opacity;";
+    document.body.appendChild(el);
+    const at = (x: number, y: number, s: number) => `translate(${x - 15}px,${y - 15}px) scale(${s})`;
+    el.animate(
+      [
+        { transform: at(sx, sy, 0.6), opacity: 0 },
+        { transform: at(sx, sy, 2), opacity: 1, offset: 0.22 }, // zoom in at the player
+        { transform: at(mx, my, 1.4), opacity: 1, offset: 0.6 },
+        { transform: at(bx, by, 0.35), opacity: 0.35 },
+      ],
+      { duration: 760, easing: "cubic-bezier(0.5,0,0.2,1)" },
+    ).onfinish = () => el.remove();
+    this.btn.animate(
+      [{ transform: "scale(1)" }, { transform: "scale(1.3)" }, { transform: "scale(1)" }],
+      { duration: 340, easing: "ease-out" },
+    );
   }
 
   /** Total quantity of an item type currently held (e.g. bananas left to throw). */

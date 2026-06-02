@@ -53,6 +53,7 @@ export interface NetHandlers {
   onXp(ev: XpEvent): void;
   onChat(ev: ChatEvent): void;
   onInventory(slots: InventorySlot[]): void;
+  onWipe(ev: { wave: number }): void; // La Crypta fell → round wiped to scratch
   onError(message: string): void;
 }
 
@@ -141,6 +142,7 @@ export class NetworkClient {
       room.onMessage("banana_throw", (ev: BananaThrowEvent) => handlers.onBananaThrow(ev));
       room.onMessage("chat", (ev: ChatEvent) => handlers.onChat(ev));
       room.onMessage("inventory", (slots: InventorySlot[]) => handlers.onInventory(slots));
+      room.onMessage("wipe", (ev: { wave: number }) => handlers.onWipe(ev));
 
       room.onError((code, message) => {
         handlers.onError(`room error ${code}: ${message ?? ""}`);
@@ -192,6 +194,11 @@ export class NetworkClient {
   /** Report SPACE held (sprint on) / released (sprint off). */
   sendSprint(on: boolean) {
     this.room?.send("sprint", { on });
+  }
+
+  /** "Kill yourself" (game menu): die now + respawn (no XP penalty). */
+  sendSuicide() {
+    this.room?.send("suicide");
   }
 
   // ---- Dev Mode (in-game editor) ----

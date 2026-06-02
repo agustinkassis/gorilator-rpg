@@ -8,9 +8,9 @@ import { GameState, AnimState, WORLD_SIZE } from "@rpg/shared";
  * only the authored props (props.json) persist across restarts. Durable authored
  * entities are a later, manifest-driven phase.
  *
- * Rocks are intentionally excluded: a rock is also a seeded static collision
- * circle (BOULDERS), so relocating one here would desync pathfinding. That's
- * handled together with crates/house in the static-object phase.
+ * Rocks are supported too: a rock is also a collision circle, so after a rock
+ * move/delete the room calls refreshRockObstacles() to rebuild the nav grid from
+ * the live Rock entities (see GameRoom). Crates/house remain static for now.
  */
 
 type EditableMap = { get(id: string): { x: number; z: number } | undefined; delete(id: string): boolean };
@@ -24,8 +24,10 @@ function mapFor(state: GameState, kind: string): EditableMap | null {
       return state.potions as unknown as EditableMap;
     case "enemy":
       return state.enemies as unknown as EditableMap;
+    case "rock":
+      return state.rocks as unknown as EditableMap; // collision is refreshed by the room
     default:
-      return null; // rock/player/static handled elsewhere
+      return null; // player/static handled elsewhere
   }
 }
 

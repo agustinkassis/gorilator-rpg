@@ -18,6 +18,9 @@ const MODEL_URL = "/models/knight.glb";
 /** A separate clip (baseball pitch) retargeted onto the character rig for THROW.
  *  Its skeleton is identical to knight.glb (same 24 bones), so it maps 1:1. */
 const THROW_MODEL_URL = "/models/throw.glb";
+/** The default attack swing — a separate Crimson Gorilla clip on the same 24-bone
+ *  rig, retargeted onto the character to OVERRIDE the bundled knight.glb Attack. */
+const ATTACK_MODEL_URL = "/models/attack.glb";
 /** The goblin enemy — same 24-bone skeleton, its own clips (see GOBLIN_ANIM_MAP). */
 const GOBLIN_MODEL_URL = "/models/goblin.glb";
 /** Rotate the loaded model around Y if it doesn't face +Z. (e.g. Math.PI to flip.) */
@@ -36,6 +39,7 @@ interface ModelConfig {
   yawFix: Partial<Record<AnimState, number>>;
   scale: number;
   throwTemplate?: AnimationGroup | null;
+  attackTemplate?: AnimationGroup | null;
 }
 
 /**
@@ -51,10 +55,15 @@ const ANIM_NAME_MAP: Record<string, AnimState> = {
   Hit: AnimState.HIT,
   Death: AnimState.DEAD,
 };
-/** Gorilla speed/yaw tuning: the pitch clip plays fast; the Attack clip needs a
- *  -56° yaw and the Throw clip a +56° yaw (they were authored facing differently). */
-const GORILLA_SPEEDS: AnimSpeeds = { [AnimState.THROW]: 6.53 }; // pitch plays 50% faster (4.35 → 6.53)
-const GORILLA_YAW_FIX = { [AnimState.ATTACK]: -56 * DEG, [AnimState.THROW]: 56 * DEG };
+/** Gorilla speed/yaw tuning. The standalone clips were authored facing off from
+ *  the rig's forward, so each gets a yaw correction. The new ATTACK clip's root
+ *  orientation matches the THROW export (positive), so it takes +56° — unlike the
+ *  old bundled Attack clip, which faced the other way (-56°). */
+const GORILLA_SPEEDS: AnimSpeeds = {
+  [AnimState.THROW]: 6.53, // pitch plays 50% faster (4.35 → 6.53)
+  [AnimState.ATTACK]: 4.5, // the swing clip is ~2.83s; ~4.5× makes it read in the combat window
+};
+const GORILLA_YAW_FIX = { [AnimState.ATTACK]: 56 * DEG, [AnimState.THROW]: 56 * DEG };
 
 /**
  * Goblin clips (Meshy "Gloombraid Goblin"): no idle/attack clip, so Walking
@@ -100,6 +109,10 @@ export class CharacterFactory {
   private throwContainer: AssetContainer | null = null;
   /** The pitch AnimationGroup, retargeted per-instance onto each spawned rig. */
   private throwTemplate: AnimationGroup | null = null;
+  /** Kept alive so its bone TransformNodes stay valid as the ATTACK clip's source. */
+  private attackContainer: AssetContainer | null = null;
+  /** The default-attack AnimationGroup, retargeted per-instance onto each rig. */
+  private attackTemplate: AnimationGroup | null = null;
   /** The goblin enemy model (own clips), instanced per goblin. */
   private goblinContainer: AssetContainer | null = null;
 
@@ -165,8 +178,10 @@ export class CharacterFactory {
 
     if (opts.playerOnly) return; // splash preview: just the player gorilla
 
-    // The throw (pitch) clip is a separate file retargeted onto the rig at spawn.
+    // The throw (pitch) + attack (swing) clips are separate files retargeted onto
+    // the rig at spawn.
     if (this.container) await this.loadThrowAnimation();
+    if (this.container) await this.loadAttackAnimation();
     await this.loadGoblin();
   }
 
@@ -238,6 +253,34 @@ export class CharacterFactory {
     }
   }
 
+  /** Load the default-attack clip once and keep its AnimationGroup as a retarget
+   *  template (overrides the bundled Attack clip on every gorilla-rig character). */
+  private async loadAttackAnimation(): Promise<void> {
+    let exists = false;
+    try {
+      const res = await fetch(ATTACK_MODEL_URL, { method: "HEAD" });
+      const type = res.headers.get("content-type") ?? "";
+      exists = res.ok && !type.includes("text/html");
+    } catch {
+      exists = false;
+    }
+    if (!exists) {
+      console.info(`[assets] ${ATTACK_MODEL_URL} not present — using the bundled Attack clip.`);
+      return;
+    }
+    try {
+      this.attackContainer = await SceneLoader.LoadAssetContainerAsync("", ATTACK_MODEL_URL, this.scene);
+      const ag = this.attackContainer.animationGroups[0] ?? null;
+      ag?.stop();
+      this.attackTemplate = ag;
+      console.log(`[assets] loaded attack clip: ${ag?.name ?? "(none)"}`);
+    } catch (err) {
+      console.warn(`[assets] failed to load ${ATTACK_MODEL_URL}; using the bundled Attack clip.`, err);
+      this.attackContainer = null;
+      this.attackTemplate = null;
+    }
+  }
+
   /** `scale` overrides the per-kind default (the splash passes a larger value to
    *  show the hero off bigger than it appears in gameplay). */
   spawn(kind: CharacterKind, accent: Color3, scale?: number): SpawnedCharacter {
@@ -260,6 +303,7 @@ export class CharacterFactory {
         yawFix: GORILLA_YAW_FIX,
         scale: scale ?? MODEL_SCALE,
         throwTemplate: this.throwTemplate,
+        attackTemplate: this.attackTemplate,
       });
     }
     // No glb present: everything degrades to the built-in straw dummy. (The
@@ -267,10 +311,34 @@ export class CharacterFactory {
     return buildDummy(this.scene);
   }
 
+  /** Clone a clip authored on the same rig onto THIS instance's bones (matched by
+   *  name), so a separate-file animation plays on the spawned character. The clone
+   *  is disposed with the rest via AnimationController.dispose(). */
+  private retargetClip(
+    template: AnimationGroup,
+    holder: TransformNode,
+    label: string,
+  ): AnimationGroup {
+    const boneByName = new Map<string, TransformNode>();
+    for (const n of holder.getDescendants(false)) {
+      if (n instanceof TransformNode) boneByName.set(n.name, n);
+    }
+    const clip = template.clone(`${label}_${holder.uniqueId}`, (old) => {
+      const name = (old as { name?: string } | null)?.name;
+      return (name && boneByName.get(name)) || old;
+    });
+    clip.stop();
+    return clip;
+  }
+
   /** Instantiate one character from a loaded container, wiring its clips → states. */
   private spawnFromContainer(cfg: ModelConfig): SpawnedCharacter {
+    // doNotInstantiate:true → full mesh CLONES, not InstancedMesh. InstancedMesh
+    // share their source mesh's `renderOverlay`, so a hit-flash on one would flash
+    // EVERY character of the same kind. Clones give each character an independent
+    // overlay so only the one actually struck flashes.
     const entries = cfg.container.instantiateModelsToScene((name) => name, false, {
-      doNotInstantiate: false,
+      doNotInstantiate: true,
     });
     const holder = new TransformNode("char", this.scene);
     const modelRoot = entries.rootNodes[0] as TransformNode;
@@ -297,19 +365,13 @@ export class CharacterFactory {
       if (key && !groups[key]) groups[key] = g;
     }
 
-    // Retarget the pitch clip onto THIS instance's bones (gorilla rig only).
-    if (cfg.throwTemplate) {
-      const boneByName = new Map<string, TransformNode>();
-      for (const n of holder.getDescendants(false)) {
-        if (n instanceof TransformNode) boneByName.set(n.name, n);
-      }
-      const throwGroup = cfg.throwTemplate.clone(`throw_${holder.uniqueId}`, (old) => {
-        const name = (old as { name?: string } | null)?.name;
-        return (name && boneByName.get(name)) || old;
-      });
-      throwGroup.stop();
-      groups[AnimState.THROW] = throwGroup; // disposed via AnimationController.dispose()
-    }
+    // Retarget separate-file clips (same gorilla rig) onto THIS instance's bones:
+    // the pitch → THROW, and the dedicated swing → ATTACK (overriding the clip
+    // baked into knight.glb). Both clones are disposed via AnimationController.
+    if (cfg.throwTemplate)
+      groups[AnimState.THROW] = this.retargetClip(cfg.throwTemplate, holder, "throw");
+    if (cfg.attackTemplate)
+      groups[AnimState.ATTACK] = this.retargetClip(cfg.attackTemplate, holder, "attack");
 
     return {
       root: holder,

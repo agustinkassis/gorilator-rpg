@@ -4,6 +4,21 @@ import { ArcRotateCamera, Camera, Scene, Vector3 } from "@babylonjs/core";
  *  6.3 ≈ 8.5 / 1.35 — i.e. 35% more zoomed-in than the previous 8.5. */
 const ORTHO_HALF_HEIGHT = 6.3;
 
+/** Dev Mode can pull the camera back up to this many × the normal play zoom. */
+export const MAX_DEV_ZOOM = 6;
+let zoom = 1; // 1 = normal play zoom; grows toward MAX_DEV_ZOOM when zoomed out in Dev Mode
+
+/** Current zoom-out factor (1 = normal). */
+export function getCameraZoom(): number {
+  return zoom;
+}
+
+/** Set the zoom-out factor (clamped to [1, MAX_DEV_ZOOM]) and apply it. */
+export function setCameraZoom(camera: ArcRotateCamera, factor: number) {
+  zoom = Math.max(1, Math.min(MAX_DEV_ZOOM, factor));
+  applyOrthoSize(camera);
+}
+
 /**
  * A locked isometric camera: orthographic projection at the classic true-iso
  * angle (45° around Y, ~35.26° elevation → atan(1/√2) from horizontal). It does
@@ -29,8 +44,9 @@ export function createIsoCamera(scene: Scene): ArcRotateCamera {
 export function applyOrthoSize(camera: ArcRotateCamera) {
   const engine = camera.getEngine();
   const aspect = engine.getRenderWidth() / engine.getRenderHeight();
-  camera.orthoTop = ORTHO_HALF_HEIGHT;
-  camera.orthoBottom = -ORTHO_HALF_HEIGHT;
-  camera.orthoLeft = -ORTHO_HALF_HEIGHT * aspect;
-  camera.orthoRight = ORTHO_HALF_HEIGHT * aspect;
+  const h = ORTHO_HALF_HEIGHT * zoom;
+  camera.orthoTop = h;
+  camera.orthoBottom = -h;
+  camera.orthoLeft = -h * aspect;
+  camera.orthoRight = h * aspect;
 }

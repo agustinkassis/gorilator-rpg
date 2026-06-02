@@ -21,15 +21,24 @@ import {
   ItemType,
   DamageEvent,
   XpEvent,
+  ROCK_COLLISION_SCALE,
   POTION_HEAL,
   THROW_STATE_MS,
   THROW_RELEASE_FRACTION,
   BANANA_MAX_THROW,
   STARTING_BANANAS,
+  PLAYER_MAX_HP,
+  PLAYER_MAX_STAMINA,
+  PLAYER_ATTACK,
+  PLAYER_ARMOR,
+  PLAYER_CRIT_CHANCE,
+  MOVE_SPEED,
+  PLAYER_RESPAWN_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
+  PlayerSave,
 } from "@rpg/shared";
-import { movementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
+import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
 import { staminaSystem } from "../systems/stamina";
 import {
   combatSystem,
@@ -45,14 +54,22 @@ import {
   rockRegrowSystem,
   itemPickupSystem,
   autoGrabSystem,
+  resetResources,
+  applyResourceConfig,
 } from "../systems/resources";
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
-import { spawnGoblins, goblinAiSystem, goblinSpawnSystem } from "../systems/goblins";
+import { goblinAiSystem, waveSystem, resetWaves } from "../systems/goblins";
+import { realmTracker } from "../systems/realms";
+import { separationSystem } from "../systems/separation";
 import { spawnHouse } from "../systems/houses";
 import { loadPropObstacles } from "../systems/props";
+import { loadSpawners, spawnerSystem } from "../systems/spawners";
+import { loadResourceDrops } from "../systems/resourceDrops";
+import { setRockObstacles } from "../systems/pathfinding";
 import { devMove, devDelete, devSet } from "../systems/devEdit";
 import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
+import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrSave";
 
 /** A kicked session's gameplay state, handed to the new login that takes it over. */
 interface TakeoverState {
@@ -80,6 +97,12 @@ export class GameRoom extends Room<GameState> {
   /** Per-player inventory, kept off the synced state and sent only to its owner. */
   private inventories = new Map<string, InventorySlot[]>();
 
+  /** Signs + publishes Nostr-logged-in players' progress with the SERVER key. */
+  private serverSaver = new ServerSaver();
+  /** Per-session level/death watermark, so the tick can persist a save the
+   *  moment a Nostr player levels up or dies (keyed by sessionId). */
+  private saveTrack = new Map<string, { level: number; dead: boolean }>();
+
   /** Banana throws mid-windup: the banana launches once the pitch reaches its
    *  release point (THROW_RELEASE_FRACTION through the animation), not on input. */
   private pendingThrows = new Map<
@@ -87,14 +110,26 @@ export class GameRoom extends Room<GameState> {
     { power: number; timer: number; item: "banana" | "stone" }
   >();
 
+  /** True while La Crypta (the home) stands; flips on collapse so the tick fires the
+   *  wipe exactly once, then back to true once the home is rebuilt. */
+  private homeStanding = true;
+
+  /** Throttles the realm-tracker snapshot (it doesn't need every 20Hz tick). */
+  private realmTick = 0;
+
   onCreate() {
     this.setState(new GameState());
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
+    loadSpawners(); // dev-placed goblin spawners (+ live reload of spawners.json)
+    // per-kind tree/rock drop config (+ live reload of resources.json). The callback
+    // re-applies the configured HP to every existing tree/rock on each edit.
+    loadResourceDrops(() => applyResourceConfig(this.state));
     spawnDummies(this.state);
-    spawnGoblins(this.state);
     spawnInitialPotions(this.state);
     spawnTrees(this.state);
     spawnRocks(this.state);
+    applyResourceConfig(this.state); // stamp configured HP onto the freshly-spawned resources
+    this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
     spawnHouse(this.state);
 
@@ -103,6 +138,14 @@ export class GameRoom extends Room<GameState> {
       if (!p || p.state === AnimState.DEAD) return;
       p.attackTargetId = "";
       p.pickupTargetId = ""; // a manual move cancels any pursuit
+      if (this.state.timeScale === 0) {
+        // paused → ghost free-roam: fly straight to the point (no pathfinding,
+        // ignoring obstacles); ghostMovementSystem glides there at 1.08× speed.
+        p.path = [];
+        p.targetX = clampToWorld(msg.x);
+        p.targetZ = clampToWorld(msg.z);
+        return;
+      }
       setDestination(p, clampToWorld(msg.x), clampToWorld(msg.z));
     });
 
@@ -114,9 +157,23 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.onMessage("attack", (client, msg: AttackMessage) => {
+      if (this.state.timeScale === 0) return; // game paused — ignore attack input
       const p = this.state.players.get(client.sessionId);
       if (p) p.pickupTargetId = "";
       handleAttack(this.state, client.sessionId, msg.targetId);
+    });
+
+    // "Kill yourself" (game menu): a voluntary death → the normal respawn flow brings
+    // you back. No XP penalty (it's a deliberate self-respawn, not a combat death).
+    this.onMessage("suicide", (client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.state === AnimState.DEAD || p.godMode) return;
+      p.hp = 0;
+      p.state = AnimState.DEAD;
+      p.respawnTimer = PLAYER_RESPAWN_MS;
+      p.attackTargetId = "";
+      p.pendingHitId = "";
+      p.pickupTargetId = "";
     });
 
     // Dev Mode: toggle the sender's immortality. Turning it on while dead also
@@ -138,10 +195,14 @@ export class GameRoom extends Room<GameState> {
     // mutate authoritative state and sync to every client. Runtime-only (the
     // world regenerates each restart); authored props persist via props.json.
     this.onMessage("dev_move", (_client, msg: DevMoveMessage) => {
-      if (msg) devMove(this.state, msg.kind, msg.id, msg.x, msg.z);
+      if (!msg) return;
+      devMove(this.state, msg.kind, msg.id, msg.x, msg.z);
+      if (msg.kind === "rock") this.refreshRockObstacles(); // collision follows the rock
     });
     this.onMessage("dev_delete", (_client, msg: DevDeleteMessage) => {
-      if (msg) devDelete(this.state, msg.kind, msg.id);
+      if (!msg) return;
+      devDelete(this.state, msg.kind, msg.id);
+      if (msg.kind === "rock") this.refreshRockObstacles(); // drop its collision too
     });
     this.onMessage("dev_set", (_client, msg: DevSetMessage) => {
       if (msg) devSet(this.state, msg.kind, msg.id, msg.field, msg.value);
@@ -155,6 +216,7 @@ export class GameRoom extends Room<GameState> {
     this.onMessage("pickup", (client, msg: PickupMessage) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || p.state === AnimState.DEAD) return;
+      if (this.state.timeScale === 0) return; // game paused — ignore pickup input
       const target =
         this.state.logs.get(msg.id) ??
         this.state.stones.get(msg.id) ??
@@ -170,6 +232,7 @@ export class GameRoom extends Room<GameState> {
       const p = this.state.players.get(client.sessionId);
       const inv = this.inventories.get(client.sessionId);
       if (!p || !inv || p.state === AnimState.DEAD) return;
+      if (this.state.timeScale === 0) return; // game paused — ignore throw input
       if (p.state === AnimState.THROW) return; // already mid-throw
       const item = msg.item === "stone" ? "stone" : "banana"; // the throwables
       if (countItem(inv, item) <= 0) return; // need one of that item to throw
@@ -235,9 +298,14 @@ export class GameRoom extends Room<GameState> {
       const emitXp = (ev: XpEvent) => this.broadcast("xp", ev);
       staminaSystem(this.state, dt); // sets p.sprinting; movement reads it for the speed boost
       movementSystem(this.state, dt);
+      // Paused: normal movement is frozen, but the local player roams as a ghost
+      // at REAL (unscaled) time — decoupled from the game clock.
+      if (this.state.timeScale === 0) ghostMovementSystem(this.state, deltaMs / 1000);
       combatSystem(this.state, dt, emitDamage, emitXp);
       goblinAiSystem(this.state, dt, emitDamage);
-      goblinSpawnSystem(this.state, dt); // tower-defense waves scale with live players
+      if (this.state.timeScale > 0) separationSystem(this.state); // fan attackers out — no stacking on one tile
+      waveSystem(this.state, dt); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
+      spawnerSystem(this.state, dt); // dev-placed object spawners (coexist with waves)
       this.releasePendingThrows(scaledMs);
       treeRegrowSystem(this.state, dt);
       rockRegrowSystem(this.state, dt);
@@ -252,12 +320,113 @@ export class GameRoom extends Room<GameState> {
       };
       itemPickupSystem(this.state, dt, collect); // walk-onto a clicked item
       autoGrabSystem(this.state, collect); // auto-collect anything nearby
+      this.checkHomeFall(); // La Crypta fell? → wipe everyone to scratch + restart the round
+      this.detectSaveTriggers(); // persist Nostr progress on level-up / death
+      if (++this.realmTick >= TICK_RATE) {
+        this.realmTick = 0;
+        this.reportRealm(); // ~1/s: feed the realm tracker (start/accumulate/abandon)
+      }
     }, 1000 / TICK_RATE);
 
     console.log(`[room] ${this.roomId} created`);
   }
 
-  onJoin(client: Client, options?: { name?: string; nostr?: NostrJoinPayload }) {
+  /** Feed the realm tracker a snapshot (~1/s): it starts a realm when the first
+   *  defender is alive, accumulates joined npubs/waves, and ends it when the room
+   *  empties. (La Crypta falling ends it explicitly from resetRound.) */
+  private reportRealm() {
+    let live = 0;
+    const npubs: string[] = [];
+    this.state.players.forEach((p) => {
+      if (p.hp > 0 && p.state !== AnimState.DEAD) live++;
+      if (p.pubkey) npubs.push(p.pubkey);
+    });
+    realmTracker.update({
+      connected: this.state.players.size,
+      live,
+      wave: this.state.waveNumber,
+      npubs,
+    });
+  }
+
+  /** Detect La Crypta collapsing (no standing house) and trigger the wipe once. */
+  private checkHomeFall() {
+    let standing = false;
+    this.state.houses.forEach((h) => {
+      if (h.alive) standing = true;
+    });
+    if (this.homeStanding && !standing) {
+      this.homeStanding = false;
+      this.resetRound();
+    }
+  }
+
+  /**
+   * La Crypta has fallen → wipe the round to scratch: every player dies and respawns
+   * a brand-new level-1 character with a starter inventory, the besieging horde is
+   * cleared, the house is rebuilt and the wave clock restarts. A "wipe" event lets
+   * clients show the defeat banner.
+   */
+  private resetRound() {
+    const wave = this.state.waveNumber;
+
+    this.state.players.forEach((p, sid) => {
+      // back to a brand-new level-1 character (the schema defaults)
+      p.level = 1;
+      p.xp = 0;
+      p.maxHp = PLAYER_MAX_HP;
+      p.maxStamina = PLAYER_MAX_STAMINA;
+      p.stamina = PLAYER_MAX_STAMINA;
+      p.attack = PLAYER_ATTACK;
+      p.armor = PLAYER_ARMOR;
+      p.critChance = PLAYER_CRIT_CHANCE;
+      p.moveSpeed = MOVE_SPEED;
+      p.throwPower = 1;
+      p.attackTargetId = "";
+      p.pendingHitId = "";
+      p.pickupTargetId = "";
+      p.attackCooldown = 0;
+      p.stateTimer = 0;
+      p.path = [];
+      p.pathIndex = 0;
+      // die now; the combat system respawns them fresh near the rebuilt home
+      p.hp = 0;
+      p.state = AnimState.DEAD;
+      p.respawnTimer = PLAYER_RESPAWN_MS;
+      // don't let this forced wipe-death clobber a Nostr player's saved character
+      // (their persisted progress then naturally follows their post-wipe play).
+      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: 1, dead: true });
+    });
+
+    // fresh starter inventory for everyone
+    this.inventories.forEach((_inv, sid) => {
+      const inv = makeInventory();
+      addItem(inv, "banana", STARTING_BANANAS);
+      this.inventories.set(sid, inv);
+      this.sendInventory(sid);
+    });
+
+    // Regenerate the whole world from scratch: clear the horde + every dropped item,
+    // restore all structures to pristine, re-scatter fresh potions/bananas, respawn
+    // the training dummies, rebuild La Crypta, and restart the waves.
+    this.state.enemies.clear(); // the besieging horde + the training dummies
+    this.state.potions.clear();
+    this.state.bananas.clear();
+    resetResources(this.state); // trees/rocks → full + alive; dropped logs/stones cleared
+    spawnDummies(this.state);
+    spawnInitialPotions(this.state);
+    spawnInitialBananas(this.state);
+    this.refreshRockObstacles(); // rocks are alive again → their collision is back
+    spawnHouse(this.state);
+    resetWaves(this.state);
+    this.homeStanding = true;
+    realmTracker.homeFell(); // this realm is over (a fresh one starts on the respawn)
+
+    this.broadcast("wipe", { wave });
+    console.log(`[room] La Crypta fell on wave ${wave} — round reset to scratch`);
+  }
+
+  async onJoin(client: Client, options?: { name?: string; nostr?: NostrJoinPayload }) {
     // Nostr login (optional). If the client supplied a signed challenge, verify
     // it server-side; a bad signature or replayed/expired challenge rejects the
     // join. Anonymous (name-only) joins skip this entirely.
@@ -290,29 +459,31 @@ export class GameRoom extends Room<GameState> {
     }
 
     // Single session per nostr identity: if this npub is already playing here,
-    // kick that session and inherit its place + stats + inventory (newest wins).
+    // kick that session and inherit its (fresher-than-any-save) live state. If
+    // it's NOT live, recover the player's last server-signed save off the relays
+    // (bounded, so a slow relay just yields a fresh spawn instead of stalling
+    // the join). Both carry the same fields, so one restore path handles either.
     const takeover = nostr ? this.takeOverSameNpub(client.sessionId, nostr.pubkey) : null;
+    const savedState = nostr && !takeover ? await fetchServerSave(nostr.pubkey) : null;
+    const restore: TakeoverState | PlayerSave | null = takeover ?? savedState ?? null;
 
-    if (takeover) {
-      p.x = takeover.x;
-      p.z = takeover.z;
-      p.rotY = takeover.rotY;
-      p.maxHp = takeover.maxHp;
-      p.hp = takeover.hp > 0 ? takeover.hp : takeover.maxHp; // don't arrive dead
-      p.maxStamina = takeover.maxStamina;
-      p.stamina = takeover.stamina;
-      p.level = takeover.level;
-      p.xp = takeover.xp;
-      p.attack = takeover.attack;
-      p.armor = takeover.armor;
-      p.critChance = takeover.critChance;
-      p.moveSpeed = takeover.moveSpeed;
-      p.throwPower = takeover.throwPower;
-      p.hue = takeover.hue;
-      p.targetX = p.x;
-      p.targetZ = p.z;
-      p.prevX = p.x;
-      p.prevZ = p.z;
+    if (restore) {
+      // Route the saved/inherited position through the free-spot check so
+      // reconnecting never drops you INSIDE a solid object you'd be stuck in.
+      placeAtFreeSpot(p, restore.x, restore.z);
+      p.rotY = restore.rotY;
+      p.maxHp = restore.maxHp;
+      p.hp = restore.hp > 0 ? restore.hp : restore.maxHp; // don't arrive dead
+      p.maxStamina = restore.maxStamina;
+      p.stamina = restore.stamina;
+      p.level = restore.level;
+      p.xp = restore.xp;
+      p.attack = restore.attack;
+      p.armor = restore.armor;
+      p.critChance = restore.critChance;
+      p.moveSpeed = restore.moveSpeed;
+      p.throwPower = restore.throwPower;
+      p.hue = restore.hue;
       p.state = AnimState.IDLE;
     } else {
       const angle = Math.random() * Math.PI * 2;
@@ -323,16 +494,22 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.set(client.sessionId, p);
+    realmTracker.noteNpub(p.pubkey); // track the npub in the live realm (no-op for anon / no realm)
 
-    // Inherit the old session's inventory, or stock a fresh one with bananas.
-    const inv = takeover?.inventory ?? makeInventory();
-    if (!takeover?.inventory) addItem(inv, "banana", STARTING_BANANAS);
+    // Inherit the old session's / saved inventory, or stock a fresh one.
+    const inv = restore?.inventory ?? makeInventory();
+    if (!restore?.inventory) addItem(inv, "banana", STARTING_BANANAS);
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
 
+    // Track this Nostr player's level/death watermark so the tick can persist a
+    // save the moment they level up or die.
+    if (nostr) this.saveTrack.set(client.sessionId, { level: p.level, dead: false });
+
+    const how = takeover ? "took over" : savedState ? "recovered" : "joined";
     console.log(
-      `[room] ${p.name}${p.nostrVerified ? " ⚡nostr" : ""} ` +
-        `${takeover ? "took over" : "joined"} (${this.state.players.size} online)`,
+      `[room] ${p.name}${p.nostrVerified ? " ⚡nostr" : ""} ${how} ` +
+        `(lv ${p.level}, ${this.state.players.size} online)`,
     );
   }
 
@@ -381,10 +558,55 @@ export class GameRoom extends Room<GameState> {
   }
 
   onLeave(client: Client) {
+    // Persist a Nostr player's final state on the way out (the "logout" save).
+    // This covers tab-close too: the dropped socket fires onLeave server-side,
+    // which is more reliable than a client `beforeunload` ever was.
+    const p = this.state.players.get(client.sessionId);
+    if (p?.pubkey && p.nostrVerified) this.persistSave(client.sessionId, p, "logout");
+
     this.state.players.delete(client.sessionId);
     this.inventories.delete(client.sessionId);
     this.pendingThrows.delete(client.sessionId);
+    this.saveTrack.delete(client.sessionId);
     console.log(`[room] ${client.sessionId} left`);
+  }
+
+  /** Each tick: for every tracked (Nostr-logged-in) player, persist a save the
+   *  instant they level up or die — the moments worth recovering from. */
+  private detectSaveTriggers(): void {
+    if (this.saveTrack.size === 0) return;
+    for (const [sid, track] of this.saveTrack) {
+      const p = this.state.players.get(sid);
+      if (!p) continue;
+      const dead = p.state === AnimState.DEAD;
+      const leveledUp = p.level > track.level;
+      const justDied = dead && !track.dead;
+      track.level = p.level;
+      track.dead = dead;
+      if (leveledUp) this.persistSave(sid, p, "level-up");
+      else if (justDied) this.persistSave(sid, p, "death");
+    }
+  }
+
+  /** Snapshot a player + its inventory and enqueue a server-signed save
+   *  (coalesced per pubkey, so overlapping triggers never double-publish). */
+  private persistSave(sid: string, p: Player, reason: string): void {
+    if (!p.pubkey) return;
+    this.serverSaver.save(p.pubkey, buildServerSave(p, this.inventories.get(sid) ?? []), reason);
+  }
+
+  /** Rebuild the pathfinding rock obstacles from the live Rock entities (all of
+   *  them, alive or mined, so mined rocks still block). Run on startup and after
+   *  the dev editor relocates/removes a rock. */
+  private refreshRockObstacles() {
+    const circles: { x: number; z: number; radius: number }[] = [];
+    // collision footprint is a fraction of the visual radius, so players can walk
+    // right up to a boulder (and reach the stones it drops) instead of being held
+    // off at arm's length.
+    this.state.rocks.forEach((r) =>
+      circles.push({ x: r.x, z: r.z, radius: r.radius * ROCK_COLLISION_SCALE }),
+    );
+    setRockObstacles(circles);
   }
 
   /** Launch any banana whose pitch has reached its release point, in the

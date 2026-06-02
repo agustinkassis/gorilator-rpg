@@ -16,12 +16,14 @@
     "@rpg/shared": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "nostr-tools": "^2.23.5"
+    "nostr-tools": "^2.23.5",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.14",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

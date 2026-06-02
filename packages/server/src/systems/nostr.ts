@@ -1,5 +1,18 @@
 import { randomBytes } from "node:crypto";
 import { verifyEvent } from "nostr-tools";
+import {
+  PlayerSave,
+  InventorySlot,
+  WORLD_SIZE,
+  INV_SLOTS,
+  MAX_STACK,
+  PLAYER_MAX_HP,
+  PLAYER_MAX_STAMINA,
+  PLAYER_ATTACK,
+  PLAYER_ARMOR,
+  PLAYER_CRIT_CHANCE,
+  MOVE_SPEED,
+} from "@rpg/shared";
 
 /** A signed Nostr event (NIP-01 shape). */
 export interface NostrEvent {
@@ -115,4 +128,59 @@ export function verifyNostrLogin(
   }
 
   return { pubkey, name, picture, nip05 };
+}
+
+const clampW = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
+const finite = (v: unknown, def: number) => (Number.isFinite(Number(v)) ? Number(v) : def);
+
+/**
+ * Parse + sanitize a save's JSON into a sane PlayerSave. Coerces every field to
+ * a finite number, clamps to legal ranges, and normalizes the inventory — so a
+ * truncated/garbage save can't NaN-poison the simulation. The save is signed by
+ * the SERVER's own key (it's authoritative), so this is purely NaN/range hygiene.
+ */
+export function sanitizeSaveContent(content: string): PlayerSave | null {
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== "object") return null;
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const maxHp = Math.max(1, finite(raw.maxHp, PLAYER_MAX_HP));
+  const maxStamina = Math.max(1, finite(raw.maxStamina, PLAYER_MAX_STAMINA));
+  return {
+    v: Math.floor(finite(raw.v, 1)),
+    level: Math.max(1, Math.floor(finite(raw.level, 1))),
+    xp: Math.max(0, finite(raw.xp, 0)),
+    maxHp,
+    hp: Math.max(0, Math.min(maxHp, finite(raw.hp, maxHp))),
+    maxStamina,
+    stamina: Math.max(0, Math.min(maxStamina, finite(raw.stamina, maxStamina))),
+    x: clampW(finite(raw.x, 0)),
+    z: clampW(finite(raw.z, 0)),
+    rotY: finite(raw.rotY, 0),
+    attack: Math.max(0, finite(raw.attack, PLAYER_ATTACK)),
+    armor: Math.max(0, finite(raw.armor, PLAYER_ARMOR)),
+    critChance: Math.max(0, Math.min(1, finite(raw.critChance, PLAYER_CRIT_CHANCE))),
+    moveSpeed: Math.max(0, finite(raw.moveSpeed, MOVE_SPEED)),
+    throwPower: Math.max(0, finite(raw.throwPower, 1)),
+    hue: finite(raw.hue, 0),
+    inventory: sanitizeInventory(raw.inventory),
+  };
+}
+
+/** Normalize an inventory to exactly INV_SLOTS valid slots. */
+function sanitizeInventory(raw: unknown): InventorySlot[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const types = new Set(["log", "potion", "stone", "banana"]);
+  const out: InventorySlot[] = [];
+  for (let i = 0; i < INV_SLOTS; i++) {
+    const s = arr[i] as { type?: unknown; count?: unknown } | undefined;
+    const type = typeof s?.type === "string" && types.has(s.type) ? s.type : "";
+    const count = Math.max(0, Math.min(MAX_STACK, Math.floor(finite(s?.count, 0))));
+    out.push({ type: count > 0 ? (type as InventorySlot["type"]) : "", count: type && count > 0 ? count : 0 });
+  }
+  return out;
 }

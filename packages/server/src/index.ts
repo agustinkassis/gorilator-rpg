@@ -9,6 +9,13 @@ import { monitor } from "@colyseus/monitor";
 import { ROOM_NAME, SERVER_PORT } from "@rpg/shared";
 import { GameRoom } from "./rooms/GameRoom";
 import { issueChallenge } from "./systems/nostr";
+import { getServerIdentity } from "./systems/nostrIdentity";
+import { realmTracker } from "./systems/realms";
+
+// Resolve (or generate) the server's Nostr key up-front, so the npub — and the
+// "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
+// the first player's join. This key signs every player's progress save.
+const serverIdentity = getServerIdentity();
 
 // The big (×6) world syncs a lot of entities at once — 120 trees, 45 rocks,
 // plus logs/stones/potions/bananas/players. The full-state encode on join
@@ -57,9 +64,17 @@ app.get("/", (_req, res) => {
 
 // Nostr login: hand out a one-time challenge the client signs (NIP-07) to prove
 // it controls a pubkey. The signed event is verified when it joins the room.
+// `serverPubkey` lets the client read its own server-signed save off the relays
+// (the server is the save author) to preview recovered progress on the splash.
 app.get("/nostr/challenge", (_req, res) => {
-  res.json({ challenge: issueChallenge() });
+  res.json({ challenge: issueChallenge(), serverPubkey: serverIdentity.pubkey });
 });
+
+// Public discovery/stats API for external apps + dashboards (see REALMS.md).
+//  GET /api/status — server identity + lifetime stats + the live realm
+//  GET /api/realm  — the current realm to join (+ players already in it)
+app.get("/api/status", (_req, res) => res.json(realmTracker.status()));
+app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
 
 // SPA fallback (single-service only): unmatched GETs return index.html so the
 // client renders, but never shadow the monitor or Colyseus matchmaking routes.
@@ -82,6 +97,7 @@ gameServer
   .then(() => {
     console.log(`[server] listening on ws://localhost:${port}`);
     console.log(`[server] monitor:  http://localhost:${port}/colyseus`);
+    realmTracker.init(); // realm/stats tracking + Nostr discovery event + /api/* (see REALMS.md)
   })
   .catch((err) => {
     console.error("[server] failed to start", err);

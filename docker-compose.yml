@@ -18,6 +18,10 @@ services:
       # When set, the Colyseus /colyseus monitor requires HTTP Basic auth.
       MONITOR_USER: "${MONITOR_USER:-}"
       MONITOR_PASS: "${MONITOR_PASS:-}"
+      # The server's Nostr key — signs players' progress saves to the relays.
+      # Empty → an ephemeral key is generated at boot (saves won't survive a
+      # restart; the generated nsec is printed to the server logs).
+      NOSTR_NSEC: "${NOSTR_NSEC:-}"
     restart: unless-stopped
 
   client:

@@ -28,6 +28,8 @@ const CORPSE_FADE = 0.9; // seconds to fade the corpse to nothing
 const SELECT_FLASH_MS = 0.6; // total duration of the select flash
 const SELECT_BLINK_MS = 0.1; // overlay toggles every this long → "flash, flash, flash"
 const DMG_BLINK_MS = 0.08; // local player's dark-red damage flash toggles this fast
+const GHOST_FLOAT = 0.5; // units a paused "ghost" player floats off the floor (~1ft+)
+const GHOST_VISIBILITY = 0.7; // translucency of a ghosting player
 
 /**
  * Client-side view of one networked character (player or dummy). Interpolates
@@ -80,6 +82,7 @@ export class Entity {
   private selectFlashT = 0; // seconds left in the attack-target white flash
   private overlayOn = false; // current overlay on/off (HIT flash, damage flash, or select flash)
   private overlayColor: Color3 = HIT_FLASH; // current overlay tint
+  private ghost = false; // Dev Mode: translucent + floating (paused free-roam)
 
   constructor(id: string, spawned: SpawnedCharacter, isLocal: boolean) {
     this.id = id;
@@ -112,6 +115,15 @@ export class Entity {
   /** Briefly flash this character white — used when it's picked as an attack target. */
   flashSelect() {
     this.selectFlashT = SELECT_FLASH_MS;
+  }
+
+  /** Dev Mode ghost: go translucent + float off the ground (the local player while
+   *  the game is paused). Idempotent; restoring drops it back to opaque on the floor. */
+  setGhost(on: boolean) {
+    if (on === this.ghost) return;
+    this.ghost = on;
+    this.setVisibility(on ? GHOST_VISIBILITY : 1);
+    this.root.position.y = on ? GHOST_FLOAT : 0;
   }
 
   /** Snap to a position with no interpolation (used on spawn). */

@@ -11,6 +11,7 @@ import {
 import {
   AdvancedDynamicTexture,
   Rectangle,
+  Ellipse,
   TextBlock,
   Control,
 } from "@babylonjs/gui";
@@ -43,9 +44,12 @@ interface BarRefs {
   getHp: () => number;
   getMaxHp: () => number;
   getAlpha: () => number; // nameplate opacity (fades a character corpse out)
-  name?: TextBlock; // characters only
-  getLabel?: () => string; // characters: "Name  Lv.X" (re-read when it changes)
+  name?: TextBlock; // characters only — the name on the top row
+  getLabel?: () => string; // characters: the name (re-read when it changes)
   lastLabel: string;
+  levelText?: TextBlock; // characters: the number inside the level circle
+  getLevel?: () => number;
+  lastLevel: number;
   showTimer: number; // seconds left before the bar fades out (0 = hidden)
 }
 
@@ -127,6 +131,7 @@ export class HUD {
     getAlpha: () => number;
     nameColor?: string;
     getLabel?: () => string;
+    getLevel?: () => number;
   }) {
     const root = new Rectangle(`bar-${opts.id}`);
     root.widthInPixels = opts.width;
@@ -163,6 +168,31 @@ export class HUD {
       root.addControl(name);
     }
 
+    // Level badge: the number inside a circular medallion on the row beneath the
+    // name (characters only). The ring is tinted to the entity's colour.
+    let levelText: TextBlock | undefined;
+    if (opts.getLevel) {
+      const circle = new Ellipse(`lvlc-${opts.id}`);
+      circle.widthInPixels = 40;
+      circle.heightInPixels = 40;
+      circle.thickness = 3;
+      circle.color = opts.nameColor ?? "#ffffff"; // ring in the entity colour
+      circle.background = "#14100b"; // dark medallion so the number reads anywhere
+      circle.shadowColor = "rgba(0,0,0,0.7)";
+      circle.shadowBlur = 4;
+      circle.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+      circle.topInPixels = 44; // the row just below the name (tight against it)
+      root.addControl(circle);
+
+      levelText = new TextBlock(`lvl-${opts.id}`, String(opts.getLevel()));
+      levelText.color = opts.nameColor ?? "#ffffff";
+      levelText.fontSize = 21;
+      levelText.fontStyle = "bold";
+      levelText.outlineColor = "black";
+      levelText.outlineWidth = 3;
+      circle.addControl(levelText);
+    }
+
     const barBg = new Rectangle(`barbg-${opts.id}`);
     barBg.widthInPixels = opts.barWidth;
     barBg.heightInPixels = 8;
@@ -193,27 +223,32 @@ export class HUD {
       name,
       getLabel: opts.getLabel,
       lastLabel: name ? (name.text ?? "") : "",
+      levelText,
+      getLevel: opts.getLevel,
+      lastLevel: opts.getLevel ? opts.getLevel() : -1,
       showTimer: 0,
     });
   }
 
-  /** Full character nameplate: a big name + level on top, an HP bar below it. */
+  /** Full character nameplate: the name on the very top, a circular level badge on
+   *  the row beneath it, and an HP bar just over the character. */
   addCharacter(entity: Entity, isEnemy: boolean) {
     this.createBar({
       id: entity.id,
       link: entity.root,
-      // taller box + raised offset lift the top-aligned name well above the head
-      // while the bottom-aligned HP bar stays put just over the character.
-      linkOffsetY: -112,
+      // raised offset floats the name + level circle ~40% higher over the head;
+      // the name is top-aligned with the level circle tucked on the row beneath it.
+      linkOffsetY: -176,
       width: 240,
-      height: 94,
+      height: 124,
       barWidth: BAR_WIDTH,
       fillColor: entity.isLocal ? "#54d98c" : isEnemy ? "#e0563f" : "#5aa9e6",
       getHp: () => entity.hp,
       getMaxHp: () => entity.maxHp,
       getAlpha: () => entity.nameplateAlpha,
       nameColor: entity.isLocal ? "#ffe08a" : isEnemy ? "#ffb4a8" : "#dfe5f0",
-      getLabel: () => `${entity.name}  Lv.${entity.level}`,
+      getLabel: () => entity.name, // name on its own row now (level moved to the circle)
+      getLevel: () => entity.level,
     });
   }
 
@@ -388,12 +423,19 @@ export class HUD {
       // The whole nameplate (name + HP bar) fades with the body, so a dissolving
       // corpse takes its floating bar with it instead of leaving it hovering.
       root.alpha = bar.getAlpha();
-      // Keep the name/level label current (it changes on level-up).
+      // Keep the name current (it can change), and the level circle (on level-up).
       if (bar.name && bar.getLabel) {
         const label = bar.getLabel();
         if (label !== bar.lastLabel) {
           bar.name.text = label;
           bar.lastLabel = label;
+        }
+      }
+      if (bar.levelText && bar.getLevel) {
+        const lvl = bar.getLevel();
+        if (lvl !== bar.lastLevel) {
+          bar.levelText.text = String(lvl);
+          bar.lastLevel = lvl;
         }
       }
       // HP bar only shows for a while after taking damage, then fades — and never

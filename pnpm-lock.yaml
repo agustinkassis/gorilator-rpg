@@ -72,6 +72,9 @@ importers:
       nostr-tools:
         specifier: ^2.23.5
         version: 2.23.5(typescript@5.9.3)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
     devDependencies:
       '@types/cors':
         specifier: ^2.8.17
@@ -82,6 +85,9 @@ importers:
       '@types/node':
         specifier: ^20.14.0
         version: 20.19.41
+      '@types/ws':
+        specifier: ^8.5.14
+        version: 8.18.1
       tsx:
         specifier: ^4.19.2
         version: 4.22.3

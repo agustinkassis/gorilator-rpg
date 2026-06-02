@@ -5,7 +5,9 @@ import { CharacterFactory } from "./entities/CharacterFactory";
 import { preloadBanana } from "./entities/models/banana";
 import { loadHouse } from "./entities/models/house";
 import { PropManager } from "./dev/PropManager";
-import { DevMode } from "./dev/DevMode";
+import { CharacterManager } from "./dev/CharacterManager";
+import { CharacterImporter } from "./dev/CharacterImporter";
+import { DevMode, frontOfPlayer } from "./dev/DevMode";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
 import { HealthGlobe } from "./ui/healthGlobe";
@@ -21,6 +23,8 @@ import { CharacterDebugWindow } from "./ui/characterDebug";
 import { Game } from "./game/Game";
 import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
+import { HomeBar } from "./ui/homeBar";
+import { GameMenu } from "./ui/gameMenu";
 import { NetworkClient } from "./net/NetworkClient";
 import { setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
@@ -30,6 +34,11 @@ const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const respawnOverlay = document.getElementById("respawnOverlay") as HTMLDivElement;
 const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDivElement;
+
+// Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
+// time by Vite with the package.json version (see vite.config.ts).
+const versionEl = document.getElementById("versionTag");
+if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
 
 const engine = new Engine(canvas, true, { stencil: true }, true);
 const { scene, camera, ground, shadow } = createScene(engine);
@@ -41,6 +50,7 @@ const xpBar = new XpBar();
 const staminaBar = new StaminaBar();
 const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
+const homeBar = new HomeBar(); // siege objective HUD (home HP + wave); hidden on the splash via CSS
 const game = new Game(camera, factory, hud, shadow);
 // Sound system: spatial SFX + music. Unlocks itself on the first user gesture
 // (the splash "ENTER" click), so it's safe to build up-front.
@@ -54,11 +64,24 @@ const inventory = new InventoryUI(
 const hotkeyBar = new HotkeyBar((slot) => net.sendUseItem(slot));
 const minimap = new Minimap(net); // top-left radar + hold TAB / Map button for the big map
 const chat = new ChatLog((text) => net.sendChat(text)); // Enter to chat (right-side log)
+// Esc menu: resume, hotkeys, sound/graphics settings, login-with-Nostr, kill-yourself, exit.
+new GameMenu({
+  net,
+  audio,
+  engine,
+  shadow,
+  isNostrVerified: () => !!(game.localId && net.room?.state.players.get(game.localId)?.nostrVerified),
+});
 
 // Imported-prop registry (loads props.json into the world). In dev builds it also
 // backs Dev Mode, the in-game world editor (toggle with the button or ` backtick).
 const propManager = new PropManager(scene, shadow);
+// Placed custom characters (imported Meshy zips) — loads npcs.json + renders them.
+const characterManager = new CharacterManager(scene, shadow);
+minimap.setProps(propManager); // so the map can icon imported trees/rocks/concrete props
 const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
+devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
+devMode?.setGame(game); // library explorer can select + camera-focus world entities
 
 setupClickToMove({
   scene,
@@ -90,12 +113,20 @@ setupSprint(net);
 // instead of the game world until `splash.active` flips during the launch.
 const splash = new SplashScreen(engine);
 
+// homeMaxHp is kept so the home bar can still read "fallen" after the house is
+// removed from state on collapse.
+let homeMaxHp = 0;
+
 async function start() {
   // Kick the (potentially slow) asset loads off immediately, in the background,
   // so they finish while the player is reading the splash and typing a name.
   const preload = Promise.all([factory.preload(), preloadBanana(scene)]);
 
   // Wait for the player to commit: a name, and optionally a verified Nostr id.
+  // Progress persistence is fully server-side now: the server signs/owns each
+  // Nostr player's save (kind 30078) and recovers it on join — the client only
+  // proves the pubkey. A duplicate login is kicked by the server (the takeover
+  // close code, handled in NetworkClient.onLeave).
   const creds = await splash.awaitCredentials();
 
   // Make sure the character models are ready before we reveal the world, then
@@ -105,6 +136,7 @@ async function start() {
   await preload.catch((err) => console.warn("[assets] preload failed", err));
   void loadHouse(scene, shadow).then((house) => game.setHouseModel(house)); // hide-on-destroy handle
   void propManager.loadAll(); // place any models added via the importer (+ back Dev Mode)
+  void characterManager.loadAll(); // instantiate placed custom characters (npcs.json)
 
   // Connect (passing the chosen name) in the background while the launch plays.
   const connected = net.connect(
@@ -113,7 +145,9 @@ async function start() {
         game.setLocalId(id);
         statusEl.textContent = "connected";
       },
-      onPlayerAdd: (p, id) => game.addPlayer(p, id),
+      onPlayerAdd: (p, id) => {
+        game.addPlayer(p, id);
+      },
       onPlayerChange: (p, id) => game.changePlayer(p, id),
       onPlayerRemove: (id) => game.removePlayer(id),
       onEnemyAdd: (e, id) => game.addEnemy(e, id),
@@ -142,18 +176,31 @@ async function start() {
       onXp: (ev) => game.onXp(ev),
       onChat: (ev) => {
         game.showChatBubble(ev.playerId, ev.text); // bubble over the speaker
-        chat.add(ev.name, ev.text, ev.playerId === game.localId); // log on the right
+        // Nostr senders carry an avatar + verified flag on their synced Player —
+        // pass them so the log shows their picture and gives the line more room.
+        const sender = net.room?.state.players.get(ev.playerId);
+        chat.add(ev.name, ev.text, ev.playerId === game.localId, {
+          picture: sender?.picture ?? "",
+          nostrVerified: sender?.nostrVerified ?? false,
+        }); // log on the right
       },
       onInventory: (slots) => {
         inventory.setInventory(slots);
         hotkeyBar.setInventory(slots);
       },
+      onWipe: (ev) => homeBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
       onError: (message) => {
         statusEl.textContent = message;
         console.warn("[net]", message);
       },
     },
-    creds,
+    {
+      name: creds.name,
+      // Only the signed auth + profile go to the server; it owns the save.
+      nostr: creds.nostr
+        ? { auth: creds.nostr.auth, profile: creds.nostr.profile }
+        : undefined,
+    },
   );
   // Don't let a failed connect reject before the animation finishes — surface it
   // on the status line and reveal the world anyway. A Nostr verification failure
@@ -183,7 +230,18 @@ start().catch((err) => {
 
 // Dev-only hook: poke at the running game from the browser console (window.__rpg).
 if (import.meta.env.DEV) {
-  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, devMode };
+  // Character importer: drop a Meshy character .zip, map clips→actions, fix
+  // orientation/scale, preview, then save + add to the world (button bottom-right).
+  const characterImporter = new CharacterImporter({
+    getPlayerPos: () => {
+      const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
+      return me ? frontOfPlayer({ x: me.x, z: me.z, rotY: me.rotY }) : null; // beside the player, not on them
+    },
+    onPlaced: (def, placement) => void characterManager.placeNew(def, placement),
+  });
+  characterImporter.setVisible(true);
+
+  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode };
 
   // Standalone model inspector (button bottom-right, or press C).
   new CharacterDebugWindow();
@@ -241,8 +299,11 @@ engine.runRenderLoop(() => {
   // Dev Mode time control: mirror the server's simulation speed so the world
   // looks paused/slowed/sped on the client too (frozen positions + animations).
   const timeScale = net.room?.state.timeScale ?? 1;
-  scene.animationsEnabled = timeScale > 0; // freeze skeletal animations when paused
-  game.update(dt * timeScale);
+  const paused = timeScale === 0;
+  scene.animationsEnabled = !paused; // freeze skeletal animations when paused
+  game.setGhost(paused); // local player goes translucent + floats while paused
+  game.update(dt * timeScale); // the world stays frozen at pause…
+  if (paused) game.updateGhost(dt); // …but the ghost free-roams + camera follows at real dt
   minimap.update(); // redraws only while TAB is held
 
   const hp = game.localHp();
@@ -275,6 +336,24 @@ engine.runRenderLoop(() => {
 
   // Keep the audio listener on the player so spatial SFX pan + attenuate correctly.
   audio.updateListener(camera, me ? { x: me.x, z: me.z } : null);
+
+  // Siege objective HUD: every player always sees the home (first house) HP + wave
+  // state. Once the house is destroyed it's removed from state, so fall back to a
+  // "fallen" reading using the last-known max HP.
+  const st = net.room?.state;
+  if (homeBar && st) {
+    let home: { hp: number; maxHp: number; alive: boolean } | undefined;
+    st.houses.forEach((h) => {
+      if (!home) home = h;
+    });
+    if (home) {
+      homeMaxHp = home.maxHp;
+      homeBar.setHouse(home.hp, home.maxHp, home.alive);
+    } else if (homeMaxHp > 0) {
+      homeBar.setHouse(0, homeMaxHp, false);
+    }
+    homeBar.setWave(st.waveNumber, st.waveTimerMs);
+  }
 
   const respawnIn = game.respawnCountdown();
   if (respawnIn === null) {

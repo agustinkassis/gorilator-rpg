@@ -4,25 +4,66 @@ import {
   Log,
   Rock,
   Stone,
+  Potion,
   ItemType,
   BOULDERS,
   TREE_COUNT,
   TREE_HP,
   TREE_ARMOR,
   TREE_REGROW_MS,
-  LOGS_PER_TREE,
   LOG_PICKUP_RADIUS,
   PICKUP_RADIUS,
   TREE_SPAWN_RANGE,
   ROCK_HP,
   ROCK_ARMOR,
   ROCK_REGROW_MS,
-  STONE_DROP_DAMAGE,
+  ROCK_COLLISION_SCALE,
   BANANA_PICKUP_RADIUS,
   AUTO_GRAB_RADIUS,
   AnimState,
 } from "@rpg/shared";
 import { nearestFreeWorld } from "./pathfinding";
+import { spawnBanana } from "./bananas";
+import { dropConfig } from "./resourceDrops";
+
+let dropSeq = 0; // id counter for misc drops (potions / future custom items)
+
+/** Spawn one collectible of `type` at (x,z), routed to the matching entity map.
+ *  The drop editor sets which `type` a resource yields; unknown types fall back to
+ *  a stone so a mis-typed/custom item still produces a pickup. */
+function dropItem(state: GameState, type: string, x: number, z: number): void {
+  const spot = nearestFreeWorld(x, z);
+  const s = getSeq(state);
+  switch (type) {
+    case "log": {
+      const e = new Log();
+      e.id = `log-${s.log++}`;
+      e.x = spot.x;
+      e.z = spot.z;
+      state.logs.set(e.id, e);
+      break;
+    }
+    case "banana":
+      spawnBanana(state, spot.x, spot.z);
+      break;
+    case "potion": {
+      const e = new Potion();
+      e.id = `potion-d${dropSeq++}`;
+      e.x = spot.x;
+      e.z = spot.z;
+      state.potions.set(e.id, e);
+      break;
+    }
+    default: {
+      const e = new Stone();
+      e.id = `stone-${s.stone++}`;
+      e.x = spot.x;
+      e.z = spot.z;
+      state.stones.set(e.id, e);
+      break;
+    }
+  }
+}
 
 /** Per-room id counters for dropped pickups. */
 const seq = new WeakMap<GameState, { log: number; stone: number }>();
@@ -67,22 +108,45 @@ export function spawnTrees(state: GameState) {
   }
 }
 
-/** A tree's HP hit 0: turn it into a stump, drop logs, schedule regrow. */
+/** Drop one of the configured item near a tree (within easy reach of the stump). */
+function dropFromTree(state: GameState, tree: Tree, item: string) {
+  const ang = Math.random() * Math.PI * 2;
+  const r = 0.8 + Math.random() * 0.9;
+  dropItem(state, item, tree.x + Math.cos(ang) * r, tree.z + Math.sin(ang) * r);
+}
+
+/** Chop damage landed on a tree: when its drop is PROGRESSIVE ("hit"), shed the
+ *  configured item every (hp/amount) damage, so it yields `amount` total across its
+ *  full hp. Kill-drop trees yield nothing here (everything drops when felled). */
+export function onTreeDamaged(state: GameState, tree: Tree, amount: number) {
+  const cfg = dropConfig("tree");
+  if (cfg.trigger !== "hit") return;
+  const total = Math.round(cfg.amount);
+  if (total <= 0) return;
+  const perItem = Math.max(1, cfg.hp) / total; // user's formula: total HP / total items
+  tree.damageSinceDrop += amount;
+  while (tree.damageSinceDrop >= perItem) {
+    tree.damageSinceDrop -= perItem;
+    dropFromTree(state, tree, cfg.item);
+  }
+}
+
+/** A tree's HP hit 0: turn it into a stump, schedule regrow, and (for a KILL-drop
+ *  tree) shed the full configured amount. Progressive trees already shed while
+ *  being chopped (see onTreeDamaged), so nothing extra drops here. */
 export function onTreeCut(state: GameState, tree: Tree) {
   tree.alive = false;
   tree.hp = 0;
   tree.regrowTimer = TREE_REGROW_MS;
+  tree.damageSinceDrop = 0;
 
-  const s = getSeq(state);
-  for (let i = 0; i < LOGS_PER_TREE; i++) {
-    const log = new Log();
-    log.id = `log-${s.log++}`;
-    const angle = (i / LOGS_PER_TREE) * Math.PI * 2 + Math.random();
+  const cfg = dropConfig("tree");
+  if (cfg.trigger !== "kill") return;
+  const n = Math.max(0, Math.round(cfg.amount));
+  for (let i = 0; i < n; i++) {
+    const angle = (i / Math.max(1, n)) * Math.PI * 2 + Math.random();
     const r = 0.8 + Math.random() * 0.9;
-    const spot = nearestFreeWorld(tree.x + Math.cos(angle) * r, tree.z + Math.sin(angle) * r);
-    log.x = spot.x;
-    log.z = spot.z;
-    state.logs.set(log.id, log);
+    dropItem(state, cfg.item, tree.x + Math.cos(angle) * r, tree.z + Math.sin(angle) * r);
   }
 }
 
@@ -94,6 +158,7 @@ export function treeRegrowSystem(state: GameState, dt: number) {
       if (t.regrowTimer <= 0) {
         t.alive = true;
         t.hp = t.maxHp;
+        t.damageSinceDrop = 0;
       }
     }
   });
@@ -115,35 +180,62 @@ export function spawnRocks(state: GameState) {
   });
 }
 
-/** Spawn one stone collectible just outside a rock's body. */
-function dropStoneFromRock(state: GameState, rock: Rock) {
-  const s = getSeq(state);
-  const stone = new Stone();
-  stone.id = `stone-${s.stone++}`;
+/** Drop one of the configured item just outside a rock's body (within reach). */
+function dropFromRock(state: GameState, rock: Rock, item: string) {
   const angle = Math.random() * Math.PI * 2;
-  const r = rock.radius + 0.8 + Math.random() * 0.7; // outside the rock body
-  const spot = nearestFreeWorld(rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
-  stone.x = spot.x;
-  stone.z = spot.z;
-  state.stones.set(stone.id, stone);
+  // drop close to the rock's base (just outside its shrunken collision) so the
+  // items land within the player's reach instead of scattering out of range.
+  const r = rock.radius * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
+  dropItem(state, item, rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
 }
 
-/** Mining damage landed on a rock: shed one stone for every STONE_DROP_DAMAGE dealt. */
+/** Mining damage landed on a rock: shed the configured item progressively — `amount`
+ *  total, spread evenly across the rock's HP (so it runs out as the rock is mined). */
 export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
+  const cfg = dropConfig("rock");
+  if (cfg.trigger !== "hit") return; // a kill-trigger rock doesn't shed while being hit
+  const total = Math.round(cfg.amount);
+  if (total <= 0) return; // configured to yield nothing (also guards the divide below)
+  const perItem = Math.max(1, cfg.hp) / total; // user's formula: total HP / total items
   rock.damageSinceStone += amount;
-  while (rock.damageSinceStone >= STONE_DROP_DAMAGE) {
-    rock.damageSinceStone -= STONE_DROP_DAMAGE;
-    dropStoneFromRock(state, rock);
+  while (rock.damageSinceStone >= perItem) {
+    rock.damageSinceStone -= perItem;
+    dropFromRock(state, rock, cfg.item);
   }
 }
 
-/** A rock's HP hit 0: turn it to rubble and schedule regrow. Its stone was shed
- *  incrementally as it was mined (see onRockDamaged), so nothing drops here. */
-export function onRockMined(rock: Rock) {
+/** A rock's HP hit 0: turn it to rubble and schedule regrow. A KILL-drop rock yields
+ *  its full configured amount here; a progressive ("hit") rock already shed its items
+ *  while being mined (see onRockDamaged), so nothing extra drops. */
+export function onRockMined(state: GameState, rock: Rock) {
+  const cfg = dropConfig("rock");
+  if (cfg.trigger === "kill") {
+    const n = Math.max(0, Math.round(cfg.amount));
+    for (let i = 0; i < n; i++) dropFromRock(state, rock, cfg.item);
+  }
   rock.alive = false;
   rock.hp = 0;
   rock.damageSinceStone = 0;
   rock.regrowTimer = ROCK_REGROW_MS;
+}
+
+/** Push the live drop config's HP onto EVERY resource of each kind (not just the one
+ *  selected in Dev Mode): set maxHp, re-up living resources to full, and clear the
+ *  progressive-drop accumulators. Called once after spawn and on every resources.json
+ *  change, so editing a tree/rock's HP commits to all trees/rocks at once. */
+export function applyResourceConfig(state: GameState) {
+  const treeHp = Math.max(1, Math.round(dropConfig("tree").hp));
+  const rockHp = Math.max(1, Math.round(dropConfig("rock").hp));
+  state.trees.forEach((t) => {
+    t.maxHp = treeHp;
+    if (t.alive) t.hp = treeHp;
+    t.damageSinceDrop = 0;
+  });
+  state.rocks.forEach((r) => {
+    r.maxHp = rockHp;
+    if (r.alive) r.hp = rockHp;
+    r.damageSinceStone = 0;
+  });
 }
 
 export function rockRegrowSystem(state: GameState, dt: number) {
@@ -158,6 +250,25 @@ export function rockRegrowSystem(state: GameState, dt: number) {
       }
     }
   });
+}
+
+/** Round wipe → restart resources from scratch: restore every structure to pristine
+ *  (all trees/rocks full + alive, regrow timers cleared) and clear any loot dropped
+ *  during the realm. Untouched structures encode no delta, so this is cheap. */
+export function resetResources(state: GameState) {
+  state.trees.forEach((t) => {
+    t.alive = true;
+    t.hp = t.maxHp;
+    t.regrowTimer = 0;
+  });
+  state.rocks.forEach((r) => {
+    r.alive = true;
+    r.hp = r.maxHp;
+    r.regrowTimer = 0;
+    r.damageSinceStone = 0;
+  });
+  state.logs.clear();
+  state.stones.clear();
 }
 
 // ---- collection ----
