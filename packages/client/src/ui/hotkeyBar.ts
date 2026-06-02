@@ -1,6 +1,6 @@
 import { InventorySlot, ItemType } from "@rpg/shared";
 
-const ICONS: Record<string, string> = { log: "🪵", potion: "🧪", stone: "🪨", banana: "🍌" };
+const ICONS: Record<string, string> = { log: "🪵", potion: "🧪", stone: "🪨", banana: "🍌", berserker_potion: "⚡" };
 const KEYS = ["Q", "W", "E", "R"];
 const THROWABLE: ReadonlySet<string> = new Set(["banana", "stone"]); // hold the key to charge + throw
 

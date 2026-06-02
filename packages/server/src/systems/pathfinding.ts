@@ -1,12 +1,11 @@
-import { OBSTACLES, BOULDERS, AGENT_RADIUS, NAV_CELL, WORLD_SIZE, HOUSE_CENTER } from "@rpg/shared";
+import { OBSTACLES, BOULDERS, AGENT_RADIUS, NAV_CELL, WORLD_SIZE, HOUSE_CENTER, HOUSE_RADIUS } from "@rpg/shared";
 
 // La Crypta's VISIBLE footprint (~10.5 × 11, corners ~7.6 from centre) is wider
 // than its movement-collision circle (radius 5). Players may walk right up to the
 // collision edge during play, but they must never be SPAWNED under the visible
-// model — a restored Nostr save / takeover position can sit there. Spawns are
-// therefore pushed out to this ring (visual corner 7.6 + agent + margin), which
-// only affects placement, not movement collision.
-const HOUSE_SPAWN_CLEARANCE = 8.5;
+// model — a restored Nostr save / takeover position can sit there. This is its
+// SPAWN keep-out radius (see Circle.spawn): placement-only, not collision.
+const HOUSE_SPAWN_RADIUS = 8;
 
 /**
  * Grid-based A* navigation over the static obstacle set. Obstacles are inflated
@@ -36,8 +35,18 @@ const cellCenter = (c: number) => -WORLD_SIZE + (c + 0.5) * NAV_CELL;
 //                  editor can relocate/remove them and movement collision follows.
 //  • propObstacles — imported concrete props (from props.json).
 // `combined` is the flattened set the nav grid + depenetration read each tick.
-type Circle = { x: number; z: number; radius: number };
-const STATIC: Circle[] = OBSTACLES.filter((o) => !BOULDERS.includes(o)); // crates + house
+// `radius` is the movement-collision radius (players stop here; the nav grid routes
+// around it). `spawn` is an optional, usually-larger SPAWN-only keep-out: a
+// structure's VISIBLE model can be far wider than its collision circle (La Crypta,
+// imported house props), and a player must never be SPAWNED inside the visible model
+// even though they may walk right up to its collision edge. Defaults to `radius`.
+type Circle = { x: number; z: number; radius: number; spawn?: number };
+const STATIC: Circle[] = OBSTACLES.filter((o) => !BOULDERS.includes(o)).map((o) =>
+  // La Crypta's visible footprint dwarfs its collision circle → give it a spawn keep-out.
+  o.x === HOUSE_CENTER.x && o.z === HOUSE_CENTER.z && o.radius === HOUSE_RADIUS
+    ? { x: o.x, z: o.z, radius: o.radius, spawn: HOUSE_SPAWN_RADIUS }
+    : { x: o.x, z: o.z, radius: o.radius },
+); // crates + house
 let rockObstacles: Circle[] = [];
 let propObstacles: Circle[] = [];
 let combined: Circle[] = [...STATIC];
@@ -173,49 +182,80 @@ export function isClearWorld(x: number, z: number): boolean {
 
 const clampWorld = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
 
+/** An obstacle's SPAWN keep-out: the visible-model radius (or collision radius if
+ *  none) plus the agent radius. A spawn must sit outside this for every obstacle,
+ *  so the player is never dropped inside a building they'd be visually stuck in. */
+const spawnKeepout = (o: Circle): number => (o.spawn ?? o.radius) + AGENT_RADIUS;
+
+/**
+ * True when (x, z) is clear of every obstacle's SPAWN keep-out — i.e. not inside
+ * any VISIBLE structure (not merely outside its smaller collision circle). This
+ * is the postcondition every player spawn must satisfy.
+ */
+export function isClearForSpawn(x: number, z: number): boolean {
+  for (const o of allObstacles()) {
+    const r = spawnKeepout(o);
+    if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r) return false;
+  }
+  return true;
+}
+
+/** Push a point out of every obstacle's SPAWN keep-out. Placement-only (NOT the
+ *  per-tick movement depenetrate, which uses the smaller collision radius). More
+ *  iterations, since the wider spawn radii overlap more often. */
+function depenetrateSpawn(x: number, z: number): Pt {
+  let px = x;
+  let pz = z;
+  for (let iter = 0; iter < 6; iter++) {
+    for (const o of allObstacles()) {
+      const r = spawnKeepout(o);
+      const dx = px - o.x;
+      const dz = pz - o.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < r * r) {
+        const d = Math.sqrt(d2);
+        if (d > 1e-6) {
+          px = o.x + (dx / d) * r;
+          pz = o.z + (dz / d) * r;
+        } else {
+          px = o.x + r;
+          pz = o.z;
+        }
+      }
+    }
+  }
+  return { x: px, z: pz };
+}
+
 /**
  * Resolve a requested spawn/teleport point to one GUARANTEED clear of every
- * solid obstacle, so a player is never dropped inside a structure. Strategy:
- *   1. Snap to the nearest free nav cell, then depenetrate — handles the common
- *      case (a point near or inside a single obstacle like the house).
- *   2. Verify the result with the precise circle test. The grid snap already
- *      guarantees clearance in every normal case; this catches the degenerate
- *      one where overlapping structures left the point embedded.
- *   3. If still embedded, spiral outward from the request sampling points until
- *      one tests clear. Only a world walled in almost solid falls through to the
- *      best-effort depenetrated point.
+ * structure's VISIBLE footprint — so a restored save / takeover position never
+ * drops the player inside a building (collision-clear but visually embedded,
+ * unable to see/move out). Strategy:
+ *   1. Snap to the nearest collision-free nav cell, then push out of every spawn
+ *      keep-out (handles a point near/inside one structure).
+ *   2. Verify with the precise keep-out test.
+ *   3. If still inside one (overlapping structures), spiral outward from the
+ *      request, sampling points until one tests clear. Only a world packed solid
+ *      with buildings falls through to the best-effort point.
  */
 export function safeSpawnWorld(x: number, z: number): Pt {
-  // Keep the request clear of the house's VISIBLE footprint first (see
-  // HOUSE_SPAWN_CLEARANCE) — otherwise a restored save position drops you under
-  // the model. Push radially out along the request's bearing from the house.
-  let rx = x;
-  let rz = z;
-  const hx = rx - HOUSE_CENTER.x;
-  const hz = rz - HOUSE_CENTER.z;
-  const hd = Math.hypot(hx, hz);
-  if (hd < HOUSE_SPAWN_CLEARANCE) {
-    const ux = hd > 1e-6 ? hx / hd : 1; // dead-centre → deterministic +x bearing
-    const uz = hd > 1e-6 ? hz / hd : 0;
-    rx = clampWorld(HOUSE_CENTER.x + ux * HOUSE_SPAWN_CLEARANCE);
-    rz = clampWorld(HOUSE_CENTER.z + uz * HOUSE_SPAWN_CLEARANCE);
-  }
-  const snapped = nearestFreeWorld(rx, rz);
-  const best = depenetrate(snapped.x, snapped.z);
-  if (isClearWorld(best.x, best.z)) return best;
+  const snapped = nearestFreeWorld(x, z); // collision-free start near the request
+  const best = depenetrateSpawn(snapped.x, snapped.z); // ...then clear the visible models
+  if (isClearForSpawn(best.x, best.z)) return best;
   for (let ring = 1; ring <= GRID; ring++) {
     const rad = ring * NAV_CELL;
     const steps = Math.max(8, ring * 6);
     for (let s = 0; s < steps; s++) {
       const a = (s / steps) * Math.PI * 2;
-      const cand = depenetrate(
+      const cand = depenetrateSpawn(
         clampWorld(x + Math.cos(a) * rad),
         clampWorld(z + Math.sin(a) * rad),
       );
-      if (isClearWorld(cand.x, cand.z)) return cand;
+      if (isClearForSpawn(cand.x, cand.z)) return cand;
     }
   }
-  return best; // world is essentially full — best effort
+  return best; // world is essentially full of buildings — best effort
 }
 
 // --- A* ---
