@@ -1,0 +1,51 @@
+{
+  "name": "gorilator",
+  "version": "1.1.0",
+  "description": "One command to install, run, and supervise the Gorilator RPG game server natively (no Docker) as a systemd/launchd service, with an optional Cloudflare Tunnel setup.",
+  "type": "module",
+  "bin": {
+    "gorilator": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "gorilator",
+    "rpg",
+    "colyseus",
+    "babylon",
+    "game-server",
+    "daemon",
+    "systemd",
+    "launchd",
+    "cloudflare-tunnel",
+    "cli"
+  ],
+  "author": "Agustin Kassis",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agustinkassis/gorilator-rpg.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/agustinkassis/gorilator-rpg#readme",
+  "bugs": {
+    "url": "https://github.com/agustinkassis/gorilator-rpg/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.7.3"
+  }
+}

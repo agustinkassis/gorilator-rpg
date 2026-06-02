@@ -1,156 +1,149 @@
 # 🦍 Deploying Gorilator
 
-One command turns a fresh Linux server into a public, multiplayer Gorilator RPG —
-Docker for the game, Cloudflare Tunnel for HTTPS + WebSockets, no open firewall ports.
+The default path is **native, no Docker**: the `gorilator` CLI clones the game, installs Node/pnpm/deps,
+builds it, and runs it as a boot-persistent OS service (systemd/launchd). One process serves the client
+page **and** the multiplayer WebSocket on a single port. An optional `gorilator setup` exposes it through
+a Cloudflare Tunnel on your own subdomains.
 
 ```
-Browser ── https ──▶ Cloudflare ──┬─▶ play.<domain>  ─▶ :80    client (nginx, static Babylon/Vite)
-                                  └─▶ api.<domain>   ─▶ :2567  server (Colyseus, WebSocket + monitor)
+Browser ── https ──▶ Cloudflare ──┬─▶ play.<domain> ─┐
+                                  └─▶ api.<domain>  ─┴─▶ localhost:<port>   one native process:
+                                                                            client page + WebSocket + monitor
 ```
+
+> Prefer containers? A Docker Compose stack + a one-click Railway template still ship in this repo — see
+> [Alternative: Docker / Railway](#alternative-docker--railway) at the end.
 
 ---
 
 ## Prerequisites
 
-- A **Linux server** (Debian/Ubuntu recommended) you can SSH into.
-- A **domain managed by Cloudflare** (the nameservers point at Cloudflare). The
-  free plan is fine. You do **not** need to pre-create any DNS records — the
-  installer makes them.
-- That's it. The installer adds Docker and cloudflared for you.
+- A **Linux server** (Debian/Ubuntu recommended) or a **macOS** machine.
+- For public hosting: a **domain managed by Cloudflare** (free plan is fine). You do **not** pre-create any
+  DNS records — `gorilator setup` makes them.
+- Nothing else. The installer adds Node, pnpm, and (for `setup`) cloudflared for you.
 
 ---
 
-## Quick start (one command)
+## Quick start
 
-SSH into the server and run:
+**If you already have Node ≥ 20.6:**
+
+```bash
+npx gorilator install
+```
+
+**On a bare box (no Node yet) — one line installs git + Node, then everything:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
 ```
 
-The installer will, in order:
+The installer, in order:
 
-1. Install **git** (if missing) and clone the repo to `/opt/gorilator-rpg`.
-2. Ask to install **Docker** (official `get.docker.com`) — *you confirm first*.
-3. Ask to install **cloudflared** (architecture-matched `.deb`) — *you confirm first*.
-4. Make `gorilator` runnable globally (`/usr/local/bin/gorilator`).
-5. Ask for your **base domain** and suggest two subdomains:
-   - `play.<domain>` → the game client (port 80)
-   - `api.<domain>` → the game server (port 2567)
-6. Open a **Cloudflare authorization** link (paste it into any browser, pick your
-   domain), then auto-create the tunnel, the two DNS records, and the ingress.
-7. Generate `.env` — a random monitor password **and** the server's Nostr key
-   (`NOSTR_NSEC`, which signs players' progress saves) — then **build + start** the stack.
-8. Install a **systemd service** so the game and the tunnel come back on reboot.
+1. Ensures **Node ≥ 20.6**, **git**, and **pnpm@10.14.0** (installing what's missing).
+2. Clones the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
+3. `pnpm install`, builds the shared schema, builds the client (same-origin), and builds the CLI.
+4. Generates `.env` — a random monitor password **and** the server's Nostr key (`NOSTR_NSEC`, which signs
+   players' progress saves).
+5. Registers a **systemd**/**launchd** service, starts it, and waits for `/healthz`.
+6. Prints the local URL + port and the monitor credentials.
 
-When it finishes it prints your live URLs and the monitor credentials.
-
-> Already cloned it (or using a fork)? From inside the repo:
+> Already have the repo checked out (or using a fork)? Everything also runs through the bundled wrapper,
+> which executes the very same Node CLI:
 > ```bash
-> pnpm run setup            # same as ./cli/gorilator install (self-elevates with sudo)
-> # or point the bootstrap at your fork:
-> GORILATOR_REPO=https://github.com/you/fork.git sudo -E bash cli/install.sh
+> ./cli/gorilator install        # same as `npx gorilator install`
+> GORILATOR_REPO=https://github.com/you/fork.git ./cli/gorilator install
 > ```
-> After install, `pnpm gorilator <cmd>` works too (e.g. `pnpm gorilator status`).
+
+---
+
+## Go public — `gorilator setup`
+
+```bash
+gorilator setup
+```
+
+It prompts for a base domain + two subdomains (defaults `play.<domain>` and `api.<domain>`), then:
+
+1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for both hosts.
+2. Writes `/etc/cloudflared/config.yml` (macOS: `~/.cloudflared/config.yml`) with an ingress that points
+   **both** subdomains at the one local game port.
+3. Bakes the server subdomain into the client (`VITE_SERVER_URL=wss://api.<domain>`), **rebuilds the
+   client**, and restarts the daemon — so the client dials the server over WSS.
+4. Runs `cloudflared` as a boot service and prints your public URLs + monitor credentials.
+
+Re-run it anytime to change domains. For non-interactive automation set `GORILATOR_DOMAIN` (or
+`GORILATOR_CLIENT_HOST` + `GORILATOR_SERVER_HOST`).
 
 ---
 
 ## Managing it — the `gorilator` CLI
 
 ```
-gorilator status        Show running game servers + public URLs
-gorilator start         Start the stack (docker compose up -d)
-gorilator stop          Stop the stack (docker compose down)
-gorilator restart       Recreate and restart the stack
-gorilator logs [svc]    Tail logs — svc = server | client | tunnel (default: all)
-gorilator monitor       Print the /colyseus monitor URL + credentials
-gorilator update        git pull, rebuild, redeploy
+gorilator status        Service state + health + local & public URLs   (alias: info)
+gorilator start         Start the daemon (prints the port it listens on)
+gorilator stop          Stop the daemon
+gorilator restart       Restart the daemon
+gorilator logs          Stream server logs (Ctrl-C to detach)
+gorilator update        git pull, rebuild, restart (keeps your public client build)
+gorilator setup         Configure the Cloudflare tunnel + subdomains
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
-gorilator uninstall     Stop & disable services (your files stay)
+gorilator uninstall     Stop & remove the service (your files stay)
 ```
 
-`gorilator status` is the **"show me the game servers"** view: container health,
-tunnel state, and the public URLs.
+The three entry points run **identical code** — `npx gorilator <cmd>`, the global `gorilator <cmd>`, and the
+repo's `./cli/gorilator <cmd>` (which only adds: ensure Node, then exec the same Node CLI).
 
 ---
 
 ## Running locally / without Cloudflare
 
-The stack is plain Docker Compose, so you can run it on any machine:
+`gorilator install` already gives you a working local server:
 
-```bash
-cp .env.example .env          # optional; leave VITE_SERVER_URL empty for localhost
-docker compose up -d --build
-```
+- Open <http://localhost:2567> — the client loads and connects to the WebSocket on the same origin.
+- `http://localhost:2567/healthz` → `ok`.
+- The monitor at `http://localhost:2567/colyseus` requires the `admin` user + the password in `.env`
+  (shown by `gorilator status`).
 
-- Open <http://localhost> — the client loads and connects to `ws://localhost:2567`
-  (the empty `VITE_SERVER_URL` fallback).
-- `http://localhost:2567/` → the server health banner.
-- With `MONITOR_USER`/`MONITOR_PASS` set in `.env`, the monitor at
-  `http://localhost:2567/colyseus` requires those credentials; leave them empty
-  to keep it open (local dev only).
+Change the port with `--port` (or `GAME_SERVER_PORT`). `gorilator status` always prints the active port.
 
 ---
 
 ## How it works
 
-- **Client image** (`Dockerfile.client`): builds the Vite bundle and serves it
-  with nginx. The server URL is baked in at build time via `VITE_SERVER_URL`
-  (e.g. `wss://api.<domain>`) because the browser must reach the server on its
-  own subdomain over 443 — not `:2567`.
-- **Server image** (`Dockerfile.server`): the Colyseus server on port 2567
-  (HTTP + WebSocket + the `/colyseus` monitor on the same port).
-- **Cloudflare tunnel** runs natively on the host as a systemd service
-  (`cloudflared`), forwarding `play.<domain>`→`localhost:80` and
-  `api.<domain>`→`localhost:2567`. Config lives in `/etc/cloudflared/config.yml`.
-- **Persistence**: `restart: unless-stopped` on the containers + the
-  `gorilator.service` and `cloudflared` systemd units bring everything back
-  after a reboot.
+- **One process, one port**: `gorilator serve` runs the Colyseus server from TS via `tsx`, with
+  `CLIENT_DIST` pointed at the built client — so the same port answers the game page, the WebSocket, the
+  `/colyseus` monitor, and `/healthz`.
+- **The service** (`gorilator.service` / `com.gorilator.daemon`) runs `gorilator serve` as your user and
+  restarts on failure. Its `ExecStart` points at the in-repo CLI build (`<appDir>/packages/cli/dist`), so the
+  daemon is self-contained and always matches the checkout.
+- **Cloudflare tunnel** runs as a boot service (`cloudflared`), forwarding both subdomains to the local port.
+  No game ports are exposed to the internet directly.
+- **Persistence**: the OS service + the `cloudflared` service bring everything back after a reboot.
 
 ### Security notes
 
-- The `/colyseus` monitor can inspect and **dispose live rooms**, so it is
-  **password-protected** by default (HTTP Basic auth, random password in `.env`,
-  shown by `gorilator monitor`). Change it by editing `MONITOR_PASS` in `.env`
-  and running `gorilator restart`.
-- `.env` contains that password **and `NOSTR_NSEC`** (the key the server signs
-  player saves with) and is world-readable on the host; keep the server to
-  trusted admins, or `chmod 600 .env` and run `gorilator` with `sudo`. Keep
-  `NOSTR_NSEC` stable across redeploys — changing it orphans every saved player.
-- No game ports are exposed to the public internet directly — all traffic
-  arrives through the Cloudflare tunnel.
+- The `/colyseus` monitor can inspect and **dispose live rooms**, so it is **password-protected** by default
+  (HTTP Basic auth, random password in `.env`). Change `MONITOR_PASS` and run `gorilator restart`.
+- `.env` holds that password **and `NOSTR_NSEC`** (the key the server signs player saves with). It is created
+  `chmod 600`. Keep `NOSTR_NSEC` stable across redeploys — changing it orphans every saved player.
 
 ---
 
-## Troubleshooting
+## Alternative: Docker / Railway
 
-| Symptom | Fix |
-|---|---|
-| Client loads but can't connect | Check `VITE_SERVER_URL` in `.env` matches `wss://<server-subdomain>`, then `gorilator update` (rebuilds the client). |
-| `502` from Cloudflare | Game not up yet: `gorilator status`, `gorilator logs server`. |
-| Tunnel down | `sudo gorilator tunnel status` / `sudo gorilator tunnel restart`. |
-| `docker` permission denied | You were added to the `docker` group during install — log out and back in (or use `sudo gorilator …`). |
-| DNS not resolving | The tunnel created CNAMEs in Cloudflare; allow a minute and confirm the records exist in the dashboard. |
-| Build fails: `429 Too Many Requests` pulling `node`/`nginx` | Docker Hub anonymous pull limit (common on cloud IPs). See below. |
-
-### Docker Hub rate limit (429) during build
-
-The build pulls the `node` and `nginx` base images from Docker Hub, which rate-limits
-anonymous pulls per IP. Two reliable fixes — then re-run `pnpm run setup` (idempotent):
+The container path still ships in this repo for those who want it:
 
 ```bash
-# Fix A — authenticate (raises 100 → 200 pulls/6h). NOTE: until you re-login for
-# docker-group membership, the installer uses `sudo docker`, so log in as root:
-sudo docker login
-
-# Fix B — mirror Docker Hub's official images via a non-rate-limited mirror
-# (no account needed; daemon-level, so root/user context doesn't matter):
-sudo mkdir -p /etc/docker
-echo '{ "registry-mirrors": ["https://mirror.gcr.io"] }' | sudo tee /etc/docker/daemon.json
-sudo systemctl restart docker
+cp .env.example .env          # leave VITE_SERVER_URL empty for localhost
+docker compose up -d --build
 ```
 
-The base images are pulled **once** and then cached, so this only bites the first build.
-Waiting ~6h (the window resets) or building from a different IP also works.
+- `Dockerfile.client` (nginx-served Vite bundle), `Dockerfile.server` (Colyseus), `docker-compose.yml`,
+  and `nginx.conf` define the two-container stack.
+- `Dockerfile.railway` + `railway.json` are the one-click Railway template (single service, same-origin).
+- See `RAILWAY.md` for the Railway walkthrough.
 
-Update to the latest code anytime with `gorilator update`.
+The native CLI above is the recommended, Docker-free default; the container files are unmaintained relative
+to it but remain functional.

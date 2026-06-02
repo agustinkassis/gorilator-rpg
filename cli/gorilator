@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 #
-# gorilator — one-click Docker + Cloudflare deploy for the Gorilator RPG.
+# gorilator — thin wrapper around the native Node CLI (packages/cli, published
+# as the `gorilator` npm package). It guarantees a Node runtime (the one thing
+# `npx` can't bootstrap on a bare box), builds the in-repo CLI if needed, then
+# hands every argument to that same Node CLI. So all three of these run IDENTICAL
+# code:
 #
-#   gorilator install      Bootstrap a fresh Linux box end-to-end
-#   gorilator start|stop|restart|status|logs|update|monitor|tunnel|uninstall
+#   bash cli/gorilator <cmd>      (this wrapper, from a checkout)
+#   npx gorilator <cmd>           (the published package)
+#   gorilator <cmd>               (the globally-installed command)
 #
-# Designed to run on a fresh Debian/Ubuntu server that may have neither Node
-# nor Docker. Privileged steps elevate with sudo; interactive prompts read from
-# /dev/tty so it works even when piped (curl | bash).
+# Usage:  gorilator install | setup | start | stop | restart | status | info |
+#                   logs | update | tunnel <login|status|restart> | uninstall
 #
 set -euo pipefail
-
-VERSION="1.0.0"
-TUNNEL_NAME="gorilator-rpg"
-CF_DIR="/etc/cloudflared"
 
 # --- Resolve the project root through the (possibly symlinked) script path.
 #     Resolved portably because macOS's readlink lacks GNU's -f. ---
@@ -25,370 +25,72 @@ while [ -h "$SELF" ]; do
 done
 SELF="$(cd -P "$(dirname "$SELF")" && pwd)/$(basename "$SELF")"
 PROJECT_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
-ENV_FILE="$PROJECT_DIR/.env"
+CLI_DIR="$PROJECT_DIR/packages/cli"
+CLI_ENTRY="$CLI_DIR/dist/index.js"
 
 # --- Pretty logging (plain when not a TTY) ---
 if [ -t 1 ]; then
-  BOLD=$'\033[1m'; RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; BLU=$'\033[34m'; CLR=$'\033[0m'
+  BLU=$'\033[34m'; GRN=$'\033[32m'; YLW=$'\033[33m'; RED=$'\033[31m'; CLR=$'\033[0m'
 else
-  BOLD=""; RED=""; GRN=""; YLW=""; BLU=""; CLR=""
+  BLU=""; GRN=""; YLW=""; RED=""; CLR=""
 fi
 info() { printf '%s %s\n' "${BLU}==>${CLR}" "$*"; }
 ok()   { printf '%s %s\n' "${GRN}✓${CLR}" "$*"; }
 warn() { printf '%s %s\n' "${YLW}!${CLR}" "$*" >&2; }
-err()  { printf '%s %s\n' "${RED}✗${CLR}" "$*" >&2; }
-die()  { err "$*"; exit 1; }
+die()  { printf '%s %s\n' "${RED}✗${CLR}" "$*" >&2; exit 1; }
 
-# --- Privilege helper ---
 SUDO=""
-[ "$(id -u)" -ne 0 ] && SUDO="sudo"
-as_root() { if [ -n "$SUDO" ]; then sudo "$@"; else "$@"; fi; }
+[ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
 
-# --- Interactive prompts. Prefer /dev/tty so prompts work even when stdin is a
-#     pipe (curl | bash), but only when it can actually be opened — a bare
-#     `[ -e /dev/tty ]` is true even with no controlling terminal, which then
-#     errors noisily on redirect. Fall back to stdin, then to the default. ---
-ASSUME_YES="${GORILATOR_YES:-0}"
-have_tty() { { true </dev/tty; } 2>/dev/null; }
-_read() { # _read VAR "prompt"
-  local __v="$1" __p="$2" __a=""
-  if have_tty; then read -rp "$__p" __a </dev/tty || true; else read -rp "$__p" __a || true; fi
-  printf -v "$__v" '%s' "$__a"
-}
-confirm() {
-  [ "$ASSUME_YES" = "1" ] && return 0
-  local a=""
-  if have_tty; then read -rp "$1 [y/N] " a </dev/tty || true; else read -rp "$1 [y/N] " a || true; fi
-  [[ "$a" =~ ^[Yy] ]]
+# --- Node ≥ 20.6 is required (the daemon runs the server with `node --import
+#     tsx`, and parseArgs/module.register need 20.6+). ---
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local v maj rest min
+  v="$(node -v 2>/dev/null)"; v="${v#v}"
+  maj="${v%%.*}"; rest="${v#*.}"; min="${rest%%.*}"
+  [ "${maj:-0}" -gt 20 ] 2>/dev/null && return 0
+  [ "${maj:-0}" -eq 20 ] 2>/dev/null && [ "${min:-0}" -ge 6 ] 2>/dev/null && return 0
+  return 1
 }
 
-# --- Docker invocation (plain docker if usable, else sudo docker) ---
-DOCKER=(docker)
-init_docker() {
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    DOCKER=(docker)
+ensure_node() {
+  if node_ok; then return 0; fi  # silent when Node is already fine — stay transparent
+  info "Installing Node.js 20 (the daemon needs Node ≥ 20.6)…"
+  local os; os="$(uname -s)"
+  if [ "$os" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
+    $SUDO apt-get install -y nodejs
+  elif [ "$os" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    brew install node@20 && brew link --overwrite --force node@20 2>/dev/null || brew install node
   else
-    DOCKER=(sudo docker)
+    die "Node ≥ 20.6 is required and can't be auto-installed here. Install Node 20+ and re-run."
   fi
-}
-dc() { ( cd "$PROJECT_DIR" && "${DOCKER[@]}" compose "$@" ); }
-
-load_env() {
-  if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+  node_ok || die "Node install didn't produce Node ≥ 20.6. Install it manually and re-run."
+  ok "Node $(node -v)"
 }
 
-banner() {
-  printf '%s\n' "${BOLD}🦍 Gorilator${CLR} — one-click deploy (v$VERSION)"
-}
-
-# ---------------------------------------------------------------------------
-# install steps
-# ---------------------------------------------------------------------------
-detect_os() {
-  if [ "$(uname -s)" != "Linux" ]; then
-    warn "gorilator install targets Linux; detected $(uname -s). Docker/systemd steps will likely fail."
-    confirm "Continue anyway?" || exit 1
-  fi
-  command -v apt-get >/dev/null 2>&1 || \
-    warn "No apt-get found — this installer targets Debian/Ubuntu; you may need to install Docker & cloudflared manually."
-}
-
-ensure_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    ok "Docker present: $(docker --version 2>/dev/null || echo installed)"
-  else
-    warn "Docker is not installed."
-    confirm "Install Docker Engine now (official get.docker.com script)?" || die "Docker is required."
-    info "Installing Docker…"
-    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-    as_root sh /tmp/get-docker.sh
-    as_root systemctl enable --now docker 2>/dev/null || true
-    if [ -n "$SUDO" ]; then
-      as_root usermod -aG docker "${SUDO_USER:-$(id -un)}" 2>/dev/null || true
-      warn "Added you to the 'docker' group — re-login to use docker without sudo (sudo is used meanwhile)."
-    fi
-    ok "Docker installed."
-  fi
-  init_docker
-  if ! "${DOCKER[@]}" compose version >/dev/null 2>&1; then
-    warn "Docker Compose v2 plugin missing; attempting to install it."
-    as_root apt-get update -y && as_root apt-get install -y docker-compose-plugin \
-      || warn "Could not auto-install docker-compose-plugin — install it manually."
-    init_docker
-  fi
-  ok "Docker Compose: $("${DOCKER[@]}" compose version --short 2>/dev/null || echo ok)"
-}
-
-ensure_cloudflared() {
-  if command -v cloudflared >/dev/null 2>&1; then
-    ok "cloudflared present: $(cloudflared --version 2>&1 | head -1)"
-    return
-  fi
-  warn "cloudflared is not installed."
-  confirm "Download & install cloudflared now?" || die "cloudflared is required for the Cloudflare tunnel."
-  local arch
-  arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-  case "$arch" in
-    amd64|x86_64)  arch=amd64 ;;
-    arm64|aarch64) arch=arm64 ;;
-    armhf|armv7l)  arch=armhf ;;
-    *) die "Unsupported architecture: $arch (install cloudflared manually)." ;;
-  esac
-  local deb="/tmp/cloudflared-${arch}.deb"
-  info "Downloading cloudflared (${arch})…"
-  curl -fsSL -o "$deb" \
-    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb"
-  as_root dpkg -i "$deb" || as_root apt-get install -f -y
-  ok "cloudflared installed: $(cloudflared --version 2>&1 | head -1)"
-}
-
-link_global() {
-  local target="/usr/local/bin/gorilator"
-  [ "$SELF" = "$(readlink -f "$target" 2>/dev/null || echo "")" ] && { ok "gorilator already on PATH."; return; }
-  info "Linking gorilator → $target"
-  as_root ln -sf "$SELF" "$target"
-  ok "You can now run 'gorilator' from anywhere."
-}
-
-# Subdomains chosen during setup_tunnel (also written into .env).
-CLIENT_HOST=""
-SERVER_HOST=""
-
-get_tunnel_id() { cloudflared tunnel list 2>/dev/null | awk -v n="$TUNNEL_NAME" '$2==n {print $1; exit}'; }
-
-setup_tunnel() {
-  info "Configuring the Cloudflare tunnel (two subdomains → client :80, server :2567)."
-  local base
-  _read base "Base domain on Cloudflare (e.g. example.com): "
-  [ -n "$base" ] || die "A domain is required."
-  _read CLIENT_HOST "  Client subdomain [play.$base]: "; CLIENT_HOST="${CLIENT_HOST:-play.$base}"
-  _read SERVER_HOST "  Server subdomain [api.$base]: ";  SERVER_HOST="${SERVER_HOST:-api.$base}"
-  ok "Tunneling: $CLIENT_HOST → :80 (client),  $SERVER_HOST → :2567 (server)"
-
-  if [ ! -f "$HOME/.cloudflared/cert.pem" ]; then
-    info "Authorizing cloudflared — open the URL below in a browser and pick your domain:"
-    cloudflared tunnel login
-  else
-    ok "cloudflared already authorized."
-  fi
-
-  local id; id="$(get_tunnel_id)"
-  if [ -z "$id" ]; then
-    info "Creating tunnel '$TUNNEL_NAME'…"
-    cloudflared tunnel create "$TUNNEL_NAME"
-    id="$(get_tunnel_id)"
-  else
-    ok "Tunnel '$TUNNEL_NAME' already exists ($id)."
-  fi
-  [ -n "$id" ] || die "Could not determine the tunnel id."
-
-  info "Writing $CF_DIR/config.yml and credentials…"
-  as_root mkdir -p "$CF_DIR"
-  as_root cp "$HOME/.cloudflared/$id.json" "$CF_DIR/$id.json"
-  as_root tee "$CF_DIR/config.yml" >/dev/null <<EOF
-tunnel: $id
-credentials-file: $CF_DIR/$id.json
-ingress:
-  - hostname: $CLIENT_HOST
-    service: http://localhost:80
-  - hostname: $SERVER_HOST
-    service: http://localhost:2567
-  - service: http_status:404
-EOF
-
-  info "Creating DNS routes…"
-  cloudflared tunnel route dns "$TUNNEL_NAME" "$CLIENT_HOST" || warn "DNS for $CLIENT_HOST may already exist."
-  cloudflared tunnel route dns "$TUNNEL_NAME" "$SERVER_HOST" || warn "DNS for $SERVER_HOST may already exist."
-
-  info "Installing cloudflared as a boot service…"
-  as_root cloudflared service install 2>/dev/null || warn "cloudflared service may already be installed."
-  as_root systemctl enable --now cloudflared 2>/dev/null || true
-  ok "Cloudflare tunnel is up and enabled on boot."
-}
-
-gen_secret() (
-  # subshell so disabling pipefail (the head|base64|tr|head fallback closes the
-  # pipe early → SIGPIPE) stays local and never aborts the installer.
-  set +o pipefail
-  openssl rand -hex 16 2>/dev/null || { head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24; }
-)
-
-# Mint the server's Nostr secret key (an `nsec…`) for player-save persistence.
-# The generator is dependency-free Node, so prefer a local node; on a fresh box
-# without one, run it in a throwaway node container (Docker is set up by now).
-# Prints the nsec on success; empty on failure (the server then self-generates an
-# ephemeral key at boot and logs it, so the install still succeeds).
-gen_nsec() {
-  if command -v node >/dev/null 2>&1; then
-    node "$PROJECT_DIR/cli/gen-nsec.mjs" 2>/dev/null && return 0
-  fi
-  "${DOCKER[@]}" run --rm -v "$PROJECT_DIR/cli:/cli:ro" node:20-alpine \
-    node /cli/gen-nsec.mjs 2>/dev/null
-}
-
-write_env() {
-  local pass; pass="$(gen_secret)"
-  local nsec; nsec="$(gen_nsec || true)"
-  info "Writing $ENV_FILE"
-  as_root tee "$ENV_FILE" >/dev/null <<EOF
-# Generated by 'gorilator install'. Holds the monitor password and the server's
-# Nostr key — keep this file private.
-VITE_SERVER_URL=wss://$SERVER_HOST
-MONITOR_USER=admin
-MONITOR_PASS=$pass
-# The server signs each Nostr player's progress save with this key. Keep it
-# stable across restarts/redeploys or saved progress becomes unrecoverable.
-NOSTR_NSEC=$nsec
-CLIENT_HOSTNAME=$CLIENT_HOST
-SERVER_HOSTNAME=$SERVER_HOST
-EOF
-  as_root chmod 0644 "$ENV_FILE" # compose reads this unprivileged; matches MONITOR_PASS
-  ok "Generated .env  (monitor — user: admin, pass: $pass)"
-  if [ -n "$nsec" ]; then
-    ok "Generated server Nostr key for save persistence (NOSTR_NSEC in .env)."
-  else
-    warn "Could not pre-generate NOSTR_NSEC — the server will create one at boot and print it to its logs; add it to .env to persist saves."
-  fi
-}
-
-install_systemd() {
-  info "Installing the gorilator systemd service (starts the game on boot)…"
-  as_root cp "$PROJECT_DIR/deploy/gorilator.service" /etc/systemd/system/gorilator.service
-  as_root systemctl daemon-reload
-  as_root systemctl enable gorilator.service 2>/dev/null || true
-  ok "gorilator.service enabled."
-}
-
-print_summary() {
-  load_env
-  printf '\n%s\n' "${GRN}${BOLD}🦍 Gorilator is live!${CLR}"
-  printf '  Client : %s\n' "https://${CLIENT_HOSTNAME:-<client>}"
-  printf '  Server : %s\n' "wss://${SERVER_HOSTNAME:-<server>}"
-  printf '  Monitor: %s  (user %s · pass %s)\n' \
-    "https://${SERVER_HOSTNAME:-<server>}/colyseus" "${MONITOR_USER:-admin}" "${MONITOR_PASS:-<unset>}"
-  printf '\nManage it:  %s\n' "gorilator status | logs | restart | stop | update | monitor"
-}
-
-cmd_install() {
-  banner
-  detect_os
-  ensure_docker
-  ensure_cloudflared
-  link_global
-  setup_tunnel
-  write_env
-  info "Building images (the first build can take a few minutes)…"
-  dc build
-  info "Starting the game stack…"
-  dc up -d
-  install_systemd
-  print_summary
-}
-
-# ---------------------------------------------------------------------------
-# day-to-day commands
-# ---------------------------------------------------------------------------
-cmd_start()   { load_env; dc up -d; ok "Game stack started."; }
-cmd_stop()    { dc down; ok "Game stack stopped."; }
-cmd_restart() { load_env; dc up -d --force-recreate; ok "Game stack restarted."; }
-
-cmd_status() {
-  load_env
-  printf '%s\n' "${BOLD}Game servers${CLR}"
-  dc ps || true
-  printf '\n'
-  if systemctl is-active --quiet cloudflared 2>/dev/null; then
-    ok "Cloudflare tunnel: active"
-  else
-    warn "Cloudflare tunnel: not running (sudo gorilator tunnel restart)"
-  fi
-  printf '\n'
-  if [ -n "${CLIENT_HOSTNAME:-}" ]; then printf '  Client : %s\n' "https://$CLIENT_HOSTNAME"; fi
-  if [ -n "${SERVER_HOSTNAME:-}" ]; then
-    printf '  Server : %s\n' "wss://$SERVER_HOSTNAME"
-    printf '  Monitor: %s  (user %s)\n' "https://$SERVER_HOSTNAME/colyseus" "${MONITOR_USER:-admin}"
-  fi
-}
-
-cmd_logs() {
-  case "${1:-}" in
-    tunnel) as_root journalctl -u cloudflared -f ;;
-    "")     dc logs -f --tail=100 ;;
-    *)      dc logs -f --tail=100 "$1" ;;
-  esac
-}
-
-cmd_monitor() {
-  load_env
-  [ -n "${SERVER_HOSTNAME:-}" ] || die "No SERVER_HOSTNAME in .env — run 'gorilator install' first."
-  printf 'Monitor: %s\n' "https://$SERVER_HOSTNAME/colyseus"
-  printf 'User:    %s\n' "${MONITOR_USER:-admin}"
-  printf 'Pass:    %s\n' "${MONITOR_PASS:-<unset>}"
-}
-
-cmd_update() {
-  info "Pulling latest…"
-  as_root git -C "$PROJECT_DIR" pull --ff-only || warn "git pull skipped/failed."
-  load_env
-  dc build
-  dc up -d
-  ok "Updated and redeployed."
-}
-
-cmd_tunnel() {
-  case "${1:-status}" in
-    login)   cloudflared tunnel login ;;
-    status)  as_root systemctl status cloudflared --no-pager || true ;;
-    restart) as_root systemctl restart cloudflared && ok "Tunnel restarted." ;;
-    *) die "usage: gorilator tunnel <login|status|restart>" ;;
-  esac
-}
-
-cmd_uninstall() {
-  confirm "Stop gorilator and disable its services? (your files are kept)" || exit 0
-  dc down || true
-  as_root systemctl disable --now gorilator.service 2>/dev/null || true
-  as_root rm -f /etc/systemd/system/gorilator.service
-  as_root systemctl daemon-reload 2>/dev/null || true
-  warn "The cloudflared tunnel is left running. Remove it with: sudo cloudflared service uninstall"
-  ok "Gorilator services disabled."
-}
-
-usage() {
-  cat <<EOF
-${BOLD}gorilator${CLR} $VERSION — Docker + Cloudflare deploy for the Gorilator RPG
-
-Usage: gorilator <command>
-
-  install        Bootstrap this box: Docker, cloudflared, tunnel, build, run, enable on boot
-  start          Start the game stack (docker compose up -d)
-  stop           Stop the game stack (docker compose down)
-  restart        Restart the game stack
-  status         Show running game servers + public URLs
-  logs [svc]     Tail logs — svc = server | client | tunnel (default: all)
-  monitor        Print the /colyseus monitor URL + credentials
-  update         git pull, rebuild, redeploy
-  tunnel <cmd>   Manage the Cloudflare tunnel — login | status | restart
-  uninstall      Stop & disable services (keeps your files)
-  version        Print version
-EOF
+# --- Build the in-repo CLI (tsc) so this checkout runs its own code. Isolated
+#     `npm install` in packages/cli (just typescript + @types/node); the game's
+#     own deps are installed later by `gorilator install`. ---
+build_local_cli() {
+  [ -f "$CLI_DIR/package.json" ] || return 1
+  info "Building the gorilator CLI…"
+  ( cd "$CLI_DIR" && npm install --no-audit --no-fund --silent && npm run build --silent ) \
+    || { warn "Local CLI build failed."; return 1; }
 }
 
 main() {
-  case "${1:-}" in
-    install|setup) shift; cmd_install "$@" ;;
-    start)         init_docker; shift; cmd_start "$@" ;;
-    stop)          init_docker; shift; cmd_stop "$@" ;;
-    restart)       init_docker; shift; cmd_restart "$@" ;;
-    status)        init_docker; shift; cmd_status "$@" ;;
-    logs)          init_docker; shift; cmd_logs "$@" ;;
-    monitor)       shift; cmd_monitor "$@" ;;
-    update)        init_docker; shift; cmd_update "$@" ;;
-    tunnel)        shift; cmd_tunnel "$@" ;;
-    uninstall)     init_docker; shift; cmd_uninstall "$@" ;;
-    version|-v|--version) printf 'gorilator %s\n' "$VERSION" ;;
-    ""|help|-h|--help) usage ;;
-    *) err "Unknown command: $1"; usage; exit 1 ;;
-  esac
+  ensure_node
+  if [ ! -f "$CLI_ENTRY" ]; then
+    build_local_cli || true
+  fi
+  if [ -f "$CLI_ENTRY" ]; then
+    exec node "$CLI_ENTRY" "$@"
+  fi
+  # No local build available — fall back to the published package.
+  warn "Using the published gorilator package (npx) — local build unavailable."
+  exec npx -y gorilator "$@"
 }
+
 main "$@"
