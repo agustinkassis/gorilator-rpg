@@ -597,6 +597,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(appVersion()) },
   plugins: [modelImporter()],
   server: {
-    port: 5173,
+    port: Number(process.env.CLIENT_PORT) || 5173,
+    strictPort: true,
   },
 });

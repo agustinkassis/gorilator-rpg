@@ -23,23 +23,23 @@ browser tabs and you'll see both gorillas move and fight in real time.
 ```
 packages/
   shared/   @rpg/shared — Colyseus schema + types + constants (used by client AND server)
-  server/   @rpg/server — Colyseus authoritative game server (port 2567)
-  client/   @rpg/client — Babylon.js + Vite browser client (port 5173)
+  server/   @rpg/server — Colyseus authoritative game server (default port 2567)
+  client/   @rpg/client — Babylon.js + Vite browser client (default port 5173)
 ```
 
 ## Run it
 
 ```bash
-pnpm install
-pnpm dev          # starts server (2567) + client (5173) together
+pnpm dev          # installs missing deps, then starts server + client
 ```
 
-Then open <http://localhost:5173>.
+Then open the client URL printed by `pnpm dev` (default: <http://localhost:5173>).
 
 - **Left-click the ground** → your knight walks there (walk → idle on arrival).
 - **Left-click a training dummy** (or another knight) → approach + attack; target plays hit, HP drops, dies, respawns.
 - **Open a second tab** → a second knight appears; movement/combat sync across both.
-- Live room state inspector: <http://localhost:2567/colyseus>.
+- Live room state inspector: the monitor URL printed by `pnpm dev`
+  (default: <http://localhost:2567/colyseus>).
 
 ## Documentation
 

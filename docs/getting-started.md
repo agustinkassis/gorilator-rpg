@@ -8,16 +8,18 @@
 ## Install
 
 ```bash
-pnpm install
+pnpm dev
 ```
 
-This is a **pnpm workspace** monorepo with three packages:
+`pnpm dev` installs missing dependencies automatically on a fresh checkout, then
+starts the local development environment. This is a **pnpm workspace** monorepo
+with three packages:
 
 | Package | Name | Role |
 | --- | --- | --- |
 | `packages/shared` | `@rpg/shared` | Colyseus schema + types + constants — imported by **both** client and server |
-| `packages/server` | `@rpg/server` | Authoritative Colyseus game server (WebSocket, port **2567**) |
-| `packages/client` | `@rpg/client` | Babylon.js + Vite browser client (port **5173**) |
+| `packages/server` | `@rpg/server` | Authoritative Colyseus game server (WebSocket, default port **2567**) |
+| `packages/client` | `@rpg/client` | Babylon.js + Vite browser client (default port **5173**) |
 
 ## Run the dev environment
 
@@ -25,15 +27,17 @@ This is a **pnpm workspace** monorepo with three packages:
 pnpm dev
 ```
 
-`pnpm dev` does three things (via `concurrently`):
+`pnpm dev` does four things:
 
-1. **Builds `@rpg/shared` once** (`tsc` → `packages/shared/dist`)
-2. Watches `@rpg/shared` (`tsc --watch`)
-3. Runs the **server** (`tsx watch src/index.ts`, port 2567) and the **client**
-   (`vite`, port 5173)
+1. Installs missing local dependencies with `pnpm install --frozen-lockfile`
+2. **Builds `@rpg/shared` once** (`tsc` → `packages/shared/dist`)
+3. Watches `@rpg/shared` (`tsc --watch`)
+4. Runs the **server** (`tsx watch src/index.ts`) and the **client** (`vite`)
 
-Then open **http://localhost:5173**. Open a second tab to see live multiplayer.
-The Colyseus room inspector is at **http://localhost:2567/colyseus**.
+Then open the client URL printed by `pnpm dev` (default:
+**http://localhost:5173**). Open a second tab to see live multiplayer. The
+Colyseus room inspector is printed too (default:
+**http://localhost:2567/colyseus**).
 
 ### ⚠️ The `@rpg/shared` rebuild gotcha
 
@@ -62,13 +66,15 @@ pnpm build          # build shared + the production client bundle
 
 ## Ports & env
 
-- Client: `5173` (Vite). Server: `2567` (`GAME_SERVER_PORT` overrides; do **not**
-  reuse `PORT`, which dev tooling repurposes for the web port).
+- Client: `5173` by default (`CLIENT_PORT` overrides). Server: `2567` by default
+  (`GAME_SERVER_PORT` overrides; do **not** reuse `PORT`, which dev tooling
+  repurposes for the web port). If either port is busy, `pnpm dev` starts on the
+  next free port and prints the actual URLs.
 - In dev no env is required. For production/identity/discovery config see
   [configuration.md](configuration.md) and `.env.example`.
 
-If a server restart ever wedges with `EADDRINUSE :::2567`, the old instance hasn't
-released the port yet — stop the dev process and restart `pnpm dev`.
+If another process already owns a default port, leave it alone and rerun
+`pnpm dev`; the launcher will choose a free port for this session.
 
 ## Project conventions
 

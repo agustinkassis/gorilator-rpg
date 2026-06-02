@@ -68,7 +68,8 @@ export function hasNostrExtension(): boolean {
 
 function httpBase(): string {
   const proto = location.protocol === "https:" ? "https" : "http";
-  return `${proto}://${location.hostname}:${SERVER_PORT}`;
+  const serverPort = (import.meta.env.VITE_SERVER_PORT as string | undefined) || String(SERVER_PORT);
+  return `${proto}://${location.hostname}:${serverPort}`;
 }
 
 /**
