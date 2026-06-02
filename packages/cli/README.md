@@ -63,8 +63,12 @@ gorilator restart     # restart the service
 gorilator logs        # stream server logs (Ctrl-C to detach)
 gorilator update      # stop services, git pull, rebuild, start services
 gorilator tunnel <cmd># Cloudflare tunnel — login | status | restart
-gorilator uninstall   # stop and remove the service (your files stay)
+gorilator uninstall   # stop and remove services, config, command, and installed files
 ```
+
+`gorilator uninstall` removes the local Gorilator daemon, local tunnel service/config,
+install record, global npm command, and installed app directory. Use
+`--keep-files`, `--keep-command`, or `--keep-tunnel` to preserve those parts.
 
 ## Requirements
 

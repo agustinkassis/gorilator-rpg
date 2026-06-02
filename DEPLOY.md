@@ -96,11 +96,16 @@ gorilator logs          Stream server logs (Ctrl-C to detach)
 gorilator update        stop services, git pull, rebuild, start services
 gorilator setup         Configure the Cloudflare tunnel + public game hostname
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
-gorilator uninstall     Stop & remove the service (your files stay)
+gorilator uninstall     Stop & remove services, config, command, and installed files
 ```
 
 The three entry points run **identical code** — `npx gorilator <cmd>`, the global `gorilator <cmd>`, and the
 repo's `./cli/gorilator <cmd>` (which only adds: ensure Node, then exec the same Node CLI).
+
+`gorilator uninstall` removes local machine state created by install/setup: the Gorilator daemon, local
+cloudflared service/config, install record, global npm command, and installed app directory. Add
+`--keep-files`, `--keep-command`, or `--keep-tunnel` when you want to preserve one of those pieces. It does
+not delete account-level Cloudflare tunnel/DNS resources; remove those in Cloudflare if you no longer need them.
 
 ---
 

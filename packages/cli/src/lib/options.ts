@@ -19,6 +19,9 @@ export interface RawFlags {
   "skip-service"?: boolean;
   "skip-tunnel"?: boolean;
   "local-cli"?: string;
+  "keep-files"?: boolean;
+  "keep-command"?: boolean;
+  "keep-tunnel"?: boolean;
 }
 
 export interface Options {
@@ -33,6 +36,9 @@ export interface Options {
   noService: boolean;
   noTunnel: boolean;
   localCli?: string;
+  keepFiles: boolean;
+  keepCommand: boolean;
+  keepTunnel: boolean;
 }
 
 export function resolveOptions(v: RawFlags): Options {
@@ -53,5 +59,8 @@ export function resolveOptions(v: RawFlags): Options {
     noService: Boolean(v["skip-service"]),
     noTunnel: Boolean(v["skip-tunnel"]),
     localCli: v["local-cli"] ?? env.GORILATOR_LOCAL_CLI,
+    keepFiles: Boolean(v["keep-files"]),
+    keepCommand: Boolean(v["keep-command"]),
+    keepTunnel: Boolean(v["keep-tunnel"]),
   };
 }

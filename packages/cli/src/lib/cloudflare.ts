@@ -2,7 +2,7 @@
 // cloudflared, authorizes it, creates/locates the named tunnel, writes its
 // ingress config (one public hostname → the game port), routes DNS, and runs it
 // as a boot service. Linux (systemd) is the primary target; macOS uses Homebrew.
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as log from "./log.js";
@@ -165,6 +165,52 @@ export function startTunnelService(): boolean {
   if (isLinux) return tryPrivileged("systemctl", ["start", "cloudflared"]);
   if (which("brew")) return tryRun("brew", ["services", "start", "cloudflared"]);
   return false;
+}
+
+/** Stop and unregister the local cloudflared boot service. This intentionally
+ *  does not uninstall the cloudflared binary because it may be shared by other
+ *  tunnels or installed by a package manager. */
+export function uninstallTunnelService(): boolean {
+  let changed = false;
+  if (isLinux) {
+    changed = tryPrivileged("systemctl", ["stop", "cloudflared"]) || changed;
+    changed = tryPrivileged("systemctl", ["disable", "cloudflared"]) || changed;
+    if (which("cloudflared")) {
+      changed = tryPrivileged("cloudflared", ["service", "uninstall"]) || changed;
+    }
+    changed = tryPrivileged("systemctl", ["daemon-reload"]) || changed;
+    return changed;
+  }
+  if (which("brew")) {
+    changed = tryRun("brew", ["services", "stop", "cloudflared"]) || changed;
+  } else if (which("cloudflared")) {
+    changed = tryRun("cloudflared", ["service", "uninstall"]) || changed;
+  }
+  return changed;
+}
+
+/** Remove the local config/credentials files that `gorilator setup` writes.
+ *  This leaves ~/.cloudflared/cert.pem and the remote Cloudflare tunnel/DNS
+ *  untouched; those are account-level resources, not local system state. */
+export function removeTunnelLocalConfig(name = TUNNEL_NAME): void {
+  const id = which("cloudflared") ? getTunnelId(name) : null;
+  const paths = [
+    join(cloudflaredDir(), "config.yml"),
+    id ? join(cloudflaredDir(), `${id}.json`) : null,
+    id ? join(homedir(), ".cloudflared", `${id}.json`) : null,
+  ].filter((p): p is string => Boolean(p));
+
+  if (isLinux) {
+    for (const p of paths) tryPrivileged("rm", ["-f", p]);
+    return;
+  }
+  for (const p of paths) {
+    try {
+      rmSync(p, { force: true });
+    } catch {
+      tryRun("rm", ["-f", p]);
+    }
+  }
 }
 
 // --- `gorilator tunnel <login|status|restart>` ---
