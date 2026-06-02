@@ -63,7 +63,7 @@ export async function install(opts: Options, version: string): Promise<void> {
     log.warn(`Could not start the service automatically: ${(e as Error).message}`);
   }
   const healthy = await waitForHealth(opts.port);
-  printSummary(appDir, opts.port, healthy);
+  printSummary(appDir, opts.port, opts.clientPort, healthy);
 
   await maybeRunSetup(opts);
 }
@@ -111,10 +111,10 @@ function ensureGlobalCli(opts: Options): void {
   log.warn(`Could not install the global command automatically. Run:  npm i -g ${target}`);
 }
 
-function printSummary(appDir: string, port: number, healthy: boolean): void {
+function printSummary(appDir: string, port: number, clientPort: number, healthy: boolean): void {
   process.stdout.write("\n");
   log.ok("🦍 Gorilator is installed and running natively (no Docker).");
-  const info = readEnvInfo(appDir, port);
+  const info = readEnvInfo(appDir, port, clientPort);
   printPorts(info, healthy);
   process.stdout.write(`  Files  : ${appDir}\n`);
   process.stdout.write(

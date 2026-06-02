@@ -15,12 +15,17 @@ export interface SummaryInfo {
 }
 
 /** Read the listen port + monitor creds + public hostnames out of the install's
- *  .env (falling back to the saved port when .env has no GAME_SERVER_PORT). */
-export function readEnvInfo(appDir: string, fallbackPort: number): SummaryInfo {
+ *  .env, falling back to the saved config values when .env predates them (e.g. an
+ *  install upgraded from a version whose .env had no CLIENT_PORT). */
+export function readEnvInfo(
+  appDir: string,
+  fallbackPort: number,
+  fallbackClientPort?: number,
+): SummaryInfo {
   const ef = envFile(appDir);
   const e = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
   const port = Number(e.GAME_SERVER_PORT) || fallbackPort;
-  const clientPort = Number(e.CLIENT_PORT) || undefined;
+  const clientPort = Number(e.CLIENT_PORT) || fallbackClientPort;
   return {
     port,
     clientPort,
