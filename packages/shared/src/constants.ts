@@ -153,11 +153,11 @@ export const GOBLIN_SPAWN_NEAR_MAX = 34; // ...and at most this far (just beyond
 // Tower-defense waves: a horde spawns a long march from the home (≈ WAVE_MARCH_SECONDS
 // of walking out) and converges on the house, fighting any player that engages them on
 // the way. The REST between waves grows each wave (more time to rebuild as it escalates):
-// after wave N the gap is BASE + STEP·(N-1), capped at MAX — i.e. 2.5min, 3min, 3.5min…
-export const WAVE_INTERVAL_BASE_MS = 270000; // rest after wave 1 (4.5 min)
-export const WAVE_INTERVAL_STEP_MS = 30000; // each successive rest grows by this (0.5 min) → 4.5, 5, 5.5, …
-export const WAVE_INTERVAL_MAX_MS = 600000; // cap the growth here (10 min); raise/remove for unbounded
-export const WAVE_FIRST_DELAY_MS = 60000; // the very first wave lands at 1 min
+// after wave N the gap is BASE + STEP·(N-1), capped at MAX.
+export const WAVE_INTERVAL_BASE_MS = 108000; // rest after wave 1 (1.8 min)
+export const WAVE_INTERVAL_STEP_MS = 12000; // each successive rest grows by this (0.2 min)
+export const WAVE_INTERVAL_MAX_MS = 240000; // cap the growth here (4 min); raise/remove for unbounded
+export const WAVE_FIRST_DELAY_MS = 24000; // the very first wave lands at 24s
 export const WAVE_SPAWN_SPREAD_MS = 40000; // a wave drips in over this window (first → last)
 export const WAVE_MARCH_SECONDS = 30; // a wave spawns this many seconds' walk from home...
 export const WAVE_SPAWN_DISTANCE = GOBLIN_CHASE_SPEED * WAVE_MARCH_SECONDS; // ...i.e. this far out (≈108u)
@@ -177,7 +177,7 @@ export const POTION_HEAL = 90; // HP restored when a potion is consumed from the
 export const PICKUP_RADIUS = 1.3; // how close you must walk to grab one
 export const POTION_RESPAWN_MS = 7000; // delay before a collected potion is replaced
 export const GOBLIN_POTION_DROP_CHANCE = 0.6; // a slain goblin drops a health potion this often
-export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.08; // rare berserker flask drop from slain goblins
+export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.16; // rare berserker flask drop from slain goblins
 export const AMBIENT_ITEM_SPAWN_CLEAR_RADIUS = 24; // random pickups stay out of the central player spawn ring
 
 // Trees are choppable resources scattered across the map.
