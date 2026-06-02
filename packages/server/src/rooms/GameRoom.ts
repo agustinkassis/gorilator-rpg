@@ -265,7 +265,10 @@ export class GameRoom extends Room<GameState> {
       p.state = AnimState.THROW;
       p.stateTimer = THROW_STATE_MS;
       p.attackTargetId = ""; // a throw cancels any queued attack
-      const power = Math.max(0, Math.min(1, msg.power ?? 0));
+      const requestedPower = Number(msg.power ?? 0);
+      const power = Number.isFinite(requestedPower)
+        ? Math.max(0, Math.min(1, requestedPower))
+        : 0;
       this.pendingThrows.set(client.sessionId, {
         power,
         item,
@@ -376,7 +379,7 @@ export class GameRoom extends Room<GameState> {
       treeRegrowSystem(this.state, dt);
       rockRegrowSystem(this.state, dt);
       potionRespawnSystem(this.state, dt);
-      bananaSystem(this.state, dt, emitDamage, emitXp);
+      bananaSystem(this.state, dt, emitDamage, emitHeal, emitXp);
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {

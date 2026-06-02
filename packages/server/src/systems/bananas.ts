@@ -6,6 +6,7 @@ import {
   House,
   AnimState,
   DamageEvent,
+  HealEvent,
   BananaThrowEvent,
   BANANA_MAX,
   BANANA_RESPAWN_MS,
@@ -253,6 +254,7 @@ export function bananaSystem(
   state: GameState,
   dt: number,
   emitDamage: (ev: DamageEvent) => void,
+  emitHeal: (ev: HealEvent) => void,
   emitXp: EmitXp,
 ) {
   const m = getMeta(state);
@@ -273,7 +275,7 @@ export function bananaSystem(
     const f = m.inFlight[i];
     if (m.clock < f.landAt) continue;
     m.inFlight.splice(i, 1);
-    landBanana(state, f, emitDamage, emitXp);
+    landBanana(state, f, emitDamage, emitHeal, emitXp);
   }
 }
 
@@ -281,6 +283,7 @@ function landBanana(
   state: GameState,
   f: InFlight,
   emitDamage: (ev: DamageEvent) => void,
+  emitHeal: (ev: HealEvent) => void,
   emitXp: EmitXp,
 ) {
   // hit the nearest living player/enemy near the landing (never the thrower)
@@ -299,8 +302,21 @@ function landBanana(
   state.enemies.forEach(consider);
 
   if (target) {
-    target.hp = Math.max(0, target.hp - f.dmg);
-    emitDamage({ targetId: target.id, amount: f.dmg, crit: false });
+    const amount = Math.max(1, Math.round(Number.isFinite(f.dmg) ? f.dmg : 0));
+    if (f.item === "banana" && state.players.has(target.id)) {
+      const healed = Math.min(amount, target.maxHp - target.hp);
+      if (healed > 0) {
+        target.hp += healed;
+        emitHeal({ targetId: target.id, amount: healed });
+      }
+      if (target.state === AnimState.HIT) target.state = AnimState.IDLE;
+      if (f.item === "banana") spawnBanana(state, f.x, f.z);
+      return;
+    }
+
+    const damage = amount;
+    target.hp = Math.max(0, target.hp - damage);
+    emitDamage({ targetId: target.id, amount: damage, crit: false });
     if (target.hp <= 0) {
       target.state = AnimState.DEAD;
       if (state.players.has(target.id)) {
@@ -334,8 +350,9 @@ function landBanana(
     });
     if (house && house.maxHp > 0) {
       // maxHp 0 ⇒ dev-set indestructible: the throw lands but chips no HP.
-      house.hp = Math.max(0, house.hp - f.dmg);
-      emitDamage({ targetId: house.id, amount: f.dmg, crit: false });
+      const damage = Math.max(1, Math.round(Number.isFinite(f.dmg) ? f.dmg : 0));
+      house.hp = Math.max(0, house.hp - damage);
+      emitDamage({ targetId: house.id, amount: damage, crit: false });
       if (house.hp <= 0) {
         house.alive = false;
         dropStructureLoot(state, "house", house.x, house.z); // spill its loot table on collapse
