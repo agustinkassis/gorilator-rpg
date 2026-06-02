@@ -1,9 +1,7 @@
-// `gorilator setup` — wire the running daemon to public Cloudflare subdomains.
-// Prompts for a base domain + two subdomains, sets up the cloudflared tunnel
-// (two hostnames → the one game port), bakes the server subdomain into the
-// client bundle (so the client dials it over wss), rebuilds the client, and
-// restarts the daemon. Shares all its logic with the CLI so the bash entry
-// point and `npx gorilator setup` do exactly the same thing.
+// `gorilator setup` — wire the running daemon to one public Cloudflare hostname.
+// The server port already serves the built client, WebSocket/API, and Colyseus
+// monitor, so the tunnel only needs one hostname → one local port. The client is
+// rebuilt same-origin so it dials whichever public host served the page.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { buildClient } from "../lib/build.js";
 import { loadConfig, updateConfig } from "../lib/config.js";
@@ -33,21 +31,28 @@ export async function runSetup(opts: Options): Promise<void> {
   const cfg = loadConfig();
   const appDir = cfg?.appDir ?? opts.appDir;
   const port = cfg?.port ?? opts.port;
-  const clientPort = cfg?.clientPort ?? opts.clientPort;
   const user = cfg?.user ?? targetUser();
 
-  log.info("Configuring the Cloudflare tunnel (two subdomains → the game port).");
+  log.info("Configuring the Cloudflare tunnel (one public hostname → the game port).");
 
-  // Subdomains: env overrides for automation, otherwise prompt.
-  let clientHost = process.env.GORILATOR_CLIENT_HOST;
-  let serverHost = process.env.GORILATOR_SERVER_HOST;
-  if (!clientHost || !serverHost) {
+  // Public hostname: env overrides for automation, otherwise prompt.
+  let publicHost =
+    process.env.GORILATOR_HOST ||
+    process.env.GORILATOR_GAME_HOST ||
+    process.env.GORILATOR_SERVER_HOST ||
+    process.env.GORILATOR_CLIENT_HOST;
+  if (!publicHost) {
     const base = process.env.GORILATOR_DOMAIN || ask("Base domain on Cloudflare (e.g. example.com): ");
     if (!base) log.die("A domain is required (set GORILATOR_DOMAIN or answer the prompt).");
-    clientHost = clientHost || promptDefault("  Client subdomain", `play.${base}`);
-    serverHost = serverHost || promptDefault("  Server subdomain", `api.${base}`);
+    publicHost = promptDefault("  Game subdomain", `game.${base}`);
   }
-  log.ok(`Tunneling: ${clientHost} → :${clientPort} (client page),  ${serverHost} → :${port} (server WebSocket)`);
+  log.ok(`Tunneling: ${publicHost} → :${port} (client + WebSocket + monitor + API)`);
+  const ef = envFile(appDir);
+  const beforeEnv = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
+  const clientAlreadySameOrigin =
+    beforeEnv.VITE_SAME_ORIGIN === "1" &&
+    !beforeEnv.VITE_SERVER_URL &&
+    !beforeEnv.CLIENT_PORT;
 
   // --- cloudflared: install, authorize, create/find tunnel, config, DNS, run ---
   ensureCloudflared();
@@ -68,23 +73,28 @@ export async function runSetup(opts: Options): Promise<void> {
   }
   if (!id) log.die("Could not determine the tunnel id.");
 
-  writeTunnelConfig(id, clientHost, clientPort, serverHost, port);
+  writeTunnelConfig(id, publicHost, port);
   log.info("Creating DNS routes…");
-  routeDns(clientHost);
-  routeDns(serverHost);
+  routeDns(publicHost);
   installTunnelService();
 
-  // --- make the client + server work together over the tunnel ---
+  // --- make the client + server work together over the single public origin ---
   mergeEnv(appDir, user, {
-    VITE_SERVER_URL: `wss://${serverHost}`,
-    CLIENT_HOSTNAME: clientHost,
-    SERVER_HOSTNAME: serverHost,
-    PLAY_URL: `https://${clientHost}`,
+    VITE_SERVER_URL: "",
+    VITE_SAME_ORIGIN: "1",
+    CLIENT_PORT: "",
+    CLIENT_HOSTNAME: "",
+    SERVER_HOSTNAME: publicHost,
+    PLAY_URL: `https://${publicHost}`,
   });
-  updateConfig({ clientHost, serverHost });
+  updateConfig({ clientPort: undefined, clientHost: undefined, serverHost: publicHost });
 
-  log.info("Rebuilding the client to dial the server subdomain…");
-  buildClient(appDir, { serverUrl: `wss://${serverHost}` });
+  if (clientAlreadySameOrigin) {
+    log.ok("Client bundle is already same-origin; skipping rebuild.");
+  } else {
+    log.info("Rebuilding the client for same-origin HTTPS/WSS…");
+    buildClient(appDir);
+  }
 
   log.info("Restarting the daemon to serve the new client bundle…");
   try {
@@ -108,7 +118,7 @@ function mergeEnv(appDir: string, user: string, patch: Record<string, string>): 
   const cur = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
   writeFileSync(ef, renderEnv({ ...cur, ...patch }), { mode: 0o600 });
   if (isRoot() && user !== "root") run("chown", [user, ef]);
-  log.ok(`Updated ${ef} (VITE_SERVER_URL → wss://${patch.SERVER_HOSTNAME}).`);
+  log.ok(`Updated ${ef} (same-origin public host → ${patch.SERVER_HOSTNAME}).`);
 }
 
 /** `gorilator tunnel <login|status|restart>` — manage the cloudflared service. */

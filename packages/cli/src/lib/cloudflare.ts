@@ -1,6 +1,6 @@
 // cloudflared helpers — a typed port of the bash CLI's tunnel setup. Installs
 // cloudflared, authorizes it, creates/locates the named tunnel, writes its
-// ingress config (two subdomains → the one game port), routes DNS, and runs it
+// ingress config (one public hostname → the game port), routes DNS, and runs it
 // as a boot service. Linux (systemd) is the primary target; macOS uses Homebrew.
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -86,8 +86,8 @@ export function createTunnel(name = TUNNEL_NAME): void {
   run("cloudflared", ["tunnel", "create", name]);
 }
 
-/** Render the ingress config: every hostname maps to the single local game port
- *  (one native process serves both the client page and the WebSocket). */
+/** Render the ingress config: the public hostname maps to the local game port
+ *  (one native process serves the client page, WebSocket/API, and monitor). */
 function renderConfig(
   id: string,
   credsPath: string,
@@ -107,10 +107,8 @@ ${ingress}
 /** Write config.yml (+ copy credentials into the system dir on Linux). */
 export function writeTunnelConfig(
   id: string,
-  clientHost: string,
-  clientPort: number,
-  serverHost: string,
-  serverPort: number,
+  host: string,
+  port: number,
 ): void {
   const credsSrc = join(homedir(), ".cloudflared", `${id}.json`);
   const dir = cloudflaredDir();
@@ -124,10 +122,7 @@ export function writeTunnelConfig(
   log.info(`Writing ${join(dir, "config.yml")}…`);
   writeFileMaybeSudo(
     join(dir, "config.yml"),
-    renderConfig(id, credsPath, [
-      { host: clientHost, port: clientPort }, // play.* → the client web port
-      { host: serverHost, port: serverPort }, // api.*  → the server (WebSocket) port
-    ]),
+    renderConfig(id, credsPath, [{ host, port }]),
     0o644,
   );
 }
@@ -154,6 +149,22 @@ export function installTunnelService(): void {
   }
   tryRun("cloudflared", ["service", "install"]);
   log.ok("cloudflared service installed.");
+}
+
+/** Stop the cloudflared boot service when a public tunnel has been configured.
+ *  Returns false when the platform has no known service manager or the service
+ *  is not installed/running. */
+export function stopTunnelService(): boolean {
+  if (isLinux) return tryPrivileged("systemctl", ["stop", "cloudflared"]);
+  if (which("brew")) return tryRun("brew", ["services", "stop", "cloudflared"]);
+  return false;
+}
+
+/** Start the cloudflared boot service after the game daemon is healthy again. */
+export function startTunnelService(): boolean {
+  if (isLinux) return tryPrivileged("systemctl", ["start", "cloudflared"]);
+  if (which("brew")) return tryRun("brew", ["services", "start", "cloudflared"]);
+  return false;
 }
 
 // --- `gorilator tunnel <login|status|restart>` ---

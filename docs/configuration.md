@@ -39,13 +39,14 @@ the section comments in the file:
 | Var | Purpose |
 | --- | --- |
 | `GAME_SERVER_PORT` | server WebSocket/HTTP port (default 2567) |
-| `VITE_SERVER_URL` | `wss://…` URL baked into the client bundle at build (prod) |
+| `VITE_SAME_ORIGIN` | Build the client to dial the same host that served the page (default Cloudflare setup) |
+| `VITE_SERVER_URL` | Legacy `wss://…` URL baked into the client bundle for split-host deploys |
 | `NOSTR_NSEC` | the server's Nostr secret key — signs player saves **and** the server discovery event. **Keep it stable** across restarts, or saved progress + a stable server identity are lost. Ephemeral if unset (printed at boot). |
 | `MONITOR_USER` / `MONITOR_PASS` | HTTP Basic auth for the `/colyseus` monitor (open if unset) |
-| `CLIENT_HOSTNAME` / `SERVER_HOSTNAME` | public hostnames (informational + `PLAY_URL` fallback) |
+| `SERVER_HOSTNAME` | public game hostname (informational + `PLAY_URL` fallback) |
 | `CLIENT_DIST` | single-service deploys: path to the built client to serve from the server |
 | `SERVER_NAME` | display name in the realm event + `/api/*` |
-| `PLAY_URL` | public URL players join at (defaults to `https://$CLIENT_HOSTNAME`) |
+| `PLAY_URL` | public URL players join at (defaults to `https://$SERVER_HOSTNAME`) |
 | `SERVER_STATS_FILE` | where realm lifetime totals persist (default `./.server-realms.json`) |
 
 ## 3. Runtime content files (live-reloaded JSON)

@@ -8,7 +8,7 @@ browser tabs and you'll see both gorillas move and fight in real time.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/REPLACE_WITH_TEMPLATE_ID)
 
-- **Self-host (native, no Docker):** `npx gorilator install` clones, builds, and runs the game as a boot service; `gorilator setup` adds a Cloudflare tunnel on your own subdomains. See [DEPLOY.md](DEPLOY.md).
+- **Self-host (native, no Docker):** `npx gorilator install` clones, builds, and runs the game as a boot service; `gorilator setup` adds a Cloudflare tunnel on your own game subdomain. See [DEPLOY.md](DEPLOY.md).
 - **Railway (one click):** a single service serves the client **and** the multiplayer server — no variables to set. See [RAILWAY.md](RAILWAY.md).
 
 ## Stack

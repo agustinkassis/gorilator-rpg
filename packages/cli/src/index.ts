@@ -2,10 +2,10 @@
 // gorilator — native install & daemon control for the Gorilator RPG (no Docker).
 //
 //   gorilator install                      bootstrap a box (clone, build, run as a service)
-//   gorilator setup                        wire it to public Cloudflare subdomains
+//   gorilator setup                        wire it to a public Cloudflare hostname
 //   gorilator start | stop | restart       drive the OS service
 //   gorilator status | info | logs         inspect it
-//   gorilator update                       git pull, rebuild, restart
+//   gorilator update                       stop services, git pull, rebuild, start services
 //   gorilator tunnel <login|status|restart>  manage the Cloudflare tunnel
 //   gorilator uninstall                    remove the service (keeps files)
 //   gorilator serve                        internal: the supervised foreground process
@@ -38,13 +38,13 @@ function usage(): void {
 Usage: gorilator <command> [options]
 
   install            Clone the game, build it, run it as a service, put 'gorilator' on PATH
-  setup              Configure a Cloudflare tunnel + public subdomains, rebuild the client
+  setup              Configure a Cloudflare tunnel + public hostname, rebuild the client
   start              Start the daemon (prints the port it listens on)
   stop               Stop the daemon
   restart            Restart the daemon
   status, info       Service state + health check + local & public URLs
   logs               Stream the server logs (Ctrl-C to detach)
-  update             git pull, rebuild, restart
+  update             Stop services, git pull, rebuild, start services
   tunnel <cmd>       Manage the Cloudflare tunnel — login | status | restart
   uninstall          Stop and remove the service (your files are kept)
   serve              Run the server in the foreground (used by the service)
@@ -55,7 +55,7 @@ Options (install):
   --ref <ref>        Branch or tag        (env GORILATOR_REF, default main)
   --dir <path>       Install directory    (env GORILATOR_DIR)
   --port <n>         Server port (WebSocket + monitor + API)  (env GAME_SERVER_PORT, default 2567)
-  --client-port <n>  Client web port (game page)              (env CLIENT_PORT, default 8080)
+  --client-port <n>  Optional extra client web port           (env CLIENT_PORT)
   --yes              Assume yes to prompts (env GORILATOR_YES=1)
   --skip-service     Clone + build only; don't register the OS service
   --skip-tunnel      Don't offer the Cloudflare setup after install
@@ -121,7 +121,7 @@ async function main(): Promise<void> {
       logsCmd();
       break;
     case "update":
-      update();
+      await update();
       break;
     case "tunnel":
       tunnelCmd(positionals[1]);

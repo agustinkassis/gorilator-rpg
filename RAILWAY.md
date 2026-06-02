@@ -16,7 +16,7 @@ to set** — the client talks to its own origin, and the server listens on Railw
 
 1. Railway dashboard → **New Project** → **Deploy from GitHub repo** → pick
    `agustinkassis/gorilator-rpg`.
-2. Railway reads [`railway.json`](railway.json), builds [`Dockerfile.railway`](Dockerfile.railway),
+2. Railway reads [`railway.json`](railway.json), builds [`Dockerfile.server`](Dockerfile.server),
    and starts the service. (First build pulls `node` once and takes a few minutes.)
 3. Service → **Settings → Networking → Generate Domain**. Open it — the game is live.
 
@@ -42,7 +42,7 @@ See Railway's [Create a Template](https://docs.railway.com/templates/create) and
 
 ## How it works
 
-- **One image** ([`Dockerfile.railway`](Dockerfile.railway)): builds `@rpg/shared` (tsc),
+- **One image** ([`Dockerfile.server`](Dockerfile.server)): builds `@rpg/shared` (tsc),
   builds the client with `VITE_SAME_ORIGIN=1`, and runs the Colyseus server via `tsx`.
 - **Same origin**: with `VITE_SAME_ORIGIN`, the client dials `wss://<the page's host>`
   ([`NetworkClient.ts`](packages/client/src/net/NetworkClient.ts)), which is the same

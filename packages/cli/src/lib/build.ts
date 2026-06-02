@@ -1,6 +1,7 @@
 // Prerequisite checks + the native (no-Docker) build pipeline. Mirrors the
-// recipe in Dockerfile.railway: pnpm install → build @rpg/shared → build the
-// client (same-origin by default, or against the public server subdomain). The
+// recipe in Dockerfile.server: pnpm install → build @rpg/shared → build the
+// client (same-origin for public one-host deploys, or against a local server
+// port for the optional direct client port). The
 // server then runs from TS via tsx (see commands/serve.ts) — `node dist/index.js`
 // is intentionally NOT used because tsc emits extensionless ESM imports Node's
 // loader rejects.
@@ -94,10 +95,10 @@ export function buildShared(appDir: string): void {
   runAsTargetUser("pnpm", ["--filter", "@rpg/shared", "build"], { cwd: appDir });
 }
 
-/** Build the client. With a `serverUrl` it bakes VITE_SERVER_URL so the bundle
- *  dials the public server subdomain (split-subdomain deploy); without one it
- *  builds same-origin so the client dials whatever host served the page (good
- *  for a local run before a tunnel exists). */
+/** Build the client. With a `serverUrl` it bakes VITE_SERVER_URL for legacy
+ *  split-subdomain deploys. With a `serverPort`, the local direct client port
+ *  dials ws://<host>:<serverPort>. With neither, it builds same-origin so the
+ *  public one-host deploy dials whichever host served the page. */
 export function buildClient(
   appDir: string,
   opts: { serverUrl?: string; serverPort?: number } = {},
@@ -105,12 +106,11 @@ export function buildClient(
   let env: Record<string, string>;
   let how: string;
   if (opts.serverUrl) {
-    // Cloudflare / explicit: dial this exact wss URL (the server subdomain).
+    // Legacy explicit build: dial this exact wss URL.
     env = { VITE_SERVER_URL: opts.serverUrl };
     how = `→ ${opts.serverUrl}`;
   } else if (opts.serverPort) {
-    // Two-port native: dial ws://<the page's own host>:<serverPort>, so the
-    // client works on its own port (and same-origin) with no baked hostname.
+    // Direct native client port: dial ws://<the page's own host>:<serverPort>.
     env = { VITE_SERVER_PORT: String(opts.serverPort) };
     how = `→ ws://<host>:${opts.serverPort}`;
   } else {
