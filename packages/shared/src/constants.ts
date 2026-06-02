@@ -106,10 +106,10 @@ export function statsForLevel(base: BaseStats, level: number): BaseStats {
 //   raw       = attacker.attack * random(1 ± ATTACK_VARIANCE)
 //   mitigated = raw * (1 - target.armor / (target.armor + ARMOR_K))
 //   on crit (chance = attacker.critChance): damage *= CRIT_MULTIPLIER
-export const ATTACK_VARIANCE = 0.15; // ±15% random roll per hit
+export const ATTACK_VARIANCE = 0.25; // ±15% random roll per hit
 export const ARMOR_K = 50; // armor mitigation constant (diminishing returns)
 export const CRIT_MULTIPLIER = 2.4; // critical-hit damage multiplier (+20%, was 2)
-export const CRIT_KNOCKBACK_DISTANCE = 8; // a crit blows the target back this far (≈2 seconds of travel)
+export const CRIT_KNOCKBACK_DISTANCE = 0.3; // a crit blows the target back this far (was 8, −35%, −25%, −30%)
 
 // Default combat stats per entity type.
 export const PLAYER_ATTACK = 58; // 2× base, then +20% melee damage (48 → 58)
