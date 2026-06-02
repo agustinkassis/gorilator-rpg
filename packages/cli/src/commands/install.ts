@@ -33,9 +33,9 @@ export async function install(opts: Options, version: string): Promise<void> {
   ensureAppDir(appDir, user);
   cloneOrUpdate(opts.repo, opts.ref, appDir);
   ensureEnv(appDir, user, opts.port, opts.clientPort);
-  // Two-port native build: the client dials ws://<its-host>:<server port>, so it
-  // works on its own port AND same-origin. `setup` rebuilds it for Cloudflare.
-  installAndBuild(appDir, { serverPort: opts.port });
+  // Default native build is one-port/same-origin. If --client-port is explicitly
+  // set, build the optional local client page to dial the server port.
+  installAndBuild(appDir, opts.clientPort ? { serverPort: opts.port } : {});
 
   if (opts.noService) {
     log.ok(`Build ready at ${appDir}. Service registration skipped (--skip-service).`);
@@ -49,7 +49,7 @@ export async function install(opts: Options, version: string): Promise<void> {
   saveConfig({
     appDir,
     port: opts.port,
-    clientPort: opts.clientPort,
+    clientPort: opts.clientPort || undefined,
     repo: opts.repo,
     ref: opts.ref,
     user,
@@ -79,7 +79,8 @@ function ensureEnv(appDir: string, user: string, port: number, clientPort: numbe
   }
   const body = renderEnv({
     GAME_SERVER_PORT: String(port),
-    CLIENT_PORT: String(clientPort),
+    CLIENT_PORT: clientPort ? String(clientPort) : "",
+    VITE_SAME_ORIGIN: clientPort ? "" : "1",
     MONITOR_USER: "admin",
     MONITOR_PASS: genSecret(),
     NOSTR_NSEC: generateNsec(),
@@ -114,7 +115,7 @@ function ensureGlobalCli(opts: Options): void {
 function printSummary(appDir: string, port: number, clientPort: number, healthy: boolean): void {
   process.stdout.write("\n");
   log.ok("🦍 Gorilator is installed and running natively (no Docker).");
-  const info = readEnvInfo(appDir, port, clientPort);
+  const info = readEnvInfo(appDir, port, clientPort || undefined);
   printPorts(info, healthy);
   process.stdout.write(`  Files  : ${appDir}\n`);
   process.stdout.write(

@@ -10,8 +10,8 @@ export interface SummaryInfo {
   clientPort?: number; // dedicated client web port (separate from the server port)
   monitorUser?: string;
   monitorPass?: string;
-  clientHost?: string; // public play.* (from .env CLIENT_HOSTNAME)
-  serverHost?: string; // public api.*  (from .env SERVER_HOSTNAME)
+  clientHost?: string; // legacy public play.* (from old split-host setups)
+  serverHost?: string; // public game host (or legacy api.*)
 }
 
 /** Read the listen port + monitor creds + public hostnames out of the install's
@@ -55,17 +55,22 @@ export function printPorts(info: SummaryInfo, healthy?: boolean): void {
   process.stdout.write(`  Monitor: http://localhost:${info.port}/colyseus${creds}\n`);
 }
 
-/** Print the public Cloudflare URLs when a tunnel has been configured (`setup`
- *  writes CLIENT_HOSTNAME/SERVER_HOSTNAME into .env). Returns whether anything
- *  was printed. */
+/** Print the public Cloudflare URLs when a tunnel has been configured. New
+ *  setups use one host for play + WSS + monitor; old split-host setups are
+ *  still displayed as split for clarity. Returns whether anything was printed. */
 export function printPublic(info: SummaryInfo): boolean {
   if (!info.clientHost && !info.serverHost) return false;
   process.stdout.write("\n");
-  if (info.clientHost) process.stdout.write(`  Play   : ${log.green(`https://${info.clientHost}`)}\n`);
-  if (info.serverHost) {
+  const creds = info.monitorUser ? `  (user ${info.monitorUser})` : "";
+  if (info.clientHost && info.serverHost && info.clientHost !== info.serverHost) {
+    process.stdout.write(`  Play   : ${log.green(`https://${info.clientHost}`)}\n`);
     process.stdout.write(`  Server : wss://${info.serverHost}\n`);
-    const creds = info.monitorUser ? `  (user ${info.monitorUser})` : "";
     process.stdout.write(`  Monitor: https://${info.serverHost}/colyseus${creds}\n`);
+  } else {
+    const host = info.serverHost || info.clientHost;
+    process.stdout.write(`  Play   : ${log.green(`https://${host}`)}\n`);
+    process.stdout.write(`  Server : wss://${host}\n`);
+    process.stdout.write(`  Monitor: https://${host}/colyseus${creds}\n`);
   }
   return true;
 }

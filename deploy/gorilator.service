@@ -1,5 +1,5 @@
 [Unit]
-Description=Gorilator RPG (Docker Compose stack)
+Description=Gorilator RPG (single-service Docker Compose stack)
 Documentation=https://github.com/agustinkassis/gorilator-rpg
 Requires=docker.service
 After=docker.service network-online.target

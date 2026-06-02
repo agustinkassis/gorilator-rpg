@@ -85,11 +85,10 @@ if (clientDist) {
   });
 }
 
-// Native two-port deploys: also serve the client bundle on its OWN port so the
-// game page is reachable directly (http://host:CLIENT_PORT) with no reverse proxy
-// or tunnel. The main server above still answers the WebSocket + monitor + API on
-// `port`; this is an additional, best-effort listener — a bind failure here logs
-// and is swallowed so it never takes the game server down.
+// Explicit legacy two-port deploys: also serve the client bundle on its own port.
+// The current production path keeps the client, WebSocket, monitor, API, and
+// health check on the main server port above. This extra listener is best-effort:
+// a bind failure logs and is swallowed so it never takes the game server down.
 const clientPort = Number(process.env.CLIENT_PORT) || 0;
 if (clientDist && clientPort && clientPort !== port) {
   const clientApp = express();

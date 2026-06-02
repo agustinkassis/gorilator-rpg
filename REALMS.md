@@ -53,7 +53,7 @@ and **updates it in place** — on every realm start/end and **every 30 minutes*
 {
   "v": 1,
   "name": "Gorilator NYC",
-  "url": "https://play.example.com",     // where to play
+  "url": "https://game.example.com",     // where to play
   "pubkey": "<hex server pubkey>",
   "totalRealms": 142,                    // realms ever started here
   "maxRounds": 23,                       // best wave ever reached
@@ -124,7 +124,7 @@ The current realm to **join** (or `null`), with the players already in it:
 
 ```jsonc
 {
-  "joinUrl": "https://play.example.com",
+  "joinUrl": "https://game.example.com",
   "current": { "id": "...", "startedAt": 0, "wave": 6, "players": 3, "npubs": ["<hex>"] },
   "last": { "id": "...", "wave": 11, "endReason": "home-fell", "npubs": ["<hex>"], ... }
 }

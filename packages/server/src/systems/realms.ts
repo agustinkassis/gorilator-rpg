@@ -285,7 +285,7 @@ class RealmTracker {
   }
 }
 
-/** The play URL: PLAY_URL wins; else derive https://<CLIENT_HOSTNAME>; else "". */
+/** The play URL: PLAY_URL wins; legacy CLIENT_HOSTNAME fallback is kept for old installs. */
 function resolvePlayUrl(): string {
   const explicit = process.env.PLAY_URL?.trim();
   if (explicit) return explicit;

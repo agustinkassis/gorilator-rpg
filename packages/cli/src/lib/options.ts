@@ -6,7 +6,7 @@ import { defaultAppDir } from "./paths.js";
 const DEFAULT_REPO = "https://github.com/agustinkassis/gorilator-rpg.git";
 const DEFAULT_REF = "main";
 const DEFAULT_PORT = 2567;
-const DEFAULT_CLIENT_PORT = 8080;
+const DEFAULT_CLIENT_PORT = 0;
 
 /** The subset of parseArgs values this CLI consumes. */
 export interface RawFlags {

@@ -17,9 +17,9 @@ export interface InstallConfig {
   ref: string;
   user: string;
   serviceManager: string;
-  /** Public client hostname (the `play.*` subdomain), set by `gorilator setup`. */
+  /** Legacy public client hostname from old split-host setups. */
   clientHost?: string;
-  /** Public server hostname (the `api.*` subdomain), set by `gorilator setup`. */
+  /** Public game hostname set by `gorilator setup` (default `game.*`). */
   serverHost?: string;
 }
 
