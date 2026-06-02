@@ -11,6 +11,8 @@ import { writeFileMaybeSudo } from "./proc.js";
 export interface InstallConfig {
   appDir: string;
   port: number;
+  /** Dedicated port the client page is served on (separate from the server port). */
+  clientPort?: number;
   repo: string;
   ref: string;
   user: string;

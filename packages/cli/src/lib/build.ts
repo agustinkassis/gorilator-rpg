@@ -98,11 +98,26 @@ export function buildShared(appDir: string): void {
  *  dials the public server subdomain (split-subdomain deploy); without one it
  *  builds same-origin so the client dials whatever host served the page (good
  *  for a local run before a tunnel exists). */
-export function buildClient(appDir: string, opts: { serverUrl?: string } = {}): void {
-  const env = opts.serverUrl ? { VITE_SERVER_URL: opts.serverUrl } : { VITE_SAME_ORIGIN: "1" };
-  log.info(
-    opts.serverUrl ? `Building the client → ${opts.serverUrl}…` : "Building the client (same-origin)…",
-  );
+export function buildClient(
+  appDir: string,
+  opts: { serverUrl?: string; serverPort?: number } = {},
+): void {
+  let env: Record<string, string>;
+  let how: string;
+  if (opts.serverUrl) {
+    // Cloudflare / explicit: dial this exact wss URL (the server subdomain).
+    env = { VITE_SERVER_URL: opts.serverUrl };
+    how = `→ ${opts.serverUrl}`;
+  } else if (opts.serverPort) {
+    // Two-port native: dial ws://<the page's own host>:<serverPort>, so the
+    // client works on its own port (and same-origin) with no baked hostname.
+    env = { VITE_SERVER_PORT: String(opts.serverPort) };
+    how = `→ ws://<host>:${opts.serverPort}`;
+  } else {
+    env = { VITE_SAME_ORIGIN: "1" };
+    how = "(same-origin)";
+  }
+  log.info(`Building the client ${how}…`);
   runAsTargetUser("pnpm", ["--filter", "@rpg/client", "build"], { cwd: appDir, env });
 }
 
@@ -125,7 +140,10 @@ export function buildCli(appDir: string): void {
 
 /** Full native build: deps + shared + client + cli. `serverUrl` controls how the
  *  client is built (see buildClient). */
-export function installAndBuild(appDir: string, opts: { serverUrl?: string } = {}): void {
+export function installAndBuild(
+  appDir: string,
+  opts: { serverUrl?: string; serverPort?: number } = {},
+): void {
   pnpmInstall(appDir);
   buildShared(appDir);
   buildClient(appDir, opts);

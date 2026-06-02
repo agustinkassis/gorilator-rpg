@@ -85,6 +85,27 @@ if (clientDist) {
   });
 }
 
+// Native two-port deploys: also serve the client bundle on its OWN port so the
+// game page is reachable directly (http://host:CLIENT_PORT) with no reverse proxy
+// or tunnel. The main server above still answers the WebSocket + monitor + API on
+// `port`; this is an additional, best-effort listener — a bind failure here logs
+// and is swallowed so it never takes the game server down.
+const clientPort = Number(process.env.CLIENT_PORT) || 0;
+if (clientDist && clientPort && clientPort !== port) {
+  const clientApp = express();
+  clientApp.use(express.static(clientDist));
+  clientApp.get("*", (_req: Request, res: Response) =>
+    res.sendFile(join(clientDist, "index.html")),
+  );
+  createServer(clientApp)
+    .listen(clientPort, () =>
+      console.log(`[client] serving game page on http://localhost:${clientPort}`),
+    )
+    .on("error", (err: NodeJS.ErrnoException) =>
+      console.error(`[client] could not bind port ${clientPort}: ${err.message} (server still on ${port})`),
+    );
+}
+
 const httpServer = createServer(app);
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),

@@ -19,6 +19,8 @@ export function serve(opts: Options): void {
   const ef = envFile(appDir);
   if (existsSync(ef)) Object.assign(env, parseEnv(readFileSync(ef, "utf8")));
   env.CLIENT_DIST = clientDist(appDir);
+  // Serve the client on its own port too (the server opens a second listener).
+  if (!env.CLIENT_PORT && cfg?.clientPort) env.CLIENT_PORT = String(cfg.clientPort);
   if (opts.portExplicit) env.GAME_SERVER_PORT = String(opts.port);
   else if (!env.GAME_SERVER_PORT) env.GAME_SERVER_PORT = String(opts.port);
 

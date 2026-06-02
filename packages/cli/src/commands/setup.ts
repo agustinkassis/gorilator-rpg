@@ -33,6 +33,7 @@ export async function runSetup(opts: Options): Promise<void> {
   const cfg = loadConfig();
   const appDir = cfg?.appDir ?? opts.appDir;
   const port = cfg?.port ?? opts.port;
+  const clientPort = cfg?.clientPort ?? opts.clientPort;
   const user = cfg?.user ?? targetUser();
 
   log.info("Configuring the Cloudflare tunnel (two subdomains → the game port).");
@@ -46,7 +47,7 @@ export async function runSetup(opts: Options): Promise<void> {
     clientHost = clientHost || promptDefault("  Client subdomain", `play.${base}`);
     serverHost = serverHost || promptDefault("  Server subdomain", `api.${base}`);
   }
-  log.ok(`Tunneling: ${clientHost} → :${port} (client),  ${serverHost} → :${port} (server WebSocket)`);
+  log.ok(`Tunneling: ${clientHost} → :${clientPort} (client page),  ${serverHost} → :${port} (server WebSocket)`);
 
   // --- cloudflared: install, authorize, create/find tunnel, config, DNS, run ---
   ensureCloudflared();
@@ -67,7 +68,7 @@ export async function runSetup(opts: Options): Promise<void> {
   }
   if (!id) log.die("Could not determine the tunnel id.");
 
-  writeTunnelConfig(id, clientHost, serverHost, port);
+  writeTunnelConfig(id, clientHost, clientPort, serverHost, port);
   log.info("Creating DNS routes…");
   routeDns(clientHost);
   routeDns(serverHost);

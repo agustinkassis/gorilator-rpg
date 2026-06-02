@@ -88,9 +88,13 @@ export function createTunnel(name = TUNNEL_NAME): void {
 
 /** Render the ingress config: every hostname maps to the single local game port
  *  (one native process serves both the client page and the WebSocket). */
-function renderConfig(id: string, credsPath: string, hosts: string[], port: number): string {
-  const ingress = hosts
-    .map((h) => `  - hostname: ${h}\n    service: http://localhost:${port}`)
+function renderConfig(
+  id: string,
+  credsPath: string,
+  routes: { host: string; port: number }[],
+): string {
+  const ingress = routes
+    .map((r) => `  - hostname: ${r.host}\n    service: http://localhost:${r.port}`)
     .join("\n");
   return `tunnel: ${id}
 credentials-file: ${credsPath}
@@ -104,8 +108,9 @@ ${ingress}
 export function writeTunnelConfig(
   id: string,
   clientHost: string,
+  clientPort: number,
   serverHost: string,
-  port: number,
+  serverPort: number,
 ): void {
   const credsSrc = join(homedir(), ".cloudflared", `${id}.json`);
   const dir = cloudflaredDir();
@@ -117,7 +122,14 @@ export function writeTunnelConfig(
     runPrivileged("cp", [credsSrc, credsPath]);
   }
   log.info(`Writing ${join(dir, "config.yml")}…`);
-  writeFileMaybeSudo(join(dir, "config.yml"), renderConfig(id, credsPath, [clientHost, serverHost], port), 0o644);
+  writeFileMaybeSudo(
+    join(dir, "config.yml"),
+    renderConfig(id, credsPath, [
+      { host: clientHost, port: clientPort }, // play.* → the client web port
+      { host: serverHost, port: serverPort }, // api.*  → the server (WebSocket) port
+    ]),
+    0o644,
+  );
 }
 
 /** Point a hostname's DNS at the tunnel (idempotent; warns if it already exists). */

@@ -7,6 +7,7 @@ import { envFile } from "./paths.js";
 
 export interface SummaryInfo {
   port: number;
+  clientPort?: number; // dedicated client web port (separate from the server port)
   monitorUser?: string;
   monitorPass?: string;
   clientHost?: string; // public play.* (from .env CLIENT_HOSTNAME)
@@ -19,8 +20,10 @@ export function readEnvInfo(appDir: string, fallbackPort: number): SummaryInfo {
   const ef = envFile(appDir);
   const e = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
   const port = Number(e.GAME_SERVER_PORT) || fallbackPort;
+  const clientPort = Number(e.CLIENT_PORT) || undefined;
   return {
     port,
+    clientPort,
     monitorUser: e.MONITOR_USER,
     monitorPass: e.MONITOR_PASS,
     clientHost: e.CLIENT_HOSTNAME,
@@ -31,7 +34,12 @@ export function readEnvInfo(appDir: string, fallbackPort: number): SummaryInfo {
 /** Print the local port the daemon listens on (client page + WebSocket + monitor
  *  share it). Pass `healthy` to also show the /healthz result. */
 export function printPorts(info: SummaryInfo, healthy?: boolean): void {
-  process.stdout.write(`  Local  : http://localhost:${info.port}  (game client + WebSocket)\n`);
+  if (info.clientPort && info.clientPort !== info.port) {
+    process.stdout.write(`  Client : http://localhost:${info.clientPort}  (game page)\n`);
+    process.stdout.write(`  Server : http://localhost:${info.port}  (WebSocket + monitor + API)\n`);
+  } else {
+    process.stdout.write(`  Local  : http://localhost:${info.port}  (game client + WebSocket)\n`);
+  }
   if (healthy !== undefined) {
     const tag = healthy ? log.green("(ok)") : log.yellow("(starting…)");
     process.stdout.write(`  Health : http://localhost:${info.port}/healthz  ${tag}\n`);

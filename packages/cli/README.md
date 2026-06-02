@@ -18,10 +18,11 @@ This will:
 
 1. Check prerequisites (Node ≥ 20.6, `git`, `pnpm` — installing `pnpm@10.14.0` if missing).
 2. Clone the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
-3. `pnpm install`, build the shared schema, build the client for same-origin play, and build this CLI.
-4. Generate `.env` (listen port, monitor credentials, a stable Nostr signing key).
-5. Register and start a service that runs the game on one port (client **and** multiplayer WebSocket).
-6. Put `gorilator` on your `PATH` and print the local URL, `/healthz`, and the monitor credentials.
+3. `pnpm install`, build the shared schema, build the client (to dial the server port), and build this CLI.
+4. Generate `.env` (server + client ports, monitor credentials, a stable Nostr signing key).
+5. Register and start a service that serves the game on **two ports** — the client page on its own web port
+   and the server (WebSocket + monitor + API) on another — both reachable directly, no proxy needed.
+6. Put `gorilator` on your `PATH` and print the client + server ports and the monitor credentials.
 
 On a **bare box with no Node yet**, bootstrap everything (installs git + Node, then runs the above):
 
@@ -38,15 +39,17 @@ gorilator setup
 Prompts for a base domain and two subdomains (defaults `play.<domain>` + `api.<domain>`), then:
 
 1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for both hosts.
-2. Writes an ingress that points **both** subdomains at the one local game port.
+2. Writes an ingress that routes `play.<domain>` → the client port and `api.<domain>` → the server port.
 3. Bakes the server subdomain into the client bundle (`VITE_SERVER_URL=wss://api.<domain>`), **rebuilds the
    client**, and restarts the daemon — so the client and server work together over HTTPS/WSS.
 4. Runs `cloudflared` as a boot service and prints your public URLs.
 
 ```
-Browser ── https ──▶ Cloudflare ──┬─▶ play.<domain> ─┐
-                                  └─▶ api.<domain>  ─┴─▶ localhost:<port>  (one native process:
-                                                                            client page + WebSocket)
+Direct:      http://host:8080   client page          ┐ one native process,
+             ws://host:2567     server (WebSocket)    ┘ two listeners
+
+Cloudflare ─▶ play.<domain> ─▶ localhost:8080   (client page)
+           ─▶ api.<domain>  ─▶ localhost:2567   (server: WebSocket + monitor + API)
 ```
 
 ## Manage the daemon
@@ -79,7 +82,8 @@ gorilator uninstall   # stop and remove the service (your files stay)
 | `--repo <url>` | `GORILATOR_REPO` | `https://github.com/agustinkassis/gorilator-rpg.git` | Game source repository |
 | `--ref <ref>` | `GORILATOR_REF` | `main` | Branch or tag to deploy |
 | `--dir <path>` | `GORILATOR_DIR` | `/opt/gorilator` · `~/.gorilator/app` | Where the game is cloned |
-| `--port <n>` | `GAME_SERVER_PORT` | `2567` | Port the daemon listens on |
+| `--port <n>` | `GAME_SERVER_PORT` | `2567` | Server port (WebSocket + monitor + API) |
+| `--client-port <n>` | `CLIENT_PORT` | `8080` | Dedicated port the client page is served on |
 | `--yes` | `GORILATOR_YES=1` | — | Assume "yes" to prompts (non-interactive) |
 | `--skip-service` | — | — | Install/build only; don't register the OS service |
 | `--skip-tunnel` | — | — | Don't offer the Cloudflare setup after install |

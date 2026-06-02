@@ -17,7 +17,12 @@ export function update(): void {
   // .env, rebuild the client against it so the public bundle survives updates.
   const ef = envFile(cfg.appDir);
   const env = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
-  installAndBuild(cfg.appDir, { serverUrl: env.VITE_SERVER_URL });
+  // Preserve how the client was built: Cloudflare (VITE_SERVER_URL baked) or the
+  // two-port native default (dial the server port on the page's own host).
+  installAndBuild(
+    cfg.appDir,
+    env.VITE_SERVER_URL ? { serverUrl: env.VITE_SERVER_URL } : { serverPort: cfg.port },
+  );
   log.info("Restarting the daemon…");
   try {
     restartService();
