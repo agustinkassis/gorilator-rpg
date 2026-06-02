@@ -1,3 +1,4 @@
+import "./webcrypto";
 import WebSocket from "ws";
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { finalizeEvent } from "nostr-tools/pure";

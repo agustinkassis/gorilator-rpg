@@ -7,7 +7,7 @@
 //   gorilator status | info | logs         inspect it
 //   gorilator update                       stop services, git pull, rebuild, start services
 //   gorilator tunnel <login|status|restart>  manage the Cloudflare tunnel
-//   gorilator uninstall                    remove the service (keeps files)
+//   gorilator uninstall                    stop and remove Gorilator from this machine
 //   gorilator serve                        internal: the supervised foreground process
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -38,7 +38,7 @@ function usage(): void {
 Usage: gorilator <command> [options]
 
   install            Clone the game, build it, run it as a service, put 'gorilator' on PATH
-  setup              Configure a Cloudflare tunnel + public hostname, rebuild the client
+  setup              Open the setup menu: server ports, NSEC, Cloudflare, env settings
   start              Start the daemon (prints the port it listens on)
   stop               Stop the daemon
   restart            Restart the daemon
@@ -46,7 +46,7 @@ Usage: gorilator <command> [options]
   logs               Stream the server logs (Ctrl-C to detach)
   update             Stop services, git pull, rebuild, start services
   tunnel <cmd>       Manage the Cloudflare tunnel — login | status | restart
-  uninstall          Stop and remove the service (your files are kept)
+  uninstall          Stop and remove Gorilator services, config, global command, and installed files
   serve              Run the server in the foreground (used by the service)
   version            Print the version
 
@@ -60,6 +60,11 @@ Options (install):
   --skip-service     Clone + build only; don't register the OS service
   --skip-tunnel      Don't offer the Cloudflare setup after install
   --local-cli <pkg>  Install the global command from a local path/tarball (testing)
+
+Options (uninstall):
+  --keep-files       Stop services/config, but keep the installed app directory
+  --keep-command     Keep the global npm 'gorilator' command
+  --keep-tunnel      Keep the local cloudflared service/config
 `);
 }
 
@@ -76,6 +81,9 @@ async function main(): Promise<void> {
       "skip-service": { type: "boolean" },
       "skip-tunnel": { type: "boolean" },
       "local-cli": { type: "string" },
+      "keep-files": { type: "boolean" },
+      "keep-command": { type: "boolean" },
+      "keep-tunnel": { type: "boolean" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },

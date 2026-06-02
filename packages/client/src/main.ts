@@ -26,7 +26,7 @@ import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
 import { HomeBar } from "./ui/homeBar";
 import { GameMenu } from "./ui/gameMenu";
-import { NetworkClient } from "./net/NetworkClient";
+import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
 import { setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
@@ -215,103 +215,107 @@ async function start() {
   // world assets already available instead of popping in after the cut.
   const preload = buildAssetPreload();
 
-  // Wait for the player to commit: a name, and optionally a verified Nostr id.
-  // Progress persistence is fully server-side now: the server signs/owns each
-  // Nostr player's save (kind 30078) and recovers it on join — the client only
-  // proves the pubkey. A duplicate login is kicked by the server (the takeover
-  // close code, handled in NetworkClient.onLeave).
-  const creds = await splash.awaitCredentials();
-
-  // Make sure every known asset task has settled before we reveal the world. A
-  // preload failure isn't fatal — the model builders fall back gracefully — so
-  // this waits for completion without stranding the player on a missing GLB.
-  preload.setJoining();
-  await preload.done;
-  splash.setAssetProgress(100, "assets ready", "ready");
-
-  // Connect (passing the chosen name) in the background while the launch plays.
-  const connected = net.connect(
-    {
-      onConnected: (id) => {
-        game.setLocalId(id);
-        statusEl.textContent = "connected";
-      },
-      onPlayerAdd: (p, id) => {
-        game.addPlayer(p, id);
-      },
-      onPlayerChange: (p, id) => game.changePlayer(p, id),
-      onPlayerRemove: (id) => game.removePlayer(id),
-      onEnemyAdd: (e, id) => game.addEnemy(e, id),
-      onEnemyChange: (e, id) => game.changeEnemy(e, id),
-      onEnemyRemove: (id) => game.removeEnemy(id),
-      onPotionAdd: (p, id) => game.addPotion(p, id),
-      onPotionRemove: (id) => game.removePotion(id),
-      onTreeAdd: (t, id) => game.addTree(t, id),
-      onTreeChange: (t, id) => game.changeTree(t, id),
-      onTreeRemove: (id) => game.removeTree(id),
-      onLogAdd: (l, id) => game.addLog(l, id),
-      onLogRemove: (id) => game.removeLog(id),
-      onRockAdd: (r, id) => game.addRock(r, id),
-      onRockChange: (r, id) => game.changeRock(r, id),
-      onRockRemove: (id) => game.removeRock(id),
-      onStoneAdd: (s, id) => game.addStone(s, id),
-      onStoneRemove: (id) => game.removeStone(id),
-      onBananaAdd: (b, id) => game.addBanana(b, id),
-      onBananaRemove: (id) => game.removeBanana(id),
-      onHouseAdd: (h, id) => game.addHouse(h, id),
-      onHouseChange: (h, id) => game.changeHouse(h, id),
-      onHouseRemove: (id) => game.removeHouse(id),
-      onBananaThrow: (ev) => game.showBananaThrow(ev),
-      onDamage: (ev) => game.onDamage(ev),
-      onHeal: (ev) => game.onHeal(ev),
-      onXp: (ev) => game.onXp(ev),
-      onChat: (ev) => {
-        game.showChatBubble(ev.playerId, ev.text); // bubble over the speaker
-        // Nostr senders carry an avatar + verified flag on their synced Player —
-        // pass them so the log shows their picture and gives the line more room.
-        const sender = net.room?.state.players.get(ev.playerId);
-        chat.add(ev.name, ev.text, ev.playerId === game.localId, {
-          picture: sender?.picture ?? "",
-          nostrVerified: sender?.nostrVerified ?? false,
-        }); // log on the right
-      },
-      onInventory: (slots) => {
-        inventory.setInventory(slots);
-        hotkeyBar.setInventory(slots);
-      },
-      onWipe: (ev) => homeBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
-      onError: (message) => {
-        statusEl.textContent = message;
-        console.warn("[net]", message);
-      },
+  const handlers: NetHandlers = {
+    onConnected: (id) => {
+      game.setLocalId(id);
+      statusEl.textContent = "connected";
     },
-    {
-      name: creds.name,
-      // Only the signed auth + profile go to the server; it owns the save.
-      nostr: creds.nostr
-        ? { auth: creds.nostr.auth, profile: creds.nostr.profile }
-        : undefined,
+    onPlayerAdd: (p, id) => {
+      game.addPlayer(p, id);
     },
-  );
-  // Don't let a failed connect reject before the animation finishes — surface it
-  // on the status line and reveal the world anyway. A Nostr verification failure
-  // carries its own reason; anything else reads as the server being down.
-  connected.catch((err) => {
-    console.error(err);
-    const msg = err instanceof Error ? err.message : String(err);
-    statusEl.textContent = /nostr/i.test(msg)
-      ? msg
-      : "offline — is the server running? (pnpm dev)";
-  });
+    onPlayerChange: (p, id) => game.changePlayer(p, id),
+    onPlayerRemove: (id) => game.removePlayer(id),
+    onEnemyAdd: (e, id) => game.addEnemy(e, id),
+    onEnemyChange: (e, id) => game.changeEnemy(e, id),
+    onEnemyRemove: (id) => game.removeEnemy(id),
+    onPotionAdd: (p, id) => game.addPotion(p, id),
+    onPotionRemove: (id) => game.removePotion(id),
+    onTreeAdd: (t, id) => game.addTree(t, id),
+    onTreeChange: (t, id) => game.changeTree(t, id),
+    onTreeRemove: (id) => game.removeTree(id),
+    onLogAdd: (l, id) => game.addLog(l, id),
+    onLogRemove: (id) => game.removeLog(id),
+    onRockAdd: (r, id) => game.addRock(r, id),
+    onRockChange: (r, id) => game.changeRock(r, id),
+    onRockRemove: (id) => game.removeRock(id),
+    onStoneAdd: (s, id) => game.addStone(s, id),
+    onStoneRemove: (id) => game.removeStone(id),
+    onBananaAdd: (b, id) => game.addBanana(b, id),
+    onBananaRemove: (id) => game.removeBanana(id),
+    onHouseAdd: (h, id) => game.addHouse(h, id),
+    onHouseChange: (h, id) => game.changeHouse(h, id),
+    onHouseRemove: (id) => game.removeHouse(id),
+    onBananaThrow: (ev) => game.showBananaThrow(ev),
+    onDamage: (ev) => game.onDamage(ev),
+    onHeal: (ev) => game.onHeal(ev),
+    onXp: (ev) => game.onXp(ev),
+    onChat: (ev) => {
+      game.showChatBubble(ev.playerId, ev.text); // bubble over the speaker
+      // Nostr senders carry an avatar + verified flag on their synced Player —
+      // pass them so the log shows their picture and gives the line more room.
+      const sender = net.room?.state.players.get(ev.playerId);
+      chat.add(ev.name, ev.text, ev.playerId === game.localId, {
+        picture: sender?.picture ?? "",
+        nostrVerified: sender?.nostrVerified ?? false,
+      }); // log on the right
+    },
+    onInventory: (slots) => {
+      inventory.setInventory(slots);
+      hotkeyBar.setInventory(slots);
+    },
+    onWipe: (ev) => homeBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
+    onError: (message) => {
+      statusEl.textContent = message;
+      console.warn("[net]", message);
+    },
+  };
 
-  // Cinematic hand-off: the gorilla slams, the camera punches in and a white
-  // flash masks the cut from the splash scene to the live game world.
-  await splash.playLaunch();
-  splash.dispose();
+  while (true) {
+    // Wait for the player to commit: a name, and optionally a verified Nostr id.
+    // Progress persistence is fully server-side now: the server signs/owns each
+    // Nostr player's save (kind 30078) and recovers it on join — the client only
+    // proves the pubkey. A duplicate login is kicked by the server (the takeover
+    // close code, handled in NetworkClient.onLeave).
+    const creds = await splash.awaitCredentials();
 
-  // The world is live: show the music/mute widget and start the ambient bed.
-  new AudioControls(audio);
-  audio.startMusic();
+    // Make sure every known asset task has settled before we reveal the world. A
+    // preload failure isn't fatal — the model builders fall back gracefully — so
+    // this waits for completion without stranding the player on a missing GLB.
+    preload.setJoining();
+    await preload.done;
+    splash.setAssetProgress(100, "joining realm", "joining");
+
+    try {
+      await net.connect(handlers, {
+        name: creds.name,
+        // Only the signed auth + profile go to the server; it owns the save.
+        nostr: creds.nostr
+          ? { auth: creds.nostr.auth, profile: creds.nostr.profile }
+          : undefined,
+      });
+    } catch (err) {
+      console.error(err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const visibleMsg = /nostr/i.test(msg)
+        ? msg
+        : `offline — ${msg}`;
+      statusEl.textContent = visibleMsg;
+      splash.showJoinError(visibleMsg);
+      continue;
+    }
+
+    splash.setAssetProgress(100, "realm ready", "ready");
+
+    // Cinematic hand-off: the gorilla slams, the camera punches in and a white
+    // flash masks the cut from the splash scene to the live game world.
+    await splash.playLaunch();
+    splash.dispose();
+
+    // The world is live: show the music/mute widget and start the ambient bed.
+    new AudioControls(audio);
+    audio.startMusic();
+    return;
+  }
 }
 
 start().catch((err) => {

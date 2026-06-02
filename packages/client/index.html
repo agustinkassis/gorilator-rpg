@@ -520,7 +520,7 @@
       }
 
       /* ============================================================
-         Intro / character-select splash
+         Intro splash
          ============================================================ */
       /* Keep the in-game HUD hidden until the player launches into the arena. */
       body.preGame #hint,
@@ -530,7 +530,17 @@
       body.preGame #staminaBar,
       body.preGame #xpLevelUp,
       body.preGame #playerBadge,
-      body.preGame #invBtn { display: none !important; }
+      body.preGame #invBtn,
+      body.preGame #propImportBtn,
+      body.preGame #propImporterPanel,
+      body.preGame #devModeBtn,
+      body.preGame #devAddModelBtn,
+      body.preGame #devEntitiesBtn,
+      body.preGame #devModeBanner,
+      body.preGame #devTimeBar,
+      body.preGame #devPropLibraryPanel,
+      body.preGame #charImportBtn,
+      body.preGame #charImporterPanel { display: none !important; }
 
       /* Tiny always-on version tag, pinned to the bottom-right corner — above the
          splash + HUD, and never intercepts clicks. */
@@ -591,36 +601,52 @@
       #splashTop {
         position: relative;
         margin-top: 6vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         text-align: center;
       }
       #splashTitle {
-        font: 800 clamp(40px, 8vw, 72px) / 1 Georgia, "Times New Roman", serif;
-        letter-spacing: 6px;
-        color: #ffd479;
+        display: inline-block;
+        padding: 4px 12px 6px;
+        font: 1000 clamp(54px, 10vw, 110px) / 0.86 Impact, Haettenschweiler, "Arial Black", system-ui, sans-serif;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        color: #ffe457;
+        background: #111014;
+        border: 4px solid #ffe457;
+        box-shadow:
+          7px 7px 0 #f04b22,
+          14px 14px 0 #050507;
+        -webkit-text-stroke: 2px #050507;
         text-shadow:
-          0 2px 10px rgba(0, 0, 0, 0.85),
-          0 0 28px rgba(180, 60, 0, 0.55),
-          0 0 64px rgba(120, 20, 0, 0.4);
+          3px 0 0 #050507,
+          0 3px 0 #050507;
+        transform: rotate(-1.5deg) skewX(-6deg);
       }
       #splashSub {
-        margin-top: 12px;
-        font: 600 clamp(12px, 1.6vw, 16px) system-ui, sans-serif;
-        letter-spacing: 3px;
+        display: inline-block;
+        margin-top: 10px;
+        padding: 5px 10px 6px;
+        font: 900 clamp(13px, 1.7vw, 18px) / 1 Impact, Haettenschweiler, "Arial Black", system-ui, sans-serif;
+        letter-spacing: 0;
         text-transform: uppercase;
-        color: #c9a36a;
-        opacity: 0.85;
+        color: #050507;
+        background: #f0e6d2;
+        border: 3px solid #050507;
+        box-shadow: 5px 5px 0 #f04b22;
+        transform: rotate(1deg);
       }
 
       #splashBottom {
         position: relative;
         width: 100%;
-        /* Shared width for every control row below, so the cards, the name+ENTER
-           row and the Nostr button all line up to the same left/right edges. */
+        /* Shared width for the name and action rows so their edges line up. */
         --ctl-w: 460px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 18px;
+        gap: 12px;
         padding: 5vh 16px 4vh;
         background: linear-gradient(
           180deg,
@@ -630,71 +656,6 @@
         );
       }
 
-      #charRow {
-        display: flex;
-        gap: 16px;
-        width: 100%;
-        max-width: var(--ctl-w);
-      }
-      .charCard {
-        pointer-events: auto;
-        flex: 1 1 0; /* the cards share the row equally → fill the full width */
-        min-width: 0;
-        padding: 12px 10px;
-        text-align: center;
-        /* Glassmorphism: a warm-tinted frosted pane that blurs the hero behind it
-           (a diagonal sheen + a light top edge sell the "glass"). */
-        background: linear-gradient(150deg, rgba(255, 236, 205, 0.14), rgba(30, 21, 14, 0.34));
-        backdrop-filter: blur(10px) saturate(1.3);
-        -webkit-backdrop-filter: blur(10px) saturate(1.3);
-        border: 1px solid rgba(255, 224, 178, 0.22);
-        border-radius: 14px;
-        box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.16);
-        cursor: pointer;
-        transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-      }
-      .charCard:not(.locked):hover {
-        transform: translateY(-3px);
-        border-color: rgba(255, 224, 178, 0.4);
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-      }
-      .charCard.selected {
-        border-color: rgba(255, 212, 121, 0.9);
-        background: linear-gradient(150deg, rgba(255, 226, 170, 0.2), rgba(48, 32, 14, 0.4));
-        box-shadow:
-          0 0 0 1px rgba(255, 212, 121, 0.55),
-          0 10px 28px rgba(0, 0, 0, 0.5),
-          0 0 26px rgba(255, 170, 40, 0.35),
-          inset 0 1px 0 rgba(255, 255, 255, 0.2);
-      }
-      .charCard.locked {
-        opacity: 0.6;
-        filter: grayscale(0.45);
-        cursor: not-allowed;
-      }
-      .charArt {
-        font-size: 40px;
-        line-height: 1;
-        filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.6));
-      }
-      .charName {
-        margin-top: 8px;
-        font: 700 14px system-ui, sans-serif;
-        color: #f0e6d2;
-      }
-      .charTag {
-        margin-top: 2px;
-        font: 600 11px system-ui, sans-serif;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        color: #9b8a6a;
-      }
-      .charCard.selected .charTag {
-        color: #ffce73;
-      }
-      .charCard.nudge {
-        animation: splashNudge 0.4s ease;
-      }
       @keyframes splashNudge {
         0%, 100% { transform: translateX(0); }
         20% { transform: translateX(-6px); }
@@ -703,33 +664,57 @@
 
       #nameWrap {
         display: flex;
-        gap: 10px;
         pointer-events: auto;
         width: 100%;
         max-width: var(--ctl-w);
       }
+      #nameWrap,
+      #actionRow,
+      #nostrStatus,
+      #splashHint {
+        transform: translateY(-34px);
+      }
       #nameInput {
-        flex: 1 1 auto; /* grow to fill the row beside the ENTER button */
+        box-sizing: border-box;
+        flex: 1 1 auto;
+        width: 100%;
+        height: 80px;
         min-width: 0;
-        padding: 12px 14px;
-        font: 600 16px system-ui, sans-serif;
+        padding: 0 22px;
+        font: 800 22px system-ui, sans-serif;
+        text-align: center;
         color: #fff;
-        background: rgba(8, 6, 10, 0.85);
-        border: 2px solid #6b4f2e;
-        border-radius: 10px;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 212, 121, 0.04)),
+          rgba(8, 6, 10, 0.34);
+        backdrop-filter: blur(18px) saturate(1.45);
+        -webkit-backdrop-filter: blur(18px) saturate(1.45);
+        border: 1px solid rgba(255, 212, 121, 0.55);
+        border-radius: 12px;
         outline: none;
+        box-shadow:
+          0 16px 42px rgba(0, 0, 0, 0.52),
+          inset 0 1px 0 rgba(255, 255, 255, 0.2),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.48);
         transition: border-color 0.2s, box-shadow 0.2s;
       }
-      #nameInput::placeholder { color: #7a6a4e; }
+      #nameInput::placeholder { color: rgba(240, 230, 210, 0.62); }
       #nameInput:focus {
         border-color: #ffd479;
-        box-shadow: 0 0 0 1px #ffd479, 0 0 18px rgba(255, 170, 40, 0.25);
+        box-shadow:
+          0 0 0 1px #ffd479,
+          0 18px 46px rgba(0, 0, 0, 0.56),
+          0 0 30px rgba(255, 170, 40, 0.35),
+          inset 0 1px 0 rgba(255, 255, 255, 0.24),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.48);
       }
       #nameInput.shake {
         animation: splashNudge 0.4s ease;
         border-color: #c9302c;
       }
       #enterBtn {
+        flex: 7 1 0;
+        min-width: 0;
         padding: 12px 22px;
         font: 800 16px system-ui, sans-serif;
         letter-spacing: 1.5px;
@@ -884,20 +869,20 @@
       @keyframes assetShimmer { to { background-position: -210% 0; } }
 
       /* ---- Nostr login ---- */
-      #nostrRow {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
+      #actionRow {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) max-content;
+        gap: 10px;
         pointer-events: auto;
         width: 100%;
         max-width: var(--ctl-w);
       }
       #nostrBtn {
-        width: 100%; /* full-width CTA, aligned with the rows above */
-        padding: 10px 18px;
-        font: 700 14px system-ui, sans-serif;
-        letter-spacing: 0.5px;
+        min-width: 0;
+        padding: 12px 14px;
+        font: 800 12px system-ui, sans-serif;
+        letter-spacing: 0;
+        white-space: nowrap;
         color: #e8d9ff;
         background: linear-gradient(#3a2358, #241338);
         border: 2px solid #6b3fa0;
@@ -1098,9 +1083,8 @@
       #nhDisconnect:hover { color: #d7c4a0; text-decoration: underline; }
 
       /* ---- Nostr connect progress: terminal log + smooth shimmer bar ---- */
-      #splash.connecting #charRow,
       #splash.connecting #nameWrap,
-      #splash.connecting #nostrRow,
+      #splash.connecting #actionRow,
       #splash.connecting #splashHint { display: none; }
       #nostrProgress {
         display: none;
@@ -1179,11 +1163,12 @@
       @keyframes npShimmer { to { background-position: -200% 0; } }
 
       #nostrStatus {
+        width: 100%;
         font: 600 12px system-ui, sans-serif;
         color: #c79a9a;
         min-height: 14px;
         text-align: center;
-        max-width: 90vw;
+        max-width: min(var(--ctl-w), 90vw);
       }
       #nostrStatus.busy { color: #b79de0; }
 
@@ -1235,9 +1220,9 @@
   </head>
   <body class="preGame">
     <canvas id="renderCanvas"></canvas>
-    <!-- Intro / character-select splash. The gorilla itself is rendered by WebGL
+    <!-- Intro splash. The gorilla itself is rendered by WebGL
          on the canvas behind this overlay (see ui/splash.ts); this layer holds the
-         title, the champion roster, the name prompt and the launch FX. -->
+         title, the name prompt and the launch FX. -->
     <div id="splash">
       <div id="splashVignette"></div>
       <div id="splashTop">
@@ -1252,23 +1237,6 @@
         <div id="assetTrack"><div id="assetBar"></div></div>
       </div>
       <div id="splashBottom">
-        <div id="charRow">
-          <div class="charCard selected" data-char="gorilla">
-            <div class="charArt">🦍</div>
-            <div class="charName">Red Gorilla</div>
-            <div class="charTag">La Crypta</div>
-          </div>
-          <div class="charCard locked">
-            <div class="charArt">?</div>
-            <div class="charName">Coming soon</div>
-            <div class="charTag">Locked</div>
-          </div>
-          <div class="charCard locked">
-            <div class="charArt">?</div>
-            <div class="charName">Coming soon</div>
-            <div class="charTag">Locked</div>
-          </div>
-        </div>
         <div id="nameWrap">
           <input
             id="nameInput"
@@ -1277,13 +1245,13 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <button id="enterBtn" disabled>ENTER THE ARENA</button>
         </div>
-        <div id="nostrRow">
-          <button id="nostrBtn">⚡ Connect with Nostr</button>
-          <div id="nostrStatus"></div>
+        <div id="actionRow">
+          <button id="enterBtn" disabled>ENTER ARENA</button>
+          <button id="nostrBtn" aria-label="Connect Nostr" title="Connect with Nostr">CONNECT NOSTR</button>
         </div>
-        <div id="splashHint">Pick a name · more champions on the way</div>
+        <div id="nostrStatus"></div>
+        <div id="splashHint">Pick a name or connect with Nostr</div>
       </div>
       <!-- Logged-in (Nostr) reframe: a big avatar beside the gorilla, the display
            name + level, and one big JOIN button. Shown when #splash has .nostr. -->
@@ -1303,7 +1271,7 @@
           </div>
         </div>
         <div id="nhActions">
-          <button id="nhJoin">ENTER THE ARENA</button>
+          <button id="nhJoin">ENTER ARENA</button>
           <button id="nhDisconnect">← use a name instead</button>
         </div>
       </div>

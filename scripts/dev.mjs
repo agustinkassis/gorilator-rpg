@@ -95,36 +95,41 @@ if (clientPort !== requestedClientPort) {
 if (serverPort !== requestedServerPort) {
   console.log(`[dev] server port ${requestedServerPort} is busy; using ${serverPort}`);
 }
-console.log(`[dev] client: http://localhost:${clientPort}/`);
-console.log(`[dev] server monitor: http://localhost:${serverPort}/colyseus/`);
+console.log(`[dev] client:  http://localhost:${clientPort}/`);
+console.log(`[dev] server:  http://localhost:${serverPort}/`);
+console.log(`[dev] monitor: http://localhost:${serverPort}/colyseus/`);
 
 const children = [];
 let shuttingDown = false;
 
-function prefixStream(stream, name, color, output) {
+function prefixStream(stream, name, color, output, onLine) {
   let pending = "";
   stream.on("data", (chunk) => {
     pending += chunk.toString();
     const lines = pending.split(/\r?\n/);
     pending = lines.pop() ?? "";
     for (const line of lines) {
+      onLine?.(line);
       output.write(`${color}[${name}]${colors.reset} ${line}\n`);
     }
   });
   stream.on("end", () => {
-    if (pending) output.write(`${color}[${name}]${colors.reset} ${pending}\n`);
+    if (pending) {
+      onLine?.(pending);
+      output.write(`${color}[${name}]${colors.reset} ${pending}\n`);
+    }
   });
 }
 
-function start(name, color, args) {
+function start(name, color, args, options = {}) {
   const child = spawn(pnpm.command, [...pnpm.prefixArgs, ...args], {
     cwd: root,
     env: devEnv,
     stdio: ["inherit", "pipe", "pipe"],
   });
   children.push(child);
-  prefixStream(child.stdout, name, color, process.stdout);
-  prefixStream(child.stderr, name, colors.red, process.stderr);
+  prefixStream(child.stdout, name, color, process.stdout, options.onLine);
+  prefixStream(child.stderr, name, colors.red, process.stderr, options.onLine);
   child.on("exit", (code, signal) => {
     if (shuttingDown) return;
     if (code === 0 || signal === "SIGINT") return;
@@ -132,6 +137,38 @@ function start(name, color, args) {
     console.error(`[dev] ${name} exited unexpectedly${code == null ? "" : ` with code ${code}`}`);
     stopChildren();
     process.exit(code ?? 1);
+  });
+  return child;
+}
+
+function waitForSharedReady() {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      fn(value);
+    };
+    const timeout = setTimeout(
+      () => settle(reject, new Error("shared watcher did not become ready within 30 seconds")),
+      30_000,
+    );
+    const child = start("shared", colors.gray, ["--filter", "@rpg/shared", "dev"], {
+      onLine(line) {
+        if (/Found 0 errors\. Watching for file changes\./.test(line)) {
+          settle(resolve);
+        } else {
+          const foundErrors = line.match(/Found (\d+) errors?\./);
+          if (foundErrors && Number(foundErrors[1]) > 0) {
+            settle(reject, new Error(`shared watcher reported ${foundErrors[1]} errors`));
+          }
+        }
+      },
+    });
+    child.once("exit", (code, signal) => {
+      settle(reject, new Error(`shared watcher exited before ready (${signal ?? code ?? "unknown"})`));
+    });
   });
 }
 
@@ -151,6 +188,14 @@ process.on("SIGTERM", () => {
   stopChildren();
 });
 
-start("shared", colors.gray, ["--filter", "@rpg/shared", "dev"]);
+console.log("[dev] waiting for shared watcher");
+try {
+  await waitForSharedReady();
+} catch (err) {
+  shuttingDown = true;
+  console.error(`[dev] ${err instanceof Error ? err.message : err}`);
+  stopChildren();
+  process.exit(1);
+}
 start("server", colors.blue, ["--filter", "@rpg/server", "dev"]);
 start("client", colors.green, ["--filter", "@rpg/client", "dev"]);

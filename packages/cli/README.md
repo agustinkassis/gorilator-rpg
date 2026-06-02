@@ -16,7 +16,7 @@ npx gorilator install
 
 This will:
 
-1. Check prerequisites (Node ≥ 20.6, `git`, `pnpm` — installing `pnpm@10.14.0` if missing).
+1. Check prerequisites (Node ≥ 20.6, `git`, `pnpm` — installing supported missing pieces).
 2. Clone the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
 3. `pnpm install`, build the shared schema, build the same-origin client, and build this CLI.
 4. Generate `.env` (server port, monitor credentials, a stable Nostr signing key).
@@ -24,7 +24,9 @@ This will:
    (plus an optional direct local client port for convenience).
 6. Put `gorilator` on your `PATH` and print the local URLs and monitor credentials.
 
-On a **bare box with no Node yet**, bootstrap everything (installs git + Node, then runs the above):
+On a **bare box with no Node yet**, bootstrap everything with the public single-file installer. On
+Debian/Ubuntu it installs `ca-certificates`, `curl`, `git`, Node, then runs the same native CLI as
+`npx gorilator install`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
@@ -36,7 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cl
 gorilator setup
 ```
 
-Prompts for a base domain and one game subdomain (default `game.<domain>`), then:
+Opens an arrow-key setup menu with categories for server settings, server NSEC, Cloudflare, and
+Colyseus/environment settings. Choosing Cloudflare install/update prompts for a base domain and one game
+subdomain (default `game.<domain>`), then:
 
 1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for that host.
 2. Writes an ingress that routes `game.<domain>` → the server port.
@@ -62,9 +66,14 @@ gorilator stop        # stop the service
 gorilator restart     # restart the service
 gorilator logs        # stream server logs (Ctrl-C to detach)
 gorilator update      # stop services, git pull, rebuild, start services
+gorilator setup       # interactive setup menu: ports, NSEC, Cloudflare, env
 gorilator tunnel <cmd># Cloudflare tunnel — login | status | restart
-gorilator uninstall   # stop and remove the service (your files stay)
+gorilator uninstall   # stop and remove services, config, command, and installed files
 ```
+
+`gorilator uninstall` removes the local Gorilator daemon, local tunnel service/config,
+install record, global npm command, and installed app directory. Use
+`--keep-files`, `--keep-command`, or `--keep-tunnel` to preserve those parts.
 
 ## Requirements
 
@@ -90,8 +99,9 @@ gorilator uninstall   # stop and remove the service (your files stay)
 | `--skip-tunnel` | — | — | Don't offer the Cloudflare setup after install |
 | `--local-cli <pkg>` | `GORILATOR_LOCAL_CLI` | — | Install the global command from a local path/tarball (testing) |
 
-`gorilator setup` reads `GORILATOR_DOMAIN` and `GORILATOR_HOST`/`GORILATOR_GAME_HOST` for non-interactive
-runs. Legacy `GORILATOR_SERVER_HOST`/`GORILATOR_CLIENT_HOST` are accepted as fallbacks.
+`gorilator setup` is interactive by default. It reads `GORILATOR_DOMAIN` and
+`GORILATOR_HOST`/`GORILATOR_GAME_HOST` for non-interactive Cloudflare runs. Legacy
+`GORILATOR_SERVER_HOST`/`GORILATOR_CLIENT_HOST` are accepted as fallbacks.
 
 ## License
 

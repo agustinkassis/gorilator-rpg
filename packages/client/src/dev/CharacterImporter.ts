@@ -74,6 +74,7 @@ export class CharacterImporter {
 
   constructor(private deps: CharacterImporterDeps) {
     const btn = document.createElement("button");
+    btn.id = "charImportBtn";
     btn.textContent = "🦍 Import Character";
     btn.style.cssText =
       "position:fixed; right:16px; bottom:276px; z-index:40; cursor:pointer; display:none;" +
@@ -84,6 +85,7 @@ export class CharacterImporter {
     this.toggleBtn = btn;
 
     const panel = document.createElement("div");
+    panel.id = "charImporterPanel";
     panel.style.cssText =
       "position:fixed; left:16px; top:56px; width:430px; max-height:88vh; z-index:75; display:none;" +
       "background:#10131af5; border:2px solid #c98a5a; border-radius:10px; color:#e8e8e8;" +

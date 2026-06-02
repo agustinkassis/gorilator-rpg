@@ -108,6 +108,7 @@ export class DevMode {
     this.canvas = scene.getEngine().getRenderingCanvas();
 
     const btn = document.createElement("button");
+    btn.id = "devModeBtn";
     btn.textContent = "🛠 Dev Mode (`)";
     btn.style.cssText =
       "position:fixed; right:16px; bottom:204px; z-index:40; cursor:pointer;" +
@@ -119,6 +120,7 @@ export class DevMode {
 
     // "Add model" opens the library; only shown while editing.
     const addBtn = document.createElement("button");
+    addBtn.id = "devAddModelBtn";
     addBtn.textContent = "＋ Add model";
     addBtn.style.cssText =
       "position:fixed; right:16px; bottom:240px; z-index:40; cursor:pointer; display:none;" +
@@ -130,6 +132,7 @@ export class DevMode {
 
     // "Entities" opens the library explorer: browse + camera-focus every world entity.
     const entitiesBtn = document.createElement("button");
+    entitiesBtn.id = "devEntitiesBtn";
     entitiesBtn.textContent = "🗂 Entities";
     entitiesBtn.style.cssText =
       "position:fixed; right:16px; bottom:312px; z-index:40; cursor:pointer; display:none;" +
@@ -148,6 +151,7 @@ export class DevMode {
     });
 
     const banner = document.createElement("div");
+    banner.id = "devModeBanner";
     banner.textContent = "DEV MODE — immortal · click to select";
     banner.style.cssText =
       "position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:60; display:none;" +
@@ -158,6 +162,7 @@ export class DevMode {
 
     // Time control: pause / set game speed (scales the whole authoritative sim).
     const bar = document.createElement("div");
+    bar.id = "devTimeBar";
     bar.style.cssText =
       "position:fixed; top:36px; left:50%; transform:translateX(-50%); z-index:60; display:none; gap:4px;" +
       "background:#10131ae8; border:1px solid #4a9a52; border-radius:8px; padding:4px 6px; box-shadow:0 4px 16px #0008;";

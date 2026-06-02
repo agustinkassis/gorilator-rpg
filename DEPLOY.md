@@ -27,7 +27,8 @@ browser dials `wss://game.<domain>` for multiplayer.
 - A **Linux server** (Debian/Ubuntu recommended) or a **macOS** machine.
 - For public hosting: a **domain managed by Cloudflare** (free plan is fine). You do **not** pre-create any
   DNS records — `gorilator setup` makes them.
-- Nothing else. The installer adds Node, pnpm, and (for `setup`) cloudflared for you.
+- Nothing else. The installer adds Node, pnpm, and (for `setup`) cloudflared for you. On a fresh
+  Debian/Ubuntu box, the public bootstrap also installs `ca-certificates`, `curl`, and `git`.
 
 ---
 
@@ -39,15 +40,17 @@ browser dials `wss://game.<domain>` for multiplayer.
 npx gorilator install
 ```
 
-**On a bare box (no Node yet) — one line installs git + Node, then everything:**
+**On a bare box (no Node yet) — one public bash file installs OS prerequisites + Node, then everything:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
 ```
 
-The installer, in order:
+That public bootstrap fetches this repo and launches `./cli/gorilator install`, which runs the same native
+CLI as `npx gorilator install`. The installer, in order:
 
-1. Ensures **Node ≥ 20.6**, **git**, and **pnpm@10.14.0** (installing what's missing).
+1. Ensures **ca-certificates**, **curl**, **git**, **Node ≥ 20.6**, and **pnpm@10.14.0**
+   (installing what's missing on supported systems).
 2. Clones the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
 3. `pnpm install`, builds the shared schema, builds the client, and builds the CLI.
 4. Generates `.env` — the server port, a random monitor password, **and** the server's Nostr key
@@ -70,7 +73,9 @@ The installer, in order:
 gorilator setup
 ```
 
-It prompts for a base domain + one game subdomain (default `game.<domain>`), then:
+It opens an arrow-key menu with categories for server settings, server NSEC, Cloudflare, and
+Colyseus/environment settings. Choosing Cloudflare install/update prompts for a base domain + one game
+subdomain (default `game.<domain>`), then:
 
 1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for that host.
 2. Writes `/etc/cloudflared/config.yml` (macOS: `~/.cloudflared/config.yml`) with an ingress that routes
@@ -80,8 +85,9 @@ It prompts for a base domain + one game subdomain (default `game.<domain>`), the
    local client port, leaving one local game port behind the tunnel.
 4. Runs `cloudflared` as a boot service and prints your public URLs + monitor credentials.
 
-Re-run it anytime to change domains. For non-interactive automation set `GORILATOR_DOMAIN` and optionally
-`GORILATOR_HOST`/`GORILATOR_GAME_HOST`.
+Re-run it anytime to change ports, update the server NSEC, change domains, remove local Cloudflare
+settings, or edit supported environment values. For non-interactive Cloudflare automation set
+`GORILATOR_DOMAIN` and optionally `GORILATOR_HOST`/`GORILATOR_GAME_HOST`.
 
 ---
 
@@ -94,13 +100,18 @@ gorilator stop          Stop the daemon
 gorilator restart       Restart the daemon
 gorilator logs          Stream server logs (Ctrl-C to detach)
 gorilator update        stop services, git pull, rebuild, start services
-gorilator setup         Configure the Cloudflare tunnel + public game hostname
+gorilator setup         Interactive setup: server ports, NSEC, Cloudflare, env settings
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
-gorilator uninstall     Stop & remove the service (your files stay)
+gorilator uninstall     Stop & remove services, config, command, and installed files
 ```
 
 The three entry points run **identical code** — `npx gorilator <cmd>`, the global `gorilator <cmd>`, and the
 repo's `./cli/gorilator <cmd>` (which only adds: ensure Node, then exec the same Node CLI).
+
+`gorilator uninstall` removes local machine state created by install/setup: the Gorilator daemon, local
+cloudflared service/config, install record, global npm command, and installed app directory. Add
+`--keep-files`, `--keep-command`, or `--keep-tunnel` when you want to preserve one of those pieces. It does
+not delete account-level Cloudflare tunnel/DNS resources; remove those in Cloudflare if you no longer need them.
 
 ---
 

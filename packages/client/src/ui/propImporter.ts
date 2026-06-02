@@ -21,6 +21,7 @@ export class PropImporter {
     private getPlayerPos: () => { x: number; z: number } | null,
   ) {
     const btn = document.createElement("button");
+    btn.id = "propImportBtn";
     btn.textContent = "📦 Import Model";
     btn.style.cssText =
       "position:fixed; right:16px; bottom:132px; z-index:40; cursor:pointer;" +
@@ -30,6 +31,7 @@ export class PropImporter {
     document.body.appendChild(btn);
 
     const panel = document.createElement("div");
+    panel.id = "propImporterPanel";
     panel.style.cssText =
       "position:fixed; right:16px; top:56px; width:300px; z-index:50; display:none;" +
       "background:#10131af2; border:2px solid #4a9a52; border-radius:10px; color:#e8e8e8;" +

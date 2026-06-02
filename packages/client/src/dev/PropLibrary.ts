@@ -26,6 +26,7 @@ export class PropLibrary {
 
   constructor(private cb: PropLibraryCallbacks) {
     const panel = document.createElement("div");
+    panel.id = "devPropLibraryPanel";
     panel.style.cssText =
       "position:fixed; right:16px; top:118px; width:280px; max-height:60vh; z-index:48; display:none;" +
       "background:#10131af2; border:2px solid #4a9a52; border-radius:10px; color:#e8e8e8;" +

@@ -1,3 +1,4 @@
+import "./webcrypto";
 import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { verifyEvent } from "nostr-tools";
 import { getServerIdentity } from "./nostrIdentity";
