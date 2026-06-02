@@ -23,7 +23,7 @@ interface TreeMats {
   stumpTop: StandardMaterial;
 }
 
-export const TREE_VISUAL_SCALE = 1.35;
+export const TREE_VISUAL_SCALE = 0.945;
 
 // Share materials across all trees in a scene (there can be dozens).
 const matCache = new WeakMap<Scene, TreeMats>();

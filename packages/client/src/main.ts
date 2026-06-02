@@ -21,6 +21,7 @@ import { HotkeyBar } from "./ui/hotkeyBar";
 import { Minimap } from "./ui/minimap";
 import { ChatLog } from "./ui/chat";
 import { CharacterDebugWindow } from "./ui/characterDebug";
+import { DebugStats } from "./ui/debugStats";
 import { Game } from "./game/Game";
 import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
@@ -64,6 +65,7 @@ const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
 const homeBar = new HomeBar(); // siege objective HUD (home HP + wave); hidden on the splash via CSS
 const game = new Game(camera, factory, hud, shadow);
+const debugStats = new DebugStats(engine, scene);
 // Sound system: spatial SFX + music. Unlocks itself on the first user gesture
 // (the splash "ENTER" click), so it's safe to build up-front.
 const audio = new AudioManager();
@@ -340,7 +342,7 @@ if (import.meta.env.DEV) {
   });
   characterImporter.setVisible(true);
 
-  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode };
+  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode, debugStats };
 
   // Standalone model inspector (button bottom-right, or press C).
   new CharacterDebugWindow();
@@ -385,15 +387,20 @@ if (import.meta.env.DEV) {
 }
 
 engine.runRenderLoop(() => {
+  const frameStartedAt = debugStats.beginFrame();
   const dt = Math.min(engine.getDeltaTime() / 1000, 0.1);
 
   // While the intro is up, draw the hero scene instead of the game world. The
   // launch flips `active` (under the white flash) to hand off to the game.
   if (splash.active) {
+    debugStats.setScene(splash.scene);
     splash.update(dt);
+    const renderStartedAt = performance.now();
     splash.scene.render();
+    debugStats.endFrame(frameStartedAt, renderStartedAt);
     return;
   }
+  debugStats.setScene(scene);
 
   // Dev Mode time control: mirror the server's simulation speed so the world
   // looks paused/slowed/sped on the client too (frozen positions + animations).
@@ -472,7 +479,10 @@ engine.runRenderLoop(() => {
     }
   }
 
+  debugStats.setGameStats(game.debugStats());
+  const renderStartedAt = performance.now();
   scene.render();
+  debugStats.endFrame(frameStartedAt, renderStartedAt);
 });
 
 window.addEventListener("resize", () => {

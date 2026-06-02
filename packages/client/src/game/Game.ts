@@ -49,6 +49,7 @@ import { makeSacredCircleFx, SacredCircleFx } from "../fx/sacredCircleFx";
 import { DamageFx } from "../fx/damageFx";
 import { DropAnim, startDrop, updateDrop } from "../fx/dropAnim";
 import { HUD } from "../ui/hud";
+import type { GameDebugStats } from "../ui/debugStats";
 import type { AudioManager } from "../audio/AudioManager";
 import { smooth } from "../util/math";
 
@@ -449,10 +450,9 @@ export class Game {
     this.houseModel = model;
   }
 
-  /** Toggle the house pick proxy. Normal play keeps it on so players can repair
-   *  La Crypta; Dev Mode also uses the same proxy for selection. */
+  /** Toggle house model picking. Normal play leaves it off while graphics are debugged. */
   setHousePickable(on: boolean) {
-    this.houseModel?.setPickable(on || this.houses.size > 0);
+    this.houseModel?.setPickable(on);
   }
 
   setHealingTowerPosition(x: number, z: number) {
@@ -735,6 +735,24 @@ export class Game {
   localHp(): { hp: number; maxHp: number } | null {
     const e = this.localId ? this.entities.get(this.localId) : null;
     return e ? { hp: e.hp, maxHp: e.maxHp } : null;
+  }
+
+  debugStats(): GameDebugStats {
+    return {
+      entities: this.entities.size,
+      players: this.playerIds.size,
+      potions: this.potions.size,
+      trees: this.trees.size,
+      logs: this.logs.size,
+      rocks: this.rocks.size,
+      stones: this.stones.size,
+      bananas: this.bananas.size,
+      houses: this.houses.size,
+      thrown: this.thrown.length,
+      particleFx: this.particleFx.length,
+      collecting: this.collecting.length,
+      lightnings: this.lightnings.length,
+    };
   }
 
   // ---- internals ----

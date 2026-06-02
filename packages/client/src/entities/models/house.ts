@@ -93,9 +93,9 @@ export async function loadHouse(
     root.computeWorldMatrix(true);
 
     root.metadata = { entityId: "house-0", kind: "house" };
-    root.isPickable = true;
+    root.isPickable = false;
     r.meshes.forEach((m) => {
-      m.isPickable = true;
+      m.isPickable = false;
       m.metadata = { entityId: "house-0", kind: "house" };
     });
 

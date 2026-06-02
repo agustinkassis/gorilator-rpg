@@ -183,7 +183,7 @@ export class Minimap {
         if (!onScreen(x, y)) return;
         this.rockIcon(ctx, x, y, Math.max(2.5, r.radius * scale));
       });
-      const treeS = 4.2 * Math.sqrt(scale / BASE_SCALE); // grow a little with zoom so they read
+      const treeS = 12.6 * Math.sqrt(scale / BASE_SCALE); // grow a little with zoom so they read
       state.trees.forEach((t) => {
         if (!t.alive) return;
         const [x, y] = proj(t.x, t.z);

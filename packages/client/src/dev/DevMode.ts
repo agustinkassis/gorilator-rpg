@@ -192,7 +192,6 @@ export class DevMode {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "`" || e.key === "~") this.toggle();
       else if (e.key === "Escape" && this.active) this.selectNone();
-      else if ((e.key === "p" || e.key === "P") && this.active) this.togglePause();
       else if ((e.key === "Backspace" || e.key === "Delete") && this.active && this.selection.selected) {
         e.preventDefault(); // Backspace would otherwise navigate "back"
         this.deleteSelection();
@@ -674,7 +673,7 @@ export class DevMode {
     const def: DropCfg =
       kind === "tree"
         ? { item: "log", amount: 1, trigger: "kill", hp: 60 }
-        : { item: "stone", amount: 28, trigger: "hit", hp: 560 };
+        : { item: "stone", amount: 11, trigger: "hit", hp: 560 };
     const c = this.drops.get(kind);
     if (!c) {
       this.drops.set(kind, def);

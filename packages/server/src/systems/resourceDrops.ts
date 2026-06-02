@@ -29,7 +29,7 @@ function file(): string | null {
 
 const DEFAULTS: Record<string, DropCfg> = {
   tree: { item: "log", amount: 1, trigger: "kill", hp: TREE_HP },
-  rock: { item: "stone", amount: 28, trigger: "hit", hp: ROCK_HP },
+  rock: { item: "stone", amount: 11, trigger: "hit", hp: ROCK_HP },
 };
 const FALLBACK: DropCfg = { item: "stone", amount: 1, trigger: "kill", hp: 60 };
 
