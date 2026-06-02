@@ -179,7 +179,7 @@ export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.02; // rare berserker flask
 export const AMBIENT_ITEM_SPAWN_CLEAR_RADIUS = 24; // random pickups stay out of the central player spawn ring
 
 // Trees are choppable resources scattered across the map.
-export const TREE_COUNT = 120;
+export const TREE_COUNT = 360;
 export const TREE_RADIUS = 0.8; // trunk/body footprint a thrown banana collides with
 export const TREE_HP = 60;
 export const TREE_ARMOR = 6;
@@ -192,7 +192,7 @@ export const AUTO_GRAB_RADIUS = 2.2; // walk within this of any item → auto-co
 export const TREE_SPAWN_RANGE = 135; // potions/trees scatter within this half-extent
 
 // Boulders are mineable rocks (drop stone). Tougher than trees.
-export const ROCK_COUNT = 45; // how many boulders are scattered across the map
+export const ROCK_COUNT = 135; // how many boulders are scattered across the map
 export const ROCK_HP = 560; // 8× tougher (was 70)
 export const ROCK_ARMOR = 12;
 export const ROCK_REGROW_MS = 30000; // rubble regrows into a rock after this

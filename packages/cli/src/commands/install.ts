@@ -12,7 +12,7 @@ import {
   resolveServiceExec,
 } from "../lib/build.js";
 import { saveConfig } from "../lib/config.js";
-import { generateNsec, genSecret, parseEnv, renderEnv } from "../lib/env.js";
+import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import {
   durableGorilatorOnPath,
   installWrapperGlobalCommand,
@@ -73,13 +73,21 @@ export async function install(opts: Options, version: string): Promise<void> {
   await maybeRunSetup(opts);
 }
 
-/** Create .env on first install (generating a monitor password + a stable Nostr
- *  key); keep an existing one untouched. */
+/** Create .env on first install, and repair older installs that predate the
+ *  stable Nostr key. */
 function ensureEnv(appDir: string, user: string, port: number, clientPort: number): void {
   const ef = envFile(appDir);
   if (existsSync(ef)) {
-    parseEnv(readFileSync(ef, "utf8"));
-    log.ok(`Using existing ${ef}`);
+    const env = parseEnv(readFileSync(ef, "utf8"));
+    if (isValidNsec(env.NOSTR_NSEC)) {
+      log.ok(`Using existing ${ef}`);
+      return;
+    }
+    const reason = env.NOSTR_NSEC ? "invalid" : "missing";
+    const nsec = generateNsec();
+    writeFileSync(ef, renderEnv({ ...env, NOSTR_NSEC: nsec }), { mode: 0o600 });
+    if (isRoot() && user !== "root") run("chown", [user, ef]);
+    log.ok(`Generated ${reason} NOSTR_NSEC in ${ef}`);
     return;
   }
   const body = renderEnv({

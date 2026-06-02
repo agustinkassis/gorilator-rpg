@@ -64,10 +64,33 @@ function bech32Encode(hrp: string, data: number[]): string {
   return out;
 }
 
+function bech32Decode(value: string): { hrp: string; data: number[] } | null {
+  if (value !== value.toLowerCase() && value !== value.toUpperCase()) return null;
+  const lower = value.toLowerCase();
+  const split = lower.lastIndexOf("1");
+  if (split < 1 || split + 7 > lower.length) return null;
+  const hrp = lower.slice(0, split);
+  const data: number[] = [];
+  for (const ch of lower.slice(split + 1)) {
+    const index = CHARSET.indexOf(ch);
+    if (index < 0) return null;
+    data.push(index);
+  }
+  if (polymod(hrpExpand(hrp).concat(data)) !== 1) return null;
+  return { hrp, data: data.slice(0, -6) };
+}
+
 /** Mint a fresh Nostr secret key as a bech32 `nsec1…` string. */
 export function generateNsec(): string {
   const words = convertBits([...randomBytes(32)], 8, 5, true);
   return bech32Encode("nsec", words);
+}
+
+/** Validate a NIP-19 nsec secret without pulling in nostr-tools. */
+export function isValidNsec(value: string | undefined): boolean {
+  const decoded = bech32Decode(value?.trim() ?? "");
+  if (!decoded || decoded.hrp !== "nsec") return false;
+  return convertBits(decoded.data, 5, 8, false).length === 32;
 }
 
 /** Parse a KEY=VALUE .env file body into a map (ignores comments/blank lines). */

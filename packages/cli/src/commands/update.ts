@@ -1,12 +1,13 @@
 // `gorilator update` — stop services, fast-forward, rebuild, and start services.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { cloneOrUpdate, ensurePnpm, installAndBuild } from "../lib/build.js";
 import { startTunnelService, stopTunnelService } from "../lib/cloudflare.js";
 import { loadConfig } from "../lib/config.js";
-import { parseEnv } from "../lib/env.js";
+import { generateNsec, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import { waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
 import { envFile } from "../lib/paths.js";
+import { isRoot, run } from "../lib/proc.js";
 import { startService, stopService } from "../lib/service.js";
 
 export async function update(): Promise<void> {
@@ -16,6 +17,13 @@ export async function update(): Promise<void> {
 
   const ef = envFile(cfg.appDir);
   const env = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
+  if (!isValidNsec(env.NOSTR_NSEC)) {
+    const reason = env.NOSTR_NSEC ? "invalid" : "missing";
+    env.NOSTR_NSEC = generateNsec();
+    writeFileSync(ef, renderEnv(env), { mode: 0o600 });
+    if (isRoot() && cfg.user && cfg.user !== "root") run("chown", [cfg.user, ef]);
+    log.ok(`Generated ${reason} NOSTR_NSEC in ${ef}`);
+  }
   const tunnelConfigured = Boolean(env.SERVER_HOSTNAME || env.CLIENT_HOSTNAME);
 
   log.info("Stopping services before updating…");

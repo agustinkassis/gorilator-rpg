@@ -20,7 +20,7 @@ import {
   uninstallTunnelService,
   writeTunnelConfig,
 } from "../lib/cloudflare.js";
-import { generateNsec, genSecret, parseEnv, renderEnv } from "../lib/env.js";
+import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
 import type { Options } from "../lib/options.js";
@@ -517,10 +517,6 @@ function promptPort(label: string, current: number, allowDisable: boolean): numb
     if (Number.isInteger(port) && port >= 1 && port <= 65535) return port;
     log.warn("Enter a port from 1 to 65535, or 0/none when disabling is allowed.");
   }
-}
-
-function isValidNsec(value: string): boolean {
-  return /^nsec1[02-9ac-hj-np-z]+$/i.test(value) && value.length > 20;
 }
 
 function maskSecret(value: string | undefined): string {
