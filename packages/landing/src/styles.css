@@ -1,0 +1,392 @@
+:root {
+  color: #f9e6bd;
+  background: #0e0f13;
+  font-family:
+    Impact, Haettenschweiler, "Arial Black", "Franklin Gothic Heavy", ui-sans-serif, system-ui,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --gold: #ffd479;
+  --bronze: #8b6230;
+  --ember: #ff523f;
+  --grass: #4b7438;
+  --ink: #0e0f13;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(255, 82, 63, 0.18), transparent 30%),
+    linear-gradient(180deg, #14100d 0%, #0e0f13 42%, #11160f 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hero {
+  position: relative;
+  min-height: 84vh;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  border-bottom: 1px solid rgba(255, 212, 121, 0.16);
+}
+
+.heroBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    linear-gradient(90deg, rgba(10, 8, 7, 0.96) 0%, rgba(14, 15, 19, 0.72) 42%, rgba(14, 15, 19, 0.24) 100%),
+    linear-gradient(180deg, rgba(14, 15, 19, 0.18) 0%, rgba(14, 15, 19, 0.7) 100%),
+    url("/screenshots/gorilator-world.png") center / cover;
+  transform: scale(1.02);
+}
+
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 28%;
+  z-index: -1;
+  background: linear-gradient(180deg, transparent, rgba(14, 15, 19, 0.94));
+}
+
+.nav {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 20px 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.navActions,
+.heroActions,
+.statusStrip,
+.statusStrip span {
+  display: flex;
+  align-items: center;
+}
+
+.navActions {
+  gap: 10px;
+}
+
+.iconLink,
+.playSmall {
+  min-height: 40px;
+  border: 1px solid rgba(255, 212, 121, 0.36);
+  background: rgba(14, 11, 8, 0.66);
+  color: #ffe3a0;
+  box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.46);
+}
+
+.iconLink {
+  width: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.playSmall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 0 15px;
+  font-weight: 950;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.heroInner {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: clamp(54px, 10vh, 116px) 0 clamp(44px, 8vh, 92px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 18px;
+  color: #ffdf70;
+  font-family:
+    Impact, Haettenschweiler, "Arial Black", "Franklin Gothic Heavy", ui-sans-serif, system-ui,
+    sans-serif;
+  font-size: clamp(74px, 12vw, 178px);
+  font-weight: 950;
+  line-height: 0.78;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  text-shadow:
+    5px 5px 0 #050505,
+    10px 10px 0 #8c2f21,
+    0 18px 38px rgba(0, 0, 0, 0.78);
+}
+
+.lede {
+  width: min(640px, 100%);
+  margin-bottom: 28px;
+  color: #f5d8a7;
+  font-size: clamp(18px, 2vw, 22px);
+  font-weight: 800;
+  line-height: 1.32;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.heroActions {
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.primaryCta,
+.secondaryCta,
+.wideCta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 50px;
+  border-radius: 999px;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.primaryCta,
+.wideCta {
+  padding: 0 22px;
+  color: #1c0d07;
+  background: linear-gradient(180deg, #ffe59c, #f2a73b 52%, #b65a22);
+  border: 2px solid #2a1b0d;
+  box-shadow:
+    0 0 0 2px #caa052,
+    0 14px 32px rgba(0, 0, 0, 0.54),
+    0 0 30px rgba(255, 82, 63, 0.24);
+}
+
+.secondaryCta {
+  padding: 0 19px;
+  color: #ffe4a8;
+  background: rgba(16, 10, 7, 0.76);
+  border: 1px solid rgba(255, 212, 121, 0.38);
+}
+
+.primaryCta:hover,
+.secondaryCta:hover,
+.wideCta:hover,
+.iconLink:hover,
+.playSmall:hover {
+  transform: translateY(-2px);
+}
+
+.statusStrip {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 0 0 26px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.statusStrip span {
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 212, 121, 0.25);
+  border-radius: 999px;
+  background: rgba(11, 12, 10, 0.7);
+  color: #eccb91;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.screens {
+  padding: 58px max(16px, calc((100vw - 1180px) / 2)) 72px;
+  background:
+    linear-gradient(180deg, rgba(14, 15, 19, 0.96), rgba(19, 25, 17, 0.98)),
+    radial-gradient(circle at 20% 0%, rgba(75, 116, 56, 0.28), transparent 34%);
+}
+
+.sectionHead {
+  max-width: 760px;
+  margin-bottom: 26px;
+}
+
+.sectionHead h2,
+.note h2 {
+  margin-bottom: 12px;
+  color: #ffe8ac;
+  font-family:
+    Impact, Haettenschweiler, "Arial Black", "Franklin Gothic Heavy", ui-sans-serif, system-ui,
+    sans-serif;
+  font-size: clamp(38px, 6vw, 72px);
+  font-weight: 950;
+  line-height: 0.9;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  text-shadow: 4px 4px 0 #050505;
+}
+
+.shotGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.shot {
+  overflow: hidden;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(35, 22, 11, 0.94), rgba(12, 9, 7, 0.97));
+  border: 1px solid rgba(255, 212, 121, 0.24);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: #15100d;
+  border-bottom: 1px solid rgba(255, 212, 121, 0.16);
+}
+
+.shot div {
+  padding: 16px 16px 18px;
+}
+
+.shot h3 {
+  margin-bottom: 7px;
+  color: #ffe2a0;
+  font-size: 20px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.shot p,
+.note p {
+  margin-bottom: 0;
+  color: #d7b985;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.fieldNotes {
+  padding: 0 max(16px, calc((100vw - 1180px) / 2)) 76px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 28px;
+  background: #11160f;
+}
+
+.note {
+  max-width: 780px;
+}
+
+.note svg {
+  color: var(--ember);
+  margin-bottom: 12px;
+}
+
+.wideCta {
+  min-width: 208px;
+}
+
+@media (max-width: 820px) {
+  .hero {
+    min-height: 86vh;
+  }
+
+  .heroBackdrop {
+    background:
+      linear-gradient(180deg, rgba(10, 8, 7, 0.92) 0%, rgba(14, 15, 19, 0.7) 54%, rgba(14, 15, 19, 0.9) 100%),
+      url("/screenshots/gorilator-world.png") center / cover;
+  }
+
+  .heroInner {
+    padding-top: 48px;
+  }
+
+  .shotGrid,
+  .fieldNotes {
+    grid-template-columns: 1fr;
+  }
+
+  .wideCta {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .nav {
+    width: min(100% - 24px, 1180px);
+  }
+
+  .playSmall span {
+    display: none;
+  }
+
+  .playSmall {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .heroInner,
+  .statusStrip {
+    width: min(100% - 24px, 1180px);
+  }
+
+  h1 {
+    font-size: clamp(48px, 16vw, 64px);
+    text-shadow:
+      3px 3px 0 #050505,
+      6px 6px 0 #8c2f21,
+      0 16px 32px rgba(0, 0, 0, 0.72);
+  }
+
+  .primaryCta,
+  .secondaryCta {
+    width: 100%;
+  }
+}

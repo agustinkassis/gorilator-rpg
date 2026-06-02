@@ -22,7 +22,9 @@ This will:
 4. Generate `.env` (server port, monitor credentials, a stable Nostr signing key).
 5. Register and start a service whose main server port serves the client page, WebSocket, monitor, and API
    (plus an optional direct local client port for convenience).
-6. Put `gorilator` on your `PATH` and print the local URLs and monitor credentials.
+6. Put a durable `gorilator` command on your `PATH` (Linux/macOS: a wrapper link in a standard
+   global bin directory, with npm global install as fallback) and print the local URLs and monitor
+   credentials.
 
 On a **bare box with no Node yet**, bootstrap everything with the public single-file installer. On
 Debian/Ubuntu it installs `ca-certificates`, `curl`, `git`, Node, then runs the same native CLI as

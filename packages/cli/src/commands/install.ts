@@ -13,6 +13,11 @@ import {
 } from "../lib/build.js";
 import { saveConfig } from "../lib/config.js";
 import { generateNsec, genSecret, parseEnv, renderEnv } from "../lib/env.js";
+import {
+  durableGorilatorOnPath,
+  installWrapperGlobalCommand,
+  isTemporaryNpxCommand,
+} from "../lib/globalCommand.js";
 import { waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
@@ -43,7 +48,7 @@ export async function install(opts: Options, version: string): Promise<void> {
     return;
   }
 
-  ensureGlobalCli(opts);
+  ensureGlobalCli(opts, appDir);
   const exec = resolveServiceExec(appDir);
   installService(appDir, user, exec);
   saveConfig({
@@ -94,11 +99,19 @@ function ensureEnv(appDir: string, user: string, port: number, clientPort: numbe
 
 /** Make the `gorilator` command global (durable, independent of the npx cache)
  *  so it works from anywhere and the service can reference it. */
-function ensureGlobalCli(opts: Options): void {
-  if (which("gorilator") && !opts.localCli) {
+function ensureGlobalCli(opts: Options, appDir: string): void {
+  const found = which("gorilator");
+  if (found && isTemporaryNpxCommand(found)) {
+    log.info(`Ignoring temporary npx gorilator shim at ${found}.`);
+  } else if (durableGorilatorOnPath() && !opts.localCli) {
     log.ok("Global 'gorilator' command already on PATH.");
     return;
   }
+
+  if (!opts.localCli && installWrapperGlobalCommand(appDir)) {
+    return;
+  }
+
   const target = opts.localCli ?? "gorilator";
   log.info(`Installing the global gorilator command (npm i -g ${target})…`);
   if (tryRun("npm", ["install", "-g", target])) {
@@ -109,7 +122,7 @@ function ensureGlobalCli(opts: Options): void {
     log.ok("Global 'gorilator' command installed.");
     return;
   }
-  log.warn(`Could not install the global command automatically. Run:  npm i -g ${target}`);
+  log.die(`Could not install the global command automatically. Run:  npm i -g ${target}`);
 }
 
 function printSummary(appDir: string, port: number, clientPort: number, healthy: boolean): void {
