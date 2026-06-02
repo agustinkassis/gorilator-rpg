@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "meshy_ai_timberstone_tow_1780338285634",
+    "x": 4.4,
+    "z": 23.5,
+    "intervalMs": 4000,
+    "cap": 3,
+    "behavior": {}
+  }
+]
