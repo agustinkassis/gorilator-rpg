@@ -16,6 +16,7 @@ import {
   Control,
 } from "@babylonjs/gui";
 import { Entity } from "../entities/Entity";
+import type { KillEvent } from "@rpg/shared";
 
 const BAR_WIDTH = 56;
 const MARKER_DURATION = 0.6; // seconds
@@ -82,6 +83,7 @@ export class HUD {
 
   private damages: DamageNumber[] = [];
   private dmgLayer: HTMLDivElement;
+  private killLayer: HTMLDivElement;
 
   private bubbles = new Map<string, ChatBubble>(); // one live bubble per speaker
   private bubbleLayer: HTMLDivElement;
@@ -96,6 +98,11 @@ export class HUD {
     this.dmgLayer.style.cssText =
       "position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:25;";
     document.body.appendChild(this.dmgLayer);
+
+    this.killLayer = document.createElement("div");
+    this.killLayer.id = "killFeedLayer";
+    document.body.appendChild(this.killLayer);
+    injectKillFeedStyles();
 
     // Chat bubbles ride on their own layer (just under the damage numbers).
     this.bubbleLayer = document.createElement("div");
@@ -331,6 +338,31 @@ export class HUD {
     this.pushNumber(anchor, `+${amount} XP`, XP_COLOR, DMG_FONT);
   }
 
+  /** Big top-center kill feed entry for player deaths only. */
+  showKill(ev: KillEvent) {
+    const el = document.createElement("div");
+    el.className = `killFeedItem ${ev.killerKind === "goblin" ? "byGoblin" : "byPlayer"}`;
+
+    const killer = document.createElement("span");
+    killer.className = "killFeedName killer";
+    killer.textContent = ev.killerName || (ev.killerKind === "goblin" ? "Goblin" : "Player");
+
+    const verb = document.createElement("span");
+    verb.className = "killFeedVerb";
+    verb.textContent = "KILLED";
+
+    const victim = document.createElement("span");
+    victim.className = "killFeedName victim";
+    victim.textContent = ev.victimName || "Player";
+
+    el.append(killer, verb, victim);
+    this.killLayer.prepend(el);
+    window.setTimeout(() => {
+      el.classList.add("leaving");
+      window.setTimeout(() => el.remove(), 350);
+    }, 3200);
+  }
+
   private pushNumber(anchor: TransformNode, str: string, color: string, fontSize: number) {
     const el = document.createElement("div");
     el.textContent = str;
@@ -504,6 +536,97 @@ function injectBubbleStyles() {
       border-right: 7px solid transparent;
       border-top: 8px solid rgba(18, 15, 12, 0.92);
       filter: drop-shadow(0 2px 0 #6b4f2e);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function injectKillFeedStyles() {
+  if (document.getElementById("killFeedStyles")) return;
+  const style = document.createElement("style");
+  style.id = "killFeedStyles";
+  style.textContent = `
+    #killFeedLayer {
+      position: fixed;
+      top: 74px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(760px, calc(100vw - 28px));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+      z-index: 38;
+    }
+    .killFeedItem {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+      gap: 18px;
+      min-width: min(680px, 100%);
+      max-width: 100%;
+      padding: 12px 26px 13px;
+      color: #f7ead0;
+      background:
+        linear-gradient(90deg, transparent, rgba(9, 7, 5, 0.92) 12%, rgba(19, 12, 6, 0.96) 50%, rgba(9, 7, 5, 0.92) 88%, transparent),
+        linear-gradient(180deg, rgba(255, 217, 126, 0.24), rgba(157, 82, 28, 0.12));
+      border-top: 2px solid rgba(255, 214, 125, 0.9);
+      border-bottom: 2px solid rgba(138, 74, 25, 0.95);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 242, 183, 0.25);
+      clip-path: polygon(3% 0, 97% 0, 100% 50%, 97% 100%, 3% 100%, 0 50%);
+      font: 900 clamp(20px, 3.2vw, 34px)/1.05 Georgia, "Times New Roman", serif;
+      letter-spacing: 0;
+      text-shadow: 0 2px 0 #000, 0 0 16px rgba(255, 195, 86, 0.42);
+      animation: killFeedIn 220ms ease-out both;
+      will-change: transform, opacity;
+    }
+    .killFeedItem.leaving {
+      animation: killFeedOut 320ms ease-in both;
+    }
+    .killFeedName {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .killFeedName.killer {
+      text-align: right;
+      color: #ffd36f;
+    }
+    .killFeedName.victim {
+      text-align: left;
+      color: #e7eef8;
+    }
+    .killFeedItem.byGoblin .killer {
+      color: #ff775f;
+    }
+    .killFeedVerb {
+      padding: 4px 12px;
+      color: #fff6dd;
+      background: rgba(0, 0, 0, 0.42);
+      border: 1px solid rgba(255, 216, 128, 0.55);
+      border-radius: 3px;
+      font: 900 clamp(12px, 1.6vw, 16px)/1 system-ui, -apple-system, sans-serif;
+      text-shadow: 0 1px 2px #000;
+      white-space: nowrap;
+    }
+    @keyframes killFeedIn {
+      from { opacity: 0; transform: translateY(-18px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes killFeedOut {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to { opacity: 0; transform: translateY(-12px) scale(0.98); }
+    }
+    @media (max-width: 620px) {
+      #killFeedLayer { top: 64px; }
+      .killFeedItem {
+        gap: 8px;
+        min-width: 0;
+        padding: 10px 16px 11px;
+      }
+      .killFeedVerb { padding-inline: 8px; }
     }
   `;
   document.head.appendChild(style);

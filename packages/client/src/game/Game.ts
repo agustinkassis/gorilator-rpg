@@ -20,6 +20,7 @@ import {
   House,
   AnimState,
   DamageEvent,
+  KillEvent,
   HealEvent,
   XpEvent,
   BananaThrowEvent,
@@ -702,6 +703,10 @@ export class Game {
       this.hud.showDamage(house.anchor, ev.targetId, ev.amount, ev.crit);
       this.audio?.mine({ x: house.anchor.position.x, z: house.anchor.position.z });
     }
+  }
+
+  onKill(ev: KillEvent) {
+    this.hud.showKill(ev);
   }
 
   /** A heal landed (potion pickup) — pop a green "+N" number. */

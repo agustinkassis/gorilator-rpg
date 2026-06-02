@@ -253,6 +253,7 @@ async function start() {
     onHouseRemove: (id) => game.removeHouse(id),
     onBananaThrow: (ev) => game.showBananaThrow(ev),
     onDamage: (ev) => game.onDamage(ev),
+    onKill: (ev) => game.onKill(ev),
     onHeal: (ev) => game.onHeal(ev),
     onXp: (ev) => game.onXp(ev),
     onChat: (ev) => {
