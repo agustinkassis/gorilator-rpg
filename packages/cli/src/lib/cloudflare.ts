@@ -2,9 +2,9 @@
 // cloudflared, authorizes it, creates/locates the named tunnel, writes its
 // ingress config (one public hostname → the game port), routes DNS, and runs it
 // as a boot service. Linux (systemd) is the primary target; macOS uses Homebrew.
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import * as log from "./log.js";
 import { TUNNEL_NAME, cloudflaredDir, isLinux, isMac } from "./paths.js";
 import {
@@ -98,6 +98,29 @@ export function createTunnel(name = TUNNEL_NAME): void {
   run("cloudflared", ["tunnel", "create", name]);
 }
 
+/** Return a local credentials JSON file for the tunnel. Existing tunnels may be
+ *  visible through `cloudflared tunnel list` even when this machine lacks the
+ *  `<id>.json` file, so fetch it with the token helper before configuring the
+ *  service. */
+function ensureTunnelCredentials(id: string): string {
+  const creds = join(homedir(), ".cloudflared", `${id}.json`);
+  if (existsSync(creds)) return creds;
+
+  log.warn(`Tunnel '${id}' exists, but local credentials are missing at ${creds}.`);
+  log.info("Fetching tunnel credentials...");
+  mkdirSync(dirname(creds), { recursive: true });
+  if (tryRun("cloudflared", ["tunnel", "token", "--cred-file", creds, id]) && existsSync(creds)) {
+    log.ok("Tunnel credentials saved locally.");
+    return creds;
+  }
+
+  log.die(
+    `Could not fetch credentials for tunnel '${id}'. Run ` +
+      `cloudflared tunnel token --cred-file ${creds} ${id} and retry, ` +
+      "or remove the old Cloudflare tunnel and run setup again.",
+  );
+}
+
 /** Render the ingress config: the public hostname maps to the local game port
  *  (one native process serves the client page, WebSocket/API, and monitor). */
 function renderConfig(
@@ -122,7 +145,7 @@ export function writeTunnelConfig(
   host: string,
   port: number,
 ): void {
-  const credsSrc = join(homedir(), ".cloudflared", `${id}.json`);
+  const credsSrc = ensureTunnelCredentials(id);
   const dir = cloudflaredDir();
   let credsPath = credsSrc;
   if (isLinux) {
@@ -130,6 +153,7 @@ export function writeTunnelConfig(
     credsPath = join(dir, `${id}.json`);
     runPrivileged("mkdir", ["-p", dir]);
     runPrivileged("cp", [credsSrc, credsPath]);
+    runPrivileged("chmod", ["600", credsPath]);
   }
   log.info(`Writing ${join(dir, "config.yml")}…`);
   writeFileMaybeSudo(
