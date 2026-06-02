@@ -73,6 +73,22 @@ function defaultEndpoint(): string {
   return `${proto}://${location.hostname}:${serverPort}`;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export class NetworkClient {
   private client: Client;
   room?: Room<GameState>;
@@ -85,59 +101,151 @@ export class NetworkClient {
     handlers: NetHandlers,
     options: { name?: string; nostr?: NostrAuthPayload } = {},
   ): Promise<void> {
+    let phase = "join room";
     try {
       const room = await this.client.joinOrCreate<GameState>(ROOM_NAME, options);
       this.room = room;
       handlers.onConnected(room.sessionId);
 
       const $ = getStateCallbacks(room);
+      let resolveLocalPlayer: (() => void) | undefined;
+      const localPlayerReady = new Promise<void>((resolve) => {
+        resolveLocalPlayer = resolve;
+      });
 
-      $(room.state).players.onAdd((player, id) => {
+      phase = "bind players";
+      const seenPlayers = new Set<string>();
+      const bindPlayer = (player: Player, id: string) => {
+        if (seenPlayers.has(id)) return;
+        seenPlayers.add(id);
         handlers.onPlayerAdd(player, id);
         $(player).onChange(() => handlers.onPlayerChange(player, id));
-      });
+        if (id === room.sessionId) resolveLocalPlayer?.();
+      };
+      $(room.state).players.onAdd(bindPlayer);
+      room.state.players?.forEach((player, id) => bindPlayer(player, id));
       $(room.state).players.onRemove((_player, id) => {
+        seenPlayers.delete(id);
         handlers.onPlayerRemove(id);
       });
 
-      $(room.state).enemies.onAdd((enemy, id) => {
+      phase = "bind enemies";
+      const seenEnemies = new Set<string>();
+      const bindEnemy = (enemy: Enemy, id: string) => {
+        if (seenEnemies.has(id)) return;
+        seenEnemies.add(id);
         handlers.onEnemyAdd(enemy, id);
         $(enemy).onChange(() => handlers.onEnemyChange(enemy, id));
-      });
+      };
+      $(room.state).enemies.onAdd(bindEnemy);
+      room.state.enemies?.forEach((enemy, id) => bindEnemy(enemy, id));
       $(room.state).enemies.onRemove((_enemy, id) => {
+        seenEnemies.delete(id);
         handlers.onEnemyRemove(id);
       });
 
-      $(room.state).potions.onAdd((potion, id) => handlers.onPotionAdd(potion, id));
-      $(room.state).potions.onRemove((_potion, id) => handlers.onPotionRemove(id));
+      phase = "bind potions";
+      const seenPotions = new Set<string>();
+      const bindPotion = (potion: Potion, id: string) => {
+        if (seenPotions.has(id)) return;
+        seenPotions.add(id);
+        handlers.onPotionAdd(potion, id);
+      };
+      $(room.state).potions.onAdd(bindPotion);
+      room.state.potions?.forEach((potion, id) => bindPotion(potion, id));
+      $(room.state).potions.onRemove((_potion, id) => {
+        seenPotions.delete(id);
+        handlers.onPotionRemove(id);
+      });
 
-      $(room.state).trees.onAdd((tree, id) => {
+      phase = "bind trees";
+      const seenTrees = new Set<string>();
+      const bindTree = (tree: Tree, id: string) => {
+        if (seenTrees.has(id)) return;
+        seenTrees.add(id);
         handlers.onTreeAdd(tree, id);
         $(tree).onChange(() => handlers.onTreeChange(tree, id));
+      };
+      $(room.state).trees.onAdd(bindTree);
+      room.state.trees?.forEach((tree, id) => bindTree(tree, id));
+      $(room.state).trees.onRemove((_tree, id) => {
+        seenTrees.delete(id);
+        handlers.onTreeRemove(id);
       });
-      $(room.state).trees.onRemove((_tree, id) => handlers.onTreeRemove(id));
 
-      $(room.state).logs.onAdd((log, id) => handlers.onLogAdd(log, id));
-      $(room.state).logs.onRemove((_log, id) => handlers.onLogRemove(id));
+      phase = "bind logs";
+      const seenLogs = new Set<string>();
+      const bindLog = (log: Log, id: string) => {
+        if (seenLogs.has(id)) return;
+        seenLogs.add(id);
+        handlers.onLogAdd(log, id);
+      };
+      $(room.state).logs.onAdd(bindLog);
+      room.state.logs?.forEach((log, id) => bindLog(log, id));
+      $(room.state).logs.onRemove((_log, id) => {
+        seenLogs.delete(id);
+        handlers.onLogRemove(id);
+      });
 
-      $(room.state).rocks.onAdd((rock, id) => {
+      phase = "bind rocks";
+      const seenRocks = new Set<string>();
+      const bindRock = (rock: Rock, id: string) => {
+        if (seenRocks.has(id)) return;
+        seenRocks.add(id);
         handlers.onRockAdd(rock, id);
         $(rock).onChange(() => handlers.onRockChange(rock, id));
+      };
+      $(room.state).rocks.onAdd(bindRock);
+      room.state.rocks?.forEach((rock, id) => bindRock(rock, id));
+      $(room.state).rocks.onRemove((_rock, id) => {
+        seenRocks.delete(id);
+        handlers.onRockRemove(id);
       });
-      $(room.state).rocks.onRemove((_rock, id) => handlers.onRockRemove(id));
 
-      $(room.state).stones.onAdd((stone, id) => handlers.onStoneAdd(stone, id));
-      $(room.state).stones.onRemove((_stone, id) => handlers.onStoneRemove(id));
+      phase = "bind stones";
+      const seenStones = new Set<string>();
+      const bindStone = (stone: Stone, id: string) => {
+        if (seenStones.has(id)) return;
+        seenStones.add(id);
+        handlers.onStoneAdd(stone, id);
+      };
+      $(room.state).stones.onAdd(bindStone);
+      room.state.stones?.forEach((stone, id) => bindStone(stone, id));
+      $(room.state).stones.onRemove((_stone, id) => {
+        seenStones.delete(id);
+        handlers.onStoneRemove(id);
+      });
 
-      $(room.state).bananas.onAdd((banana, id) => handlers.onBananaAdd(banana, id));
-      $(room.state).bananas.onRemove((_banana, id) => handlers.onBananaRemove(id));
+      phase = "bind bananas";
+      const seenBananas = new Set<string>();
+      const bindBanana = (banana: Banana, id: string) => {
+        if (seenBananas.has(id)) return;
+        seenBananas.add(id);
+        handlers.onBananaAdd(banana, id);
+      };
+      $(room.state).bananas.onAdd(bindBanana);
+      room.state.bananas?.forEach((banana, id) => bindBanana(banana, id));
+      $(room.state).bananas.onRemove((_banana, id) => {
+        seenBananas.delete(id);
+        handlers.onBananaRemove(id);
+      });
 
-      $(room.state).houses.onAdd((house, id) => {
+      phase = "bind houses";
+      const seenHouses = new Set<string>();
+      const bindHouse = (house: House, id: string) => {
+        if (seenHouses.has(id)) return;
+        seenHouses.add(id);
         handlers.onHouseAdd(house, id);
         $(house).onChange(() => handlers.onHouseChange(house, id));
+      };
+      $(room.state).houses.onAdd(bindHouse);
+      room.state.houses?.forEach((house, id) => bindHouse(house, id));
+      $(room.state).houses.onRemove((_house, id) => {
+        seenHouses.delete(id);
+        handlers.onHouseRemove(id);
       });
-      $(room.state).houses.onRemove((_house, id) => handlers.onHouseRemove(id));
 
+      phase = "bind messages";
       room.onMessage("damage", (ev: DamageEvent) => handlers.onDamage(ev));
       room.onMessage("heal", (ev: HealEvent) => handlers.onHeal(ev));
       room.onMessage("xp", (ev: XpEvent) => handlers.onXp(ev));
@@ -157,11 +265,13 @@ export class NetworkClient {
             : "disconnected",
         );
       });
+
+      phase = "wait for local player";
+      await withTimeout(localPlayerReady, 8000, "timed out waiting for local player state");
     } catch (err) {
-      handlers.onError(
-        err instanceof Error ? err.message : "failed to connect to server",
-      );
-      throw err;
+      const message = err instanceof Error ? `${phase}: ${err.message}` : `${phase}: failed to connect to server`;
+      handlers.onError(message);
+      throw new Error(message);
     }
   }
 

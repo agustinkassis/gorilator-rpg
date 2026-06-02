@@ -23,6 +23,7 @@ import {
   WAVE_INTERVAL_STEP_MS,
   WAVE_INTERVAL_MAX_MS,
   WAVE_FIRST_DELAY_MS,
+  WAVE_SPAWN_SPREAD_MS,
   WAVE_SPAWN_DISTANCE,
   WAVE_SPAWN_ARC,
   WAVE_SIZE_BASE,
@@ -101,9 +102,18 @@ function playerLevelStats(state: GameState): { avg: number; max: number; alive: 
   return { avg: alive > 0 ? sum / alive : 1, max, alive };
 }
 
-/** Spawn one wave: a horde a long march out from the home, fanned across an arc so
- *  it sieges from roughly one direction, every goblin pointed at the house. */
-function spawnWave(state: GameState, waveNumber: number) {
+interface ScheduledGoblin {
+  delayMs: number;
+  x: number;
+  z: number;
+  level: number;
+}
+
+/** Build one wave: a horde a long march out from the home, fanned across an arc so
+ *  it sieges from roughly one direction, but scheduled over time instead of dumped
+ *  all at once. The first goblin is immediate, the last is +40s, and the rest land
+ *  randomly between those endpoints so the final experience stays predictable. */
+function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
   const home = homeOf(state);
   const hx = home ? home.x : 0;
   const hz = home ? home.z : 0;
@@ -115,17 +125,33 @@ function spawnWave(state: GameState, waveNumber: number) {
   const baseAng = Math.random() * Math.PI * 2; // the horde approaches from ~one side
   const lo = Math.max(1, Math.round(avg));
   const hi = Math.max(lo, max) + Math.floor(waveNumber / 3); // escalate the level cap over time
+  const delays =
+    size === 1
+      ? [0]
+      : [
+          0,
+          WAVE_SPAWN_SPREAD_MS,
+          ...Array.from({ length: size - 2 }, () => Math.random() * WAVE_SPAWN_SPREAD_MS),
+        ].sort((a, b) => a - b);
+  const wave: ScheduledGoblin[] = [];
   for (let i = 0; i < size; i++) {
-    const ang = baseAng + (Math.random() - 0.5) * WAVE_SPAWN_ARC;
-    const r = WAVE_SPAWN_DISTANCE * (0.9 + Math.random() * 0.2);
+    const ang = baseAng + (Math.random() - 0.5) * WAVE_SPAWN_ARC * 1.25;
+    const r = WAVE_SPAWN_DISTANCE * (0.78 + Math.random() * 0.44);
     const level = lo + Math.floor(Math.random() * (hi - lo + 1));
-    makeGoblin(state, clampRange(hx + Math.cos(ang) * r), clampRange(hz + Math.sin(ang) * r), level);
+    wave.push({
+      delayMs: delays[i],
+      x: clampRange(hx + Math.cos(ang) * r),
+      z: clampRange(hz + Math.sin(ang) * r),
+      level,
+    });
   }
+  return wave;
 }
 
 interface WaveClock {
   timer: number; // ms until the next wave
   number: number; // waves spawned so far
+  pending: ScheduledGoblin[]; // goblins queued for the current wave
 }
 const waveClocks = new WeakMap<GameState, WaveClock>();
 
@@ -148,7 +174,7 @@ function intervalAfterWave(n: number): number {
 export function waveSystem(state: GameState, dt: number) {
   let clock = waveClocks.get(state);
   if (!clock) {
-    clock = { timer: WAVE_FIRST_DELAY_MS, number: 0 };
+    clock = { timer: WAVE_FIRST_DELAY_MS, number: 0, pending: [] };
     waveClocks.set(state, clock);
   }
 
@@ -160,15 +186,23 @@ export function waveSystem(state: GameState, dt: number) {
     return;
   }
 
-  clock.timer -= dt * 1000;
+  const dtMs = dt * 1000;
+  if (clock.pending.length > 0) {
+    clock.pending.forEach((g) => (g.delayMs -= dtMs));
+    const ready = clock.pending.filter((g) => g.delayMs <= 0);
+    clock.pending = clock.pending.filter((g) => g.delayMs > 0);
+    ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level));
+  }
+
+  clock.timer -= dtMs;
   if (clock.timer <= 0) {
     let living = 0;
     state.enemies.forEach((e) => {
       if (e.kind === "goblin" && e.state !== AnimState.DEAD) living++;
     });
-    if (living < GOBLIN_LIVE_CAP) {
+    if (living < GOBLIN_LIVE_CAP && clock.pending.length === 0) {
       clock.number += 1;
-      spawnWave(state, clock.number);
+      clock.pending = scheduleWave(state, clock.number);
     }
     clock.timer = intervalAfterWave(clock.number); // growing rest before the next wave
   }
@@ -183,6 +217,7 @@ export function resetWaves(state: GameState) {
   if (clock) {
     clock.timer = WAVE_FIRST_DELAY_MS;
     clock.number = 0;
+    clock.pending = [];
   }
   state.waveNumber = 0;
   state.waveTimerMs = WAVE_FIRST_DELAY_MS;

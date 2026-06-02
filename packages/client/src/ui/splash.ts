@@ -184,6 +184,20 @@ export class SplashScreen {
     });
   }
 
+  /** Restore the name/join controls after a failed room join. */
+  showJoinError(message: string) {
+    this.el.classList.remove("connecting");
+    this.input.disabled = false;
+    this.assetLoadEl.classList.remove("joining", "ready");
+    this.assetStatusEl.textContent = "server offline";
+    const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
+    if (joinBtn) joinBtn.disabled = false;
+    const status = document.getElementById("nostrStatus") as HTMLElement | null;
+    if (status) status.textContent = message;
+    this.syncEnter();
+    if (!this.nostr) this.input.focus();
+  }
+
   /** Advance the hero scene; called each frame by the main loop while `active`. */
   update(dt: number) {
     this.t += dt;
@@ -653,6 +667,8 @@ export class SplashScreen {
     if (!this.resolveCreds) return;
     this.enterBtn.disabled = true;
     this.input.disabled = true;
+    const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
+    if (joinBtn) joinBtn.disabled = true;
     this.assetLoadEl.classList.add("joining");
     const resolve = this.resolveCreds;
     this.resolveCreds = undefined;
