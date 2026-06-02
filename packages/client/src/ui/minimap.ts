@@ -222,7 +222,7 @@ export class Minimap {
     // ---- La Crypta objective and the healing tower — always visible above fog ----
     state?.houses.forEach((h) => {
       const [hx, hy] = proj(h.x, h.z);
-      this.drawHouse(ctx, hx, hy, scale, h.hp, h.maxHp, h.alive);
+      this.drawHouse(ctx, hx, hy, scale, h.alive);
     });
     for (const tower of this.props?.all() ?? []) {
       if (tower.def.name !== TOWER_PROP_NAME) continue;
@@ -310,13 +310,10 @@ export class Minimap {
     hx: number,
     hy: number,
     scale: number,
-    hp: number,
-    maxHp: number,
     alive: boolean,
   ) {
     const footPx = HOUSE_COLLISION_RADIUS * scale;
     const h = Math.min(58, Math.max(18, footPx * 1.8));
-    const health = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : alive ? 1 : 0;
 
     const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, h * 2.3);
     glow.addColorStop(0, alive ? "rgba(255,206,104,0.5)" : "rgba(255,80,80,0.42)");
@@ -325,12 +322,6 @@ export class Minimap {
     ctx.beginPath();
     ctx.arc(hx, hy, h * 2.3, 0, Math.PI * 2);
     ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(hx, hy, h * 1.28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * health);
-    ctx.lineWidth = Math.max(2, h * 0.13);
-    ctx.strokeStyle = alive ? "#ffd479" : "#ff5c5c";
-    ctx.stroke();
 
     const bodyW = h * 1.5;
     const bodyH = h * 1.05;
