@@ -1,14 +1,14 @@
 {
   "tree": {
     "item": "log",
-    "amount": 1,
+    "amount": 3,
     "trigger": "kill",
     "hp": 100
   },
   "rock": {
     "item": "stone",
-    "amount": 140,
+    "amount": 150,
     "trigger": "hit",
-    "hp": 560
+    "hp": 1000
   }
 }
