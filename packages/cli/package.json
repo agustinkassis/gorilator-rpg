@@ -1,6 +1,6 @@
 {
   "name": "gorilator",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "One command to install, run, and supervise the Gorilator RPG game server natively (no Docker) as a systemd/launchd service, with an optional Cloudflare Tunnel setup.",
   "type": "module",
   "bin": {
