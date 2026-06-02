@@ -13,6 +13,7 @@ import {
   GOBLIN_CHASE_SPEED,
   GOBLIN_AGGRO_RADIUS,
   GOBLIN_DEAGGRO_RADIUS,
+  GOBLIN_LEASH,
   GOBLIN_ATTACK_RANGE,
   GOBLIN_ATTACK_COOLDOWN_MS,
   GOBLIN_ATTACK_WINDUP_MS,
@@ -255,11 +256,17 @@ function nearestPlayer(state: GameState, g: Enemy): { p: Player; d: number } | n
   return best ? { p: best, d: bd } : null;
 }
 
+function isDefendingHome(home: House | null, p: Player): boolean {
+  if (!home) return true;
+  return Math.hypot(p.x - home.x, p.z - home.z) <= home.radius + GOBLIN_LEASH;
+}
+
 /**
  * Drive every goblin: by default it MARCHES on the home and batters the house when
  * it arrives — but a defender who comes within aggro range pulls it off the house
- * to fight, until that player dies or breaks away (past the deaggro range), then it
- * resumes the march. HIT/DEAD are entered by combat; we tick those here.
+ * to fight, until that player dies, breaks away (past the deaggro range), or leaves
+ * La Crypta's defensive area, then it resumes the march. HIT/DEAD are entered by
+ * combat; we tick those here.
  */
 export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDamage, emitKill: EmitKill) {
   const dtMs = dt * 1000;
@@ -300,9 +307,11 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
     // ---- Priority 1: a defender to fight ----
     // Stay locked on a player while it's within the give-up range; otherwise a
     // player who steps inside the aggro radius pulls the goblin off the house.
+    // Defenders who run too far from La Crypta stop being worth chasing.
     let engaging = false;
-    if (g.aggro && near && near.d <= GOBLIN_DEAGGRO_RADIUS) engaging = true;
-    else if (near && near.d <= (g.aggroRadius || GOBLIN_AGGRO_RADIUS)) {
+    const nearIsDefending = near && isDefendingHome(home, near.p);
+    if (g.aggro && nearIsDefending && near.d <= GOBLIN_DEAGGRO_RADIUS) engaging = true;
+    else if (nearIsDefending && near.d <= (g.aggroRadius || GOBLIN_AGGRO_RADIUS)) {
       g.aggro = true;
       engaging = true;
     } else if (g.aggro) {
