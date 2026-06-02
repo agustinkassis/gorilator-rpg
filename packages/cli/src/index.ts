@@ -54,7 +54,8 @@ Options (install):
   --repo <url>       Game repository      (env GORILATOR_REPO)
   --ref <ref>        Branch or tag        (env GORILATOR_REF, default main)
   --dir <path>       Install directory    (env GORILATOR_DIR)
-  --port <n>         Listen port          (env GAME_SERVER_PORT, default 2567)
+  --port <n>         Server port (WebSocket + monitor + API)  (env GAME_SERVER_PORT, default 2567)
+  --client-port <n>  Client web port (game page)              (env CLIENT_PORT, default 8080)
   --yes              Assume yes to prompts (env GORILATOR_YES=1)
   --skip-service     Clone + build only; don't register the OS service
   --skip-tunnel      Don't offer the Cloudflare setup after install
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
       ref: { type: "string" },
       dir: { type: "string" },
       port: { type: "string" },
+      "client-port": { type: "string" },
       yes: { type: "boolean" },
       "skip-service": { type: "boolean" },
       "skip-tunnel": { type: "boolean" },

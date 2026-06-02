@@ -32,8 +32,10 @@ export async function install(opts: Options, version: string): Promise<void> {
   const user = targetUser();
   ensureAppDir(appDir, user);
   cloneOrUpdate(opts.repo, opts.ref, appDir);
-  installAndBuild(appDir); // same-origin client — a tunnel (if any) is set up by `setup`
-  ensureEnv(appDir, user, opts.port);
+  ensureEnv(appDir, user, opts.port, opts.clientPort);
+  // Two-port native build: the client dials ws://<its-host>:<server port>, so it
+  // works on its own port AND same-origin. `setup` rebuilds it for Cloudflare.
+  installAndBuild(appDir, { serverPort: opts.port });
 
   if (opts.noService) {
     log.ok(`Build ready at ${appDir}. Service registration skipped (--skip-service).`);
@@ -47,6 +49,7 @@ export async function install(opts: Options, version: string): Promise<void> {
   saveConfig({
     appDir,
     port: opts.port,
+    clientPort: opts.clientPort,
     repo: opts.repo,
     ref: opts.ref,
     user,
@@ -67,7 +70,7 @@ export async function install(opts: Options, version: string): Promise<void> {
 
 /** Create .env on first install (generating a monitor password + a stable Nostr
  *  key); keep an existing one untouched. */
-function ensureEnv(appDir: string, user: string, port: number): void {
+function ensureEnv(appDir: string, user: string, port: number, clientPort: number): void {
   const ef = envFile(appDir);
   if (existsSync(ef)) {
     parseEnv(readFileSync(ef, "utf8"));
@@ -76,6 +79,7 @@ function ensureEnv(appDir: string, user: string, port: number): void {
   }
   const body = renderEnv({
     GAME_SERVER_PORT: String(port),
+    CLIENT_PORT: String(clientPort),
     MONITOR_USER: "admin",
     MONITOR_PASS: genSecret(),
     NOSTR_NSEC: generateNsec(),

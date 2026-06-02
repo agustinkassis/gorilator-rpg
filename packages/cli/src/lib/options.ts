@@ -6,6 +6,7 @@ import { defaultAppDir } from "./paths.js";
 const DEFAULT_REPO = "https://github.com/agustinkassis/gorilator-rpg.git";
 const DEFAULT_REF = "main";
 const DEFAULT_PORT = 2567;
+const DEFAULT_CLIENT_PORT = 8080;
 
 /** The subset of parseArgs values this CLI consumes. */
 export interface RawFlags {
@@ -13,6 +14,7 @@ export interface RawFlags {
   ref?: string;
   dir?: string;
   port?: string;
+  "client-port"?: string;
   yes?: boolean;
   "skip-service"?: boolean;
   "skip-tunnel"?: boolean;
@@ -26,6 +28,7 @@ export interface Options {
   dirExplicit: boolean;
   port: number;
   portExplicit: boolean;
+  clientPort: number;
   yes: boolean;
   noService: boolean;
   noTunnel: boolean;
@@ -37,6 +40,7 @@ export function resolveOptions(v: RawFlags): Options {
   const dirFlag = v.dir ?? env.GORILATOR_DIR;
   const portFlag = v.port ?? env.GAME_SERVER_PORT;
   const port = Number(portFlag);
+  const clientPort = Number(v["client-port"] ?? env.CLIENT_PORT);
   return {
     repo: v.repo ?? env.GORILATOR_REPO ?? DEFAULT_REPO,
     ref: v.ref ?? env.GORILATOR_REF ?? DEFAULT_REF,
@@ -44,6 +48,7 @@ export function resolveOptions(v: RawFlags): Options {
     dirExplicit: dirFlag !== undefined,
     port: Number.isFinite(port) && port > 0 ? port : DEFAULT_PORT,
     portExplicit: portFlag !== undefined && Number.isFinite(port) && port > 0,
+    clientPort: Number.isFinite(clientPort) && clientPort > 0 ? clientPort : DEFAULT_CLIENT_PORT,
     yes: Boolean(v.yes) || env.GORILATOR_YES === "1",
     noService: Boolean(v["skip-service"]),
     noTunnel: Boolean(v["skip-tunnel"]),

@@ -67,8 +67,12 @@ function defaultEndpoint(): string {
   // Single-service deploys (the Railway template): one server serves the client
   // AND the WebSocket, so dial the page's own host + port (set at build time).
   if (import.meta.env.VITE_SAME_ORIGIN) return `${proto}://${location.host}`;
-  // Dev: client is served on :5173, the Colyseus server runs on :2567.
-  return `${proto}://${location.hostname}:${SERVER_PORT}`;
+  // Two-port / native split deploys (and dev): the client is served on its OWN
+  // port while the Colyseus server listens on another port of the SAME host. The
+  // server port is baked at build time (VITE_SERVER_PORT, e.g. 2567) so it tracks
+  // a custom --port; the host comes from the page so LAN/remote/IP access works.
+  const serverPort = (import.meta.env.VITE_SERVER_PORT as string | undefined) || String(SERVER_PORT);
+  return `${proto}://${location.hostname}:${serverPort}`;
 }
 
 export class NetworkClient {
