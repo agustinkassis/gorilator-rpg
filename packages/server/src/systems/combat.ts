@@ -4,8 +4,10 @@ import {
   Enemy,
   Tree,
   Rock,
+  House,
   AnimState,
   DamageEvent,
+  HealEvent,
   ATTACK_RANGE,
   ATTACK_COOLDOWN_MS,
   ATTACK_WINDUP_MS,
@@ -24,6 +26,8 @@ import {
   ROCK_COLLISION_SCALE,
   GOBLIN_POTION_DROP_CHANCE,
   GOBLIN_BERSERKER_POTION_DROP_CHANCE,
+  HOUSE_REPAIR_MIN_HP,
+  HOUSE_REPAIR_MAX_HP,
 } from "@rpg/shared";
 import { setDestination, placeAtFreeSpot } from "./movement";
 import { nearestFreeWorld } from "./pathfinding";
@@ -38,11 +42,18 @@ import {
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 
-/** Anything that can be attacked (player, enemy, tree, or rock). All have hp + armor. */
+/** Anything that can be attacked or repaired by a player. */
+type Target = Player | Enemy | Tree | Rock | House;
+/** Damageable targets all have hp + armor. Houses are repaired instead. */
 type Damageable = Player | Enemy | Tree | Rock;
 
 /** Sink for damage events so the room can broadcast floating numbers to clients. */
 export type EmitDamage = (ev: DamageEvent) => void;
+export type EmitHeal = (ev: HealEvent) => void;
+export type RepairInventory = {
+  hasWood: (playerId: string) => boolean;
+  consumeWood: (playerId: string) => boolean;
+};
 
 /**
  * Roll a hit: attacker's attack power, randomised ±ATTACK_VARIANCE, reduced by
@@ -66,26 +77,28 @@ function rollDamage(
 }
 
 
-function resolveTarget(state: GameState, id: string): Damageable | undefined {
+function resolveTarget(state: GameState, id: string): Target | undefined {
   return (
     state.players.get(id) ??
     state.enemies.get(id) ??
     state.trees.get(id) ??
-    state.rocks.get(id)
+    state.rocks.get(id) ??
+    state.houses.get(id)
   );
 }
 
 /** Bulky targets (rocks) carry a collision radius — you hit them from the surface,
  *  not the centre, so the reach must include it. Other targets are points. */
-function targetRadius(t: Damageable): number {
+function targetRadius(t: Target): number {
   const r = (t as { radius?: number }).radius;
-  // only rocks carry a radius; use a fraction of it so the player walks right up
-  // to the boulder to mine it (and ends up amid the stones it drops).
+  if (t instanceof House) return typeof r === "number" ? r : 0;
+  // Rocks carry a radius; use a fraction of it so the player walks right up to
+  // the boulder to mine it (and ends up amid the stones it drops).
   return typeof r === "number" ? r * ROCK_COLLISION_SCALE : 0;
 }
 
 /** How close to a target's centre you can land a hit (its surface + melee reach). */
-function attackReach(t: Damageable): number {
+function attackReach(t: Target): number {
   return ATTACK_RANGE + targetRadius(t);
 }
 
@@ -96,7 +109,7 @@ export function isImmune(t: Damageable): boolean {
 }
 
 /** A point just outside the target to walk toward (right up to bulky rocks). */
-function approachPoint(attacker: Player, target: Damageable) {
+function approachPoint(attacker: Player, target: Target) {
   const dx = target.x - attacker.x;
   const dz = target.z - attacker.z;
   const dist = Math.hypot(dx, dz) || 1;
@@ -136,6 +149,8 @@ export function combatSystem(
   dt: number,
   emitDamage: EmitDamage,
   emitXp: EmitXp,
+  emitHeal?: EmitHeal,
+  repairInventory?: RepairInventory,
 ) {
   const dtMs = dt * 1000;
 
@@ -146,7 +161,7 @@ export function combatSystem(
       case AnimState.ATTACK:
         p.stateTimer -= dtMs;
         if (p.stateTimer <= 0) {
-          connectHit(state, p, emitDamage, emitXp); // damage lands at the end of the wind-up
+          connectHit(state, p, emitDamage, emitXp, emitHeal, repairInventory); // hit lands at the end of the wind-up
           p.state = AnimState.IDLE;
         }
         return;
@@ -171,6 +186,10 @@ export function combatSystem(
     if (p.attackTargetId) {
       const target = resolveTarget(state, p.attackTargetId);
       if (!target || target.hp <= 0) {
+        p.attackTargetId = "";
+        return;
+      }
+      if (target instanceof House && (target.hp >= target.maxHp || !repairInventory?.hasWood(p.id))) {
         p.attackTargetId = "";
         return;
       }
@@ -217,6 +236,8 @@ function connectHit(
   attacker: Player,
   emitDamage: EmitDamage,
   emitXp: EmitXp,
+  emitHeal?: EmitHeal,
+  repairInventory?: RepairInventory,
 ) {
   const targetId = attacker.pendingHitId;
   attacker.pendingHitId = "";
@@ -224,11 +245,22 @@ function connectHit(
 
   const target = resolveTarget(state, targetId);
   if (!target || target.hp <= 0) return;
-  if (isImmune(target)) return; // Dev Mode: an immortal player takes no damage
+  if (!(target instanceof House) && isImmune(target)) return; // Dev Mode: an immortal player takes no damage
 
   const dx = target.x - attacker.x;
   const dz = target.z - attacker.z;
   if (Math.hypot(dx, dz) > attackReach(target) * 1.35) return; // target dodged out of range
+
+  if (target instanceof House) {
+    if (target.hp >= target.maxHp) return;
+    if (!repairInventory?.consumeWood(attacker.id)) return;
+    const roll = HOUSE_REPAIR_MIN_HP + Math.floor(Math.random() * (HOUSE_REPAIR_MAX_HP - HOUSE_REPAIR_MIN_HP + 1));
+    const amount = Math.min(roll, target.maxHp - target.hp);
+    if (amount <= 0) return;
+    target.hp += amount;
+    emitHeal?.({ targetId, amount });
+    return;
+  }
 
   const { amount, crit } = rollDamage(attacker, target);
   target.hp = Math.max(0, target.hp - amount);

@@ -446,10 +446,10 @@ export class Game {
     this.houseModel = model;
   }
 
-  /** Dev Mode: make the house click-selectable (off in normal play, so clicks near
-   *  the house move the player instead of being eaten by its footprint). */
+  /** Toggle the house pick proxy. Normal play keeps it on so players can repair
+   *  La Crypta; Dev Mode also uses the same proxy for selection. */
   setHousePickable(on: boolean) {
-    this.houseModel?.setPickable(on);
+    this.houseModel?.setPickable(on || this.houses.size > 0);
   }
 
   addHouse(h: House, id: string) {
@@ -696,6 +696,12 @@ export class Game {
     if (e) {
       this.hud.showHeal(e.root, e.id, ev.amount);
       this.audio?.heal({ x: e.root.position.x, z: e.root.position.z });
+      return;
+    }
+    const house = this.houses.get(ev.targetId);
+    if (house) {
+      this.hud.showHeal(house.anchor, ev.targetId, ev.amount);
+      this.audio?.chop({ x: house.anchor.position.x, z: house.anchor.position.z });
     }
   }
 

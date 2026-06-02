@@ -168,6 +168,8 @@ export const WAVE_SIZE_PER_WAVE = 1; // ...plus this many more each successive w
 export const WAVE_SIZE_MAX = 30; // hard cap on a single wave
 export const GOBLIN_LIVE_CAP = 70; // hold the next wave while this many goblins are already alive (perf + fairness)
 export const GOBLIN_HOUSE_DAMAGE = 5; // flat HP a goblin's hit chips off the house
+export const HOUSE_REPAIR_MIN_HP = 5; // HP restored by one log, lower roll
+export const HOUSE_REPAIR_MAX_HP = 15; // HP restored by one log, upper roll
 
 // Health potions scattered in the world (collected into the inventory).
 export const POTION_COUNT = 6; // how many exist at once

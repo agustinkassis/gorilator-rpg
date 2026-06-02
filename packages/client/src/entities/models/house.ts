@@ -31,8 +31,8 @@ export interface HouseModel {
   hide(): void;
   /** Rebuild the house: re-show the model and its shadow proxy (after a wipe). */
   show(): void;
-  /** Make the house click-selectable (Dev Mode only). Off in normal play so clicks
-   *  near/on the house fall through to the ground and just move the player. */
+  /** Toggle the cheap house pick proxy. Normal play uses it for repair targeting;
+   *  Dev Mode also uses it for selection. */
   setPickable(on: boolean): void;
 }
 
@@ -111,10 +111,8 @@ export async function loadHouse(
     proxy.isPickable = false;
     shadow.addShadowCaster(proxy); // ...but it still casts a shadow
 
-    // A cheap, transparent, *pickable* proxy so Dev Mode can SELECT the house (the
-    // real glb is ~6M verts — far too heavy to hover-pick). Tagged as the house
-    // entity so Selection resolves it; a normal-play click just no-ops (the server
-    // has no attackable "house" target). Lets you turn the house into a spawner.
+    // A cheap, transparent, pickable proxy so normal play can repair the house and
+    // Dev Mode can select it. The real glb is ~6M verts — far too heavy to hover-pick.
     const pick = MeshBuilder.CreateBox(
       "housePickProxy",
       { width: b.max.x - b.min.x, height: b.max.y - b.min.y, depth: b.max.z - b.min.z },
@@ -122,7 +120,7 @@ export async function loadHouse(
     );
     pick.position.copyFrom(proxy.position);
     pick.visibility = 0; // transparent — invisible, but isVisible (so it can be picked)
-    pick.isPickable = false; // Dev Mode only; normal-play clicks fall through to the ground
+    pick.isPickable = true;
     pick.metadata = { entityId: "house-0", kind: "house" };
 
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);

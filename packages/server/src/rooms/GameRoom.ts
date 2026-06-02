@@ -45,6 +45,7 @@ import {
   BERSERKER_CRIT_DAMAGE_MULT,
   BERSERKER_ARMOR_MULT,
   BERSERKER_HP_MULT,
+  HealEvent,
   PlayerSave,
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
@@ -351,12 +352,22 @@ export class GameRoom extends Room<GameState> {
       const dt = scaledMs / 1000;
       const emitDamage = (ev: DamageEvent) => this.broadcast("damage", ev);
       const emitXp = (ev: XpEvent) => this.broadcast("xp", ev);
+      const emitHeal = (ev: HealEvent) => this.broadcast("heal", ev);
+      const repairInventory = {
+        hasWood: (pid: string) => countItem(this.inventories.get(pid) ?? [], "log") > 0,
+        consumeWood: (pid: string) => {
+          const inv = this.inventories.get(pid);
+          if (!inv || removeItem(inv, "log", 1) < 1) return false;
+          this.sendInventory(pid);
+          return true;
+        },
+      };
       staminaSystem(this.state, dt); // sets p.sprinting; movement reads it for the speed boost
       movementSystem(this.state, dt);
       // Paused: normal movement is frozen, but the local player roams as a ghost
       // at REAL (unscaled) time — decoupled from the game clock.
       if (this.state.timeScale === 0) ghostMovementSystem(this.state, deltaMs / 1000);
-      combatSystem(this.state, dt, emitDamage, emitXp);
+      combatSystem(this.state, dt, emitDamage, emitXp, emitHeal, repairInventory);
       goblinAiSystem(this.state, dt, emitDamage);
       if (this.state.timeScale > 0) separationSystem(this.state); // fan attackers out — no stacking on one tile
       waveSystem(this.state, dt); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS

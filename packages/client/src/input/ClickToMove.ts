@@ -97,6 +97,7 @@ const CURSORS = {
   attack: cur("⚔️"),
   cut: cur("🪓"),
   mine: cur("⛏️"),
+  repair: cur("🔨"),
   grab: cur("🤚"),
   default: "default",
 };
@@ -106,6 +107,7 @@ function cursorForKind(kind: string): string {
     return CURSORS.grab;
   if (kind === "tree") return CURSORS.cut;
   if (kind === "rock") return CURSORS.mine;
+  if (kind === "house") return CURSORS.repair;
   if (kind === "enemy" || kind === "player") return CURSORS.attack;
   return CURSORS.default;
 }
