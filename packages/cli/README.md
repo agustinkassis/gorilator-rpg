@@ -16,7 +16,7 @@ npx gorilator install
 
 This will:
 
-1. Check prerequisites (Node ≥ 20.6, `git`, `pnpm` — installing `pnpm@10.14.0` if missing).
+1. Check prerequisites (Node ≥ 20.6, `git`, `pnpm` — installing supported missing pieces).
 2. Clone the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
 3. `pnpm install`, build the shared schema, build the same-origin client, and build this CLI.
 4. Generate `.env` (server port, monitor credentials, a stable Nostr signing key).
@@ -24,7 +24,9 @@ This will:
    (plus an optional direct local client port for convenience).
 6. Put `gorilator` on your `PATH` and print the local URLs and monitor credentials.
 
-On a **bare box with no Node yet**, bootstrap everything (installs git + Node, then runs the above):
+On a **bare box with no Node yet**, bootstrap everything with the public single-file installer. On
+Debian/Ubuntu it installs `ca-certificates`, `curl`, `git`, Node, then runs the same native CLI as
+`npx gorilator install`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash

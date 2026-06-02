@@ -30,6 +30,17 @@ function debArch(): string | null {
 
 /** Ensure cloudflared is installed (arch-matched .deb on Debian/Ubuntu, Homebrew
  *  on macOS). */
+function ensureCurl(): void {
+  if (which("curl")) return;
+  if (isLinux && which("apt-get")) {
+    log.info("Installing curl for cloudflared download…");
+    runPrivileged("apt-get", ["update", "-y"]);
+    runPrivileged("apt-get", ["install", "-y", "ca-certificates", "curl"]);
+    return;
+  }
+  log.die("curl is required to download cloudflared. Install curl and re-run 'gorilator setup'.");
+}
+
 export function ensureCloudflared(): void {
   if (which("cloudflared")) {
     log.ok(`cloudflared present: ${capture("cloudflared", ["--version"]) ?? "installed"}`);
@@ -52,6 +63,7 @@ export function ensureCloudflared(): void {
     const deb = `/tmp/cloudflared-${arch}.deb`;
     const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb`;
     log.info(`Downloading cloudflared (${arch})…`);
+    ensureCurl();
     run("curl", ["-fsSL", "-o", deb, url]);
     if (!tryPrivileged("dpkg", ["-i", deb])) tryPrivileged("apt-get", ["install", "-f", "-y"]);
     log.ok("cloudflared installed.");

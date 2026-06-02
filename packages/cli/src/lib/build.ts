@@ -29,7 +29,7 @@ export function ensureGit(): void {
   if (isLinux && which("apt-get")) {
     log.info("Installing git…");
     runPrivileged("apt-get", ["update", "-y"]);
-    runPrivileged("apt-get", ["install", "-y", "git"]);
+    runPrivileged("apt-get", ["install", "-y", "ca-certificates", "git"]);
     return;
   }
   log.die("git is required but not installed. Install git and re-run.");

@@ -42,6 +42,37 @@ die()  { printf '%s %s\n' "${RED}✗${CLR}" "$*" >&2; exit 1; }
 SUDO=""
 [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
 
+need_privilege() {
+  if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then
+    die "sudo is required to install system packages. Re-run as root or install sudo first."
+  fi
+}
+
+apt_install() {
+  need_privilege
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -y
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+}
+
+ensure_curl() {
+  command -v curl >/dev/null 2>&1 && return 0
+  local os; os="$(uname -s)"
+  if [ "$os" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+    info "Installing curl…"
+    apt_install ca-certificates curl
+    return 0
+  fi
+  die "curl is required to install Node automatically. Install curl and re-run."
+}
+
+run_nodesource_setup() {
+  if [ -n "$SUDO" ]; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
+  else
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  fi
+}
+
 # --- Node ≥ 20.6 is required (the daemon runs the server with `node --import
 #     tsx`, and parseArgs/module.register need 20.6+). ---
 node_ok() {
@@ -54,15 +85,38 @@ node_ok() {
   return 1
 }
 
+prefer_brew_node() {
+  command -v brew >/dev/null 2>&1 || return 1
+  local formula prefix
+  for formula in node@20 node; do
+    prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+    if [ -n "$prefix" ] && [ -x "$prefix/bin/node" ]; then
+      export PATH="$prefix/bin:$PATH"
+      node_ok && return 0
+    fi
+  done
+  return 1
+}
+
 ensure_node() {
-  if node_ok; then return 0; fi  # silent when Node is already fine — stay transparent
-  info "Installing Node.js 20 (the daemon needs Node ≥ 20.6)…"
   local os; os="$(uname -s)"
+  if node_ok; then return 0; fi  # silent when Node is already fine — stay transparent
+  if [ "$os" = "Darwin" ]; then
+    prefer_brew_node && return 0
+  fi
+  info "Installing Node.js 20 (the daemon needs Node ≥ 20.6)…"
   if [ "$os" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
-    $SUDO apt-get install -y nodejs
+    ensure_curl
+    need_privilege
+    run_nodesource_setup
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
   elif [ "$os" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
-    brew install node@20 && brew link --overwrite --force node@20 2>/dev/null || brew install node
+    if brew install node@20; then
+      brew link --overwrite --force node@20 2>/dev/null || true
+    else
+      brew install node
+    fi
+    prefer_brew_node || true
   else
     die "Node ≥ 20.6 is required and can't be auto-installed here. Install Node 20+ and re-run."
   fi

@@ -27,7 +27,8 @@ browser dials `wss://game.<domain>` for multiplayer.
 - A **Linux server** (Debian/Ubuntu recommended) or a **macOS** machine.
 - For public hosting: a **domain managed by Cloudflare** (free plan is fine). You do **not** pre-create any
   DNS records — `gorilator setup` makes them.
-- Nothing else. The installer adds Node, pnpm, and (for `setup`) cloudflared for you.
+- Nothing else. The installer adds Node, pnpm, and (for `setup`) cloudflared for you. On a fresh
+  Debian/Ubuntu box, the public bootstrap also installs `ca-certificates`, `curl`, and `git`.
 
 ---
 
@@ -39,15 +40,17 @@ browser dials `wss://game.<domain>` for multiplayer.
 npx gorilator install
 ```
 
-**On a bare box (no Node yet) — one line installs git + Node, then everything:**
+**On a bare box (no Node yet) — one public bash file installs OS prerequisites + Node, then everything:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
 ```
 
-The installer, in order:
+That public bootstrap fetches this repo and launches `./cli/gorilator install`, which runs the same native
+CLI as `npx gorilator install`. The installer, in order:
 
-1. Ensures **Node ≥ 20.6**, **git**, and **pnpm@10.14.0** (installing what's missing).
+1. Ensures **ca-certificates**, **curl**, **git**, **Node ≥ 20.6**, and **pnpm@10.14.0**
+   (installing what's missing on supported systems).
 2. Clones the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
 3. `pnpm install`, builds the shared schema, builds the client, and builds the CLI.
 4. Generates `.env` — the server port, a random monitor password, **and** the server's Nostr key
