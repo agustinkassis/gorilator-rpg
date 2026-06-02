@@ -38,7 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cl
 gorilator setup
 ```
 
-Prompts for a base domain and one game subdomain (default `game.<domain>`), then:
+Opens an arrow-key setup menu with categories for server settings, server NSEC, Cloudflare, and
+Colyseus/environment settings. Choosing Cloudflare install/update prompts for a base domain and one game
+subdomain (default `game.<domain>`), then:
 
 1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for that host.
 2. Writes an ingress that routes `game.<domain>` → the server port.
@@ -64,6 +66,7 @@ gorilator stop        # stop the service
 gorilator restart     # restart the service
 gorilator logs        # stream server logs (Ctrl-C to detach)
 gorilator update      # stop services, git pull, rebuild, start services
+gorilator setup       # interactive setup menu: ports, NSEC, Cloudflare, env
 gorilator tunnel <cmd># Cloudflare tunnel — login | status | restart
 gorilator uninstall   # stop and remove services, config, command, and installed files
 ```
@@ -96,8 +99,9 @@ install record, global npm command, and installed app directory. Use
 | `--skip-tunnel` | — | — | Don't offer the Cloudflare setup after install |
 | `--local-cli <pkg>` | `GORILATOR_LOCAL_CLI` | — | Install the global command from a local path/tarball (testing) |
 
-`gorilator setup` reads `GORILATOR_DOMAIN` and `GORILATOR_HOST`/`GORILATOR_GAME_HOST` for non-interactive
-runs. Legacy `GORILATOR_SERVER_HOST`/`GORILATOR_CLIENT_HOST` are accepted as fallbacks.
+`gorilator setup` is interactive by default. It reads `GORILATOR_DOMAIN` and
+`GORILATOR_HOST`/`GORILATOR_GAME_HOST` for non-interactive Cloudflare runs. Legacy
+`GORILATOR_SERVER_HOST`/`GORILATOR_CLIENT_HOST` are accepted as fallbacks.
 
 ## License
 

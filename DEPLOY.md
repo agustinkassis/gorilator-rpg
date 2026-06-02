@@ -73,7 +73,9 @@ CLI as `npx gorilator install`. The installer, in order:
 gorilator setup
 ```
 
-It prompts for a base domain + one game subdomain (default `game.<domain>`), then:
+It opens an arrow-key menu with categories for server settings, server NSEC, Cloudflare, and
+Colyseus/environment settings. Choosing Cloudflare install/update prompts for a base domain + one game
+subdomain (default `game.<domain>`), then:
 
 1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for that host.
 2. Writes `/etc/cloudflared/config.yml` (macOS: `~/.cloudflared/config.yml`) with an ingress that routes
@@ -83,8 +85,9 @@ It prompts for a base domain + one game subdomain (default `game.<domain>`), the
    local client port, leaving one local game port behind the tunnel.
 4. Runs `cloudflared` as a boot service and prints your public URLs + monitor credentials.
 
-Re-run it anytime to change domains. For non-interactive automation set `GORILATOR_DOMAIN` and optionally
-`GORILATOR_HOST`/`GORILATOR_GAME_HOST`.
+Re-run it anytime to change ports, update the server NSEC, change domains, remove local Cloudflare
+settings, or edit supported environment values. For non-interactive Cloudflare automation set
+`GORILATOR_DOMAIN` and optionally `GORILATOR_HOST`/`GORILATOR_GAME_HOST`.
 
 ---
 
@@ -97,7 +100,7 @@ gorilator stop          Stop the daemon
 gorilator restart       Restart the daemon
 gorilator logs          Stream server logs (Ctrl-C to detach)
 gorilator update        stop services, git pull, rebuild, start services
-gorilator setup         Configure the Cloudflare tunnel + public game hostname
+gorilator setup         Interactive setup: server ports, NSEC, Cloudflare, env settings
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
 gorilator uninstall     Stop & remove services, config, command, and installed files
 ```

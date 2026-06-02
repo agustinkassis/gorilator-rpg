@@ -38,7 +38,7 @@ function usage(): void {
 Usage: gorilator <command> [options]
 
   install            Clone the game, build it, run it as a service, put 'gorilator' on PATH
-  setup              Configure a Cloudflare tunnel + public hostname, rebuild the client
+  setup              Open the setup menu: server ports, NSEC, Cloudflare, env settings
   start              Start the daemon (prints the port it listens on)
   stop               Stop the daemon
   restart            Restart the daemon
