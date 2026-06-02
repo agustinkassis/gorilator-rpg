@@ -7,6 +7,7 @@ import {
   House,
   AnimState,
   DamageEvent,
+  KillEvent,
   HealEvent,
   ATTACK_RANGE,
   ATTACK_COOLDOWN_MS,
@@ -49,6 +50,7 @@ type Damageable = Player | Enemy | Tree | Rock;
 
 /** Sink for damage events so the room can broadcast floating numbers to clients. */
 export type EmitDamage = (ev: DamageEvent) => void;
+export type EmitKill = (ev: KillEvent) => void;
 export type EmitHeal = (ev: HealEvent) => void;
 export type RepairInventory = {
   hasWood: (playerId: string) => boolean;
@@ -148,6 +150,7 @@ export function combatSystem(
   state: GameState,
   dt: number,
   emitDamage: EmitDamage,
+  emitKill: EmitKill,
   emitXp: EmitXp,
   emitHeal?: EmitHeal,
   repairInventory?: RepairInventory,
@@ -161,7 +164,7 @@ export function combatSystem(
       case AnimState.ATTACK:
         p.stateTimer -= dtMs;
         if (p.stateTimer <= 0) {
-          connectHit(state, p, emitDamage, emitXp, emitHeal, repairInventory); // hit lands at the end of the wind-up
+          connectHit(state, p, emitDamage, emitKill, emitXp, emitHeal, repairInventory); // hit lands at the end of the wind-up
           p.state = AnimState.IDLE;
         }
         return;
@@ -235,6 +238,7 @@ function connectHit(
   state: GameState,
   attacker: Player,
   emitDamage: EmitDamage,
+  emitKill: EmitKill,
   emitXp: EmitXp,
   emitHeal?: EmitHeal,
   repairInventory?: RepairInventory,
@@ -295,6 +299,13 @@ function connectHit(
     if (state.players.has(targetId)) {
       pe.respawnTimer = PLAYER_RESPAWN_MS;
       applyDeathXpPenalty(pe as Player); // dying costs 30% of XP (can de-level)
+      emitKill({
+        killerId: attacker.id,
+        killerName: attacker.name || "Player",
+        killerKind: "player",
+        victimId: targetId,
+        victimName: (pe as Player).name || "Player",
+      });
     } else
       pe.respawnTimer =
         state.enemies.get(targetId)?.kind === "goblin"

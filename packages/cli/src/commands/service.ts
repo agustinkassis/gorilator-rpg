@@ -11,7 +11,7 @@ import {
   statusService,
   stopService,
 } from "../lib/service.js";
-import { printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
+import { printPackageVersions, printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
 
 export function startCmd(): void {
   startService();
@@ -50,8 +50,10 @@ export async function statusCmd(): Promise<void> {
     const healthy = await probeHealth(info.port);
     printPorts(info, healthy);
     process.stdout.write(`  Files  : ${cfg.appDir}  (ref ${cfg.ref})\n`);
+    printPackageVersions(cfg.appDir);
     printPublic(info);
   } else {
+    printPackageVersions(process.cwd());
     log.warn("No install record found — run 'gorilator install' first.");
   }
   if (s.raw) process.stdout.write(`\n${log.dim(s.raw)}\n`);

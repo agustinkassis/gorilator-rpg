@@ -20,6 +20,7 @@ import {
   InventorySlot,
   ItemType,
   DamageEvent,
+  KillEvent,
   XpEvent,
   ROCK_COLLISION_SCALE,
   POTION_HEAL,
@@ -362,6 +363,7 @@ export class GameRoom extends Room<GameState> {
       const scaledMs = deltaMs * this.state.timeScale;
       const dt = scaledMs / 1000;
       const emitDamage = (ev: DamageEvent) => this.broadcast("damage", ev);
+      const emitKill = (ev: KillEvent) => this.broadcast("kill", ev);
       const emitXp = (ev: XpEvent) => this.broadcast("xp", ev);
       const emitHeal = (ev: HealEvent) => this.broadcast("heal", ev);
       const repairInventory = {
@@ -378,8 +380,8 @@ export class GameRoom extends Room<GameState> {
       // Paused: normal movement is frozen, but the local player roams as a ghost
       // at REAL (unscaled) time — decoupled from the game clock.
       if (this.state.timeScale === 0) ghostMovementSystem(this.state, deltaMs / 1000);
-      combatSystem(this.state, dt, emitDamage, emitXp, emitHeal, repairInventory);
-      goblinAiSystem(this.state, dt, emitDamage);
+      combatSystem(this.state, dt, emitDamage, emitKill, emitXp, emitHeal, repairInventory);
+      goblinAiSystem(this.state, dt, emitDamage, emitKill);
       if (this.state.timeScale > 0) separationSystem(this.state); // fan attackers out — no stacking on one tile
       waveSystem(this.state, dt); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
       this.sacredCircleHealSystem(dt);
@@ -387,7 +389,7 @@ export class GameRoom extends Room<GameState> {
       this.releasePendingThrows(scaledMs);
       treeRegrowSystem(this.state, dt);
       potionRespawnSystem(this.state, dt);
-      bananaSystem(this.state, dt, emitDamage, emitHeal, emitXp);
+      bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp);
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {

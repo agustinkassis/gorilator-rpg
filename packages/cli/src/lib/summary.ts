@@ -1,6 +1,7 @@
 // Shared "where is it listening / where can I reach it" reporting, used by
 // install, start, and status so the user always sees the same port + URL block.
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseEnv } from "./env.js";
 import * as log from "./log.js";
 import { envFile } from "./paths.js";
@@ -12,6 +13,45 @@ export interface SummaryInfo {
   monitorPass?: string;
   clientHost?: string; // legacy public play.* (from old split-host setups)
   serverHost?: string; // public game host (or legacy api.*)
+}
+
+interface PackageVersion {
+  label: string;
+  version: string;
+}
+
+const VERSION_FILES: Array<{ label: string; path: string }> = [
+  { label: "app", path: "package.json" },
+  { label: "cli", path: "packages/cli/package.json" },
+  { label: "client", path: "packages/client/package.json" },
+  { label: "server", path: "packages/server/package.json" },
+  { label: "shared", path: "packages/shared/package.json" },
+  { label: "landing", path: "packages/landing/package.json" },
+];
+
+function readPackageVersion(appDir: string, path: string): string | null {
+  const packagePath = join(appDir, path);
+  if (!existsSync(packagePath)) return null;
+  try {
+    const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" && pkg.version.length > 0 ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readPackageVersions(appDir: string): PackageVersion[] {
+  return VERSION_FILES.flatMap(({ label, path }) => {
+    const version = readPackageVersion(appDir, path);
+    return version ? [{ label, version }] : [];
+  });
+}
+
+export function printPackageVersions(appDir: string): void {
+  const versions = readPackageVersions(appDir);
+  if (versions.length === 0) return;
+  const summary = versions.map(({ label, version }) => `${label} v${version}`).join(" / ");
+  process.stdout.write(`  Packages: ${summary}\n`);
 }
 
 /** Read the listen port + monitor creds + public hostnames out of the install's

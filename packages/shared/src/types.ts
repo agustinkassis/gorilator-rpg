@@ -150,6 +150,16 @@ export interface DamageEvent {
   crit: boolean;
 }
 
+// Server -> client: emitted only when a player dies to a killer. Goblin/enemy
+// deaths stay silent in the kill feed.
+export interface KillEvent {
+  killerId: string;
+  killerName: string;
+  killerKind: "player" | "goblin";
+  victimId: string;
+  victimName: string;
+}
+
 // Server -> client: emitted when a player is healed (e.g. by a potion).
 export interface HealEvent {
   targetId: string;

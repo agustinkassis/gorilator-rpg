@@ -40,6 +40,7 @@ import {
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
 import { applyDeathXpPenalty } from "./leveling";
 import { dropStructureLoot } from "./resources";
+import type { EmitKill } from "./combat";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -260,7 +261,7 @@ function nearestPlayer(state: GameState, g: Enemy): { p: Player; d: number } | n
  * to fight, until that player dies or breaks away (past the deaggro range), then it
  * resumes the march. HIT/DEAD are entered by combat; we tick those here.
  */
-export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDamage) {
+export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDamage, emitKill: EmitKill) {
   const dtMs = dt * 1000;
   const remove: string[] = [];
   const home = homeOf(state);
@@ -288,7 +289,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
     if (g.state === AnimState.ATTACK) {
       g.stateTimer -= dtMs;
       if (g.stateTimer <= 0) {
-        connectGoblinAttack(state, g, emitDamage);
+        connectGoblinAttack(state, g, emitDamage, emitKill);
         g.state = AnimState.IDLE;
       }
       return;
@@ -363,9 +364,9 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
 }
 
 /** Dispatch a landed goblin swing to its target — the house, or a player. */
-function connectGoblinAttack(state: GameState, g: Enemy, emitDamage: EmitDamage) {
+function connectGoblinAttack(state: GameState, g: Enemy, emitDamage: EmitDamage, emitKill: EmitKill) {
   if (state.houses.has(g.aiTargetId)) connectGoblinHouseHit(state, g, emitDamage);
-  else connectGoblinHit(state, g, emitDamage);
+  else connectGoblinHit(state, g, emitDamage, emitKill);
 }
 
 /** Resolve a goblin's swing at the house: chip its HP; collapse it at 0. */
@@ -386,7 +387,7 @@ function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamag
 }
 
 /** Resolve a goblin's swing at the chased player if still in reach. */
-function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage) {
+function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage, emitKill: EmitKill) {
   const target = state.players.get(g.aiTargetId);
   if (!target || target.hp <= 0 || target.state === AnimState.DEAD) return;
   if (target.godMode) return; // Dev Mode: immortal players take no goblin damage
@@ -404,6 +405,13 @@ function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage) {
     target.state = AnimState.DEAD;
     target.respawnTimer = PLAYER_RESPAWN_MS;
     applyDeathXpPenalty(target); // dying costs 30% of XP (can de-level)
+    emitKill({
+      killerId: g.id,
+      killerName: "Goblin",
+      killerKind: "goblin",
+      victimId: target.id,
+      victimName: target.name || "Player",
+    });
   } else if (target.state !== AnimState.ATTACK && target.state !== AnimState.THROW) {
     // play the hurt animation on the player — but never interrupt their own
     // attack/throw (so it can't cancel an action mid-swing).

@@ -35,6 +35,7 @@ import {
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { dropStructureLoot } from "./resources";
+import type { EmitKill } from "./combat";
 
 /** A banana mid-flight, resolved when its landing time arrives. */
 interface InFlight {
@@ -254,6 +255,7 @@ export function bananaSystem(
   state: GameState,
   dt: number,
   emitDamage: (ev: DamageEvent) => void,
+  emitKill: EmitKill,
   emitHeal: (ev: HealEvent) => void,
   emitXp: EmitXp,
 ) {
@@ -275,7 +277,7 @@ export function bananaSystem(
     const f = m.inFlight[i];
     if (m.clock < f.landAt) continue;
     m.inFlight.splice(i, 1);
-    landBanana(state, f, emitDamage, emitHeal, emitXp);
+    landBanana(state, f, emitDamage, emitKill, emitHeal, emitXp);
   }
 }
 
@@ -283,6 +285,7 @@ function landBanana(
   state: GameState,
   f: InFlight,
   emitDamage: (ev: DamageEvent) => void,
+  emitKill: EmitKill,
   emitHeal: (ev: HealEvent) => void,
   emitXp: EmitXp,
 ) {
@@ -322,6 +325,14 @@ function landBanana(
       if (state.players.has(target.id)) {
         target.respawnTimer = PLAYER_RESPAWN_MS;
         applyDeathXpPenalty(target as Player); // dying costs 30% of XP (can de-level)
+        const thrower = state.players.get(f.ownerId);
+        emitKill({
+          killerId: f.ownerId,
+          killerName: thrower?.name || "Player",
+          killerKind: "player",
+          victimId: target.id,
+          victimName: (target as Player).name || "Player",
+        });
       } else
         target.respawnTimer =
           state.enemies.get(target.id)?.kind === "goblin"

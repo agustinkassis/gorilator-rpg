@@ -12,6 +12,7 @@ import {
   Banana,
   House,
   DamageEvent,
+  KillEvent,
   HealEvent,
   XpEvent,
   BananaThrowEvent,
@@ -55,6 +56,7 @@ export interface NetHandlers {
   onInventory(slots: InventorySlot[]): void;
   onWipe(ev: { wave: number }): void; // La Crypta fell → round wiped to scratch
   onError(message: string): void;
+  onKill(ev: KillEvent): void;
 }
 
 function defaultEndpoint(): string {
@@ -247,6 +249,7 @@ export class NetworkClient {
 
       phase = "bind messages";
       room.onMessage("damage", (ev: DamageEvent) => handlers.onDamage(ev));
+      room.onMessage("kill", (ev: KillEvent) => handlers.onKill(ev));
       room.onMessage("heal", (ev: HealEvent) => handlers.onHeal(ev));
       room.onMessage("xp", (ev: XpEvent) => handlers.onXp(ev));
       room.onMessage("banana_throw", (ev: BananaThrowEvent) => handlers.onBananaThrow(ev));
