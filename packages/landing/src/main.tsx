@@ -3,18 +3,23 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   ArrowUpRight,
+  Boxes,
   Check,
   Copy,
+  GitCommit,
   Github,
   Hammer,
   Loader2,
+  Map as MapIcon,
   Monitor,
   Play,
   Server,
   Shield,
   Swords,
   Trophy,
+  Upload,
   Users,
+  Wand2,
   Zap,
 } from "lucide-react";
 import {
@@ -46,6 +51,30 @@ const features = [
   { icon: Hammer, title: "Crafting" },
   { icon: Zap, title: "Resource Pickups" },
   { icon: Trophy, title: "Nostr Identity" },
+];
+
+/** The in-game developer SDK — build the game from inside the game. */
+const devTools = [
+  {
+    icon: MapIcon,
+    title: "World editor",
+    body: "Flip on Dev Mode and place, move, and arrange props directly in the running scene. Layouts persist.",
+  },
+  {
+    icon: Upload,
+    title: "Upload models from the UI",
+    body: "Import glTF / GLB models straight from the browser — no file juggling, no rebuilds.",
+  },
+  {
+    icon: Wand2,
+    title: "Create items & entities",
+    body: "Define new items, characters, and entities through the in-game libraries.",
+  },
+  {
+    icon: GitCommit,
+    title: "Commit from the game",
+    body: "Persist your edits from within the game itself. Develop the game as you play it.",
+  },
 ];
 
 /** A brand logo from simple-icons, in its official color (overridable for dark bg). */
@@ -374,8 +403,20 @@ function InstallBox() {
   );
 }
 
+/** A full-width screenshot showcase with a reveal-on-scroll fade and caption. */
+function Shot({ src, alt, caption }: { src: string; alt: string; caption: string }) {
+  const { ref, shown } = useReveal();
+  return (
+    <figure ref={ref} className={`shot ${shown ? "in" : ""}`}>
+      <img src={src} alt={alt} loading="lazy" />
+      <figcaption>{caption}</figcaption>
+    </figure>
+  );
+}
+
 function App() {
   const featuresReveal = useReveal();
+  const sdkReveal = useReveal();
   const stackReveal = useReveal();
   const ctaReveal = useReveal();
 
@@ -394,6 +435,46 @@ function App() {
             <FeatureCard key={f.title} {...f} index={i} />
           ))}
         </div>
+      </section>
+
+      <Shot
+        src="/screenshots/gorilator-hud.png"
+        alt="Gorilator in-game: isometric combat, inventory, resource pickups, and the dev toolbar"
+        caption="Isometric combat, loot, and the in-game dev toolbar — all in the same window."
+      />
+
+      <section className="band sdk" aria-label="In-game developer SDK">
+        <div className="sectionHead" ref={sdkReveal.ref as React.Ref<HTMLDivElement>}>
+          <span className={`sectionEyebrow ${sdkReveal.shown ? "in" : ""}`}>Developer SDK · built in</span>
+          <h2 className={`sectionTitle ${sdkReveal.shown ? "in" : ""}`}>
+            Build the game from inside the game.
+          </h2>
+          <p className={`sectionLede ${sdkReveal.shown ? "in" : ""}`}>
+            No separate tools. Flip on Dev Mode and edit the world, import 3D models, create entities, and
+            commit your changes — all from the running client. Open source and easy to contribute.
+          </p>
+        </div>
+        <div className="sdkGrid">
+          {devTools.map((t, i) => {
+            const Icon = t.icon;
+            return (
+              <article
+                key={t.title}
+                className={`sdkCard ${sdkReveal.shown ? "in" : ""}`}
+                style={{ transitionDelay: `${i * 90}ms` }}
+              >
+                <span className="featureIcon">
+                  <Icon size={24} />
+                </span>
+                <h3>{t.title}</h3>
+                <p>{t.body}</p>
+              </article>
+            );
+          })}
+        </div>
+        <a className="sdkLink" href={repoUrl} target="_blank" rel="noreferrer">
+          <Boxes size={16} /> Start contributing on GitHub <ArrowUpRight size={14} />
+        </a>
       </section>
 
       <section

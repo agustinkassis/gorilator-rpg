@@ -735,9 +735,173 @@ p {
   text-transform: uppercase;
 }
 
+/* ============================== SCREENSHOT SHOWCASE ============================== */
+.shot {
+  margin: 0;
+  padding: clamp(8px, 4vh, 40px) max(18px, calc((100vw - 1180px) / 2)) clamp(24px, 6vh, 64px);
+  background: linear-gradient(180deg, #0d120c, #0b0c0f);
+  text-align: center;
+  opacity: 0;
+  transform: translateY(32px) scale(0.985);
+  transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.shot.in {
+  opacity: 1;
+  transform: none;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 212, 121, 0.22);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.4) inset;
+}
+
+.shot figcaption {
+  max-width: 720px;
+  margin: 18px auto 0;
+  color: rgba(255, 226, 160, 0.62);
+  font-size: 15px;
+  font-style: italic;
+}
+
+/* ============================== DEVELOPER SDK ============================== */
+.sdk {
+  background:
+    radial-gradient(60% 60% at 50% 0%, rgba(139, 92, 246, 0.12), transparent 70%),
+    linear-gradient(180deg, #0b0c0f, #0c0a12);
+}
+
+.sectionEyebrow {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  color: #c4b5fd;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.sectionEyebrow.in {
+  opacity: 1;
+  transform: none;
+}
+
+.sectionLede {
+  max-width: 680px;
+  margin: 20px auto 0;
+  color: rgba(255, 234, 200, 0.72);
+  font-size: clamp(15px, 1.8vw, 18px);
+  line-height: 1.6;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.7s ease 0.1s, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) 0.1s;
+}
+
+.sectionLede.in {
+  opacity: 1;
+  transform: none;
+}
+
+.sdkGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.sdkCard {
+  padding: 26px 24px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: linear-gradient(180deg, rgba(28, 22, 40, 0.7), rgba(11, 10, 16, 0.85));
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.36);
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1), border-color 0.25s ease;
+}
+
+.sdkCard.in {
+  opacity: 1;
+  transform: none;
+}
+
+.sdkCard:hover {
+  border-color: rgba(139, 92, 246, 0.55);
+  transform: translateY(-6px);
+}
+
+.sdkCard .featureIcon {
+  color: #f3effe;
+  background: linear-gradient(180deg, #a78bfa, #7c3aed);
+  box-shadow: 0 8px 20px rgba(124, 58, 237, 0.4);
+}
+
+.sdkCard h3 {
+  margin: 0;
+  color: #e9ddff;
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 950;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.sdkCard p {
+  margin: 0;
+  color: rgba(233, 221, 255, 0.62);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.sdkLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 34px auto 0;
+  width: fit-content;
+  padding: 11px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  color: #c4b5fd;
+  font-weight: 700;
+  text-decoration: none;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.sdkLink:hover {
+  border-color: rgba(139, 92, 246, 0.8);
+  background: rgba(139, 92, 246, 0.12);
+  color: #e9ddff;
+}
+
+.sdk .sectionHead {
+  margin-bottom: clamp(28px, 4vh, 44px);
+}
+
+@media (max-width: 640px) {
+  .sdkGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ============================== TECH STACK ============================== */
 .stack {
-  background: linear-gradient(180deg, #0b0c0f, #0d120c);
+  background: linear-gradient(180deg, #0c0a12, #0d120c);
 }
 
 .stackGrid {
