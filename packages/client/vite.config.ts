@@ -4,12 +4,14 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   unlinkSync,
   statSync,
 } from "fs";
-import { basename, resolve } from "path";
+import { basename, relative, resolve } from "path";
 import { execFileSync } from "child_process";
 
 /** The app version shown in-game (the tiny footer tag), read from this package's
@@ -65,6 +67,12 @@ interface WorktreeInfo {
   pendingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
   changes: WorktreeChange[];
+}
+
+interface WorktreeFilePayload {
+  path: string;
+  content: string;
+  baseContent: string;
 }
 
 const emptyWorktreeInfo = (): WorktreeInfo => ({
@@ -199,9 +207,9 @@ function gitCommitRef(root: string, ref: string): string | null {
 }
 
 function pendingBaseRef(root: string, targetBranch: string): string {
+  if (gitCommitRef(root, targetBranch)) return targetBranch;
   const remoteRef = `origin/${targetBranch}`;
   if (gitCommitRef(root, remoteRef)) return remoteRef;
-  if (gitCommitRef(root, targetBranch)) return targetBranch;
   return "";
 }
 
@@ -265,6 +273,69 @@ function currentGitChanges(root: string): WorktreeChange[] {
       };
     })
     .filter((change) => change.path);
+}
+
+function repoJsonPath(root: string, rawPath: unknown): { abs: string; rel: string } {
+  const requested = String(rawPath ?? "").replace(/\\/g, "/");
+  const abs = resolve(root, requested);
+  const rel = relative(root, abs).replace(/\\/g, "/");
+  if (!rel || rel.startsWith("../") || rel === ".." || resolve(root, rel) !== abs) {
+    throw new Error("file must be inside the repository");
+  }
+  if (!rel.toLowerCase().endsWith(".json")) throw new Error("only JSON files can be edited here");
+  return { abs, rel };
+}
+
+function readWorktreeFile(root: string, rawPath: unknown): WorktreeFilePayload {
+  const file = repoJsonPath(root, rawPath);
+  const content = existsSync(file.abs) ? readFileSync(file.abs, "utf8") : "";
+  const baseContent = captureGit(["show", `HEAD:${file.rel}`], root, false) ?? "";
+  return { path: file.rel, content, baseContent };
+}
+
+function writeWorktreeFile(root: string, rawPath: unknown, rawContent: unknown): WorktreeFilePayload {
+  const file = repoJsonPath(root, rawPath);
+  const content = String(rawContent ?? "");
+  JSON.parse(content);
+  writeFileSync(file.abs, content.endsWith("\n") ? content : `${content}\n`);
+  return readWorktreeFile(root, file.rel);
+}
+
+function ensureLocalTargetBranch(root: string, targetBranch: string) {
+  if (gitCommitRef(root, targetBranch)) return;
+  const remoteRef = `origin/${targetBranch}`;
+  if (!gitCommitRef(root, remoteRef)) throw new Error(`Target branch ${targetBranch} was not found`);
+  execFileSync("git", ["branch", targetBranch, remoteRef], { cwd: root, encoding: "utf8" });
+}
+
+function mergeIntoTargetBranch(root: string): WorktreeInfo {
+  const targetBranch = readTargetBranch(root);
+  const current = currentBranch(root);
+  if (current === targetBranch) return worktreeInfo();
+  const source = captureGit(["rev-parse", "HEAD"], root);
+  if (!source) throw new Error("Could not resolve current HEAD");
+  ensureLocalTargetBranch(root, targetBranch);
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-"));
+  try {
+    execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
+    execFileSync("git", ["merge", "--no-edit", source], { cwd: tmp, encoding: "utf8" });
+  } catch (err) {
+    try {
+      execFileSync("git", ["merge", "--abort"], { cwd: tmp, encoding: "utf8" });
+    } catch {
+      // The merge may not have started; removal below still cleans the temp worktree.
+    }
+    throw err;
+  } finally {
+    try {
+      execFileSync("git", ["worktree", "remove", "--force", tmp], { cwd: root, encoding: "utf8" });
+    } catch {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  return worktreeInfo();
 }
 
 function formatWorktreeInfo(
@@ -1181,6 +1252,39 @@ function worktreeTagger(): Plugin {
     name: "rpg-worktree-tagger",
     apply: "serve",
     configureServer(server: ViteDevServer) {
+      server.middlewares.use("/__worktree/file", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method === "GET") {
+          try {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            return sendJson(res, { ok: true, ...readWorktreeFile(info.root, url.searchParams.get("path")) });
+          } catch (e) {
+            return fail(res, 400, String(e));
+          }
+        }
+        if (req.method !== "POST") return fail(res, 405, "GET or POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { path?: unknown; content?: unknown };
+            sendJson(res, { ok: true, ...writeWorktreeFile(info.root, body.path, body.content) });
+          } catch (e) {
+            fail(res, 400, String(e));
+          }
+        });
+      });
+
+      server.middlewares.use("/__worktree/merge", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        try {
+          sendJson(res, { ok: true, ...mergeIntoTargetBranch(info.root) });
+        } catch (e) {
+          fail(res, 409, String(e));
+        }
+      });
+
       server.middlewares.use("/__worktree", (req, res) => {
         const info = worktreeInfo();
         if (!info.root) return fail(res, 404, "not a linked worktree");
