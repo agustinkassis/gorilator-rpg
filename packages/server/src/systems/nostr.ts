@@ -201,7 +201,7 @@ export function sanitizeSaveContent(content: string): PlayerSave | null {
 /** Normalize an inventory to exactly INV_SLOTS valid slots. */
 function sanitizeInventory(raw: unknown): InventorySlot[] {
   const arr = Array.isArray(raw) ? raw : [];
-  const types = new Set(["log", "potion", "stone", "banana"]);
+  const types = new Set(["log", "potion", "stone", "banana", "berserker_potion"]);
   const out: InventorySlot[] = [];
   for (let i = 0; i < INV_SLOTS; i++) {
     const s = arr[i] as { type?: unknown; count?: unknown } | undefined;

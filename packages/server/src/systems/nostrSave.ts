@@ -4,8 +4,10 @@ import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { finalizeEvent } from "nostr-tools/pure";
 import {
   NOSTR_SAVE_KIND,
+  playerRealmDTag,
   saveDTag,
   PlayerSave,
+  PlayerSaveRealm,
   Player,
   InventorySlot,
 } from "@rpg/shared";
@@ -35,10 +37,22 @@ function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 }
 
+export interface SaveContext {
+  realm?: PlayerSaveRealm | null;
+  reason?: string;
+}
+
 /** Snapshot a synced player + its inventory into a save payload. */
-export function buildServerSave(p: Player, inventory: InventorySlot[]): PlayerSave {
+export function buildServerSave(
+  p: Player,
+  inventory: InventorySlot[],
+  context: SaveContext = {},
+): PlayerSave {
   return {
     v: 1,
+    playerPubkey: p.pubkey || undefined,
+    realm: context.realm ?? undefined,
+    reason: context.reason,
     level: p.level,
     xp: p.xp,
     hp: p.hp,
@@ -60,25 +74,50 @@ export function buildServerSave(p: Player, inventory: InventorySlot[]): PlayerSa
 }
 
 /**
- * Sign (with the server key) and publish a player's save as a kind-30078
- * replaceable event, keyed by `saveDTag(playerPubkey)`. Best-effort across the
- * relays, with a hard timeout so a hung relay never stalls the caller.
+ * Sign (with the server key) and publish a player's save as kind-30078
+ * replaceable events:
+ *
+ * - `saveDTag(playerPubkey)` keeps the latest state for login recovery.
+ * - `playerRealmDTag(playerPubkey, realm.id)` keeps the latest state for that
+ *   player in that realm, so outside apps can track/freeze realm history.
+ *
+ * Best-effort across the relays, with a hard timeout so a hung relay never
+ * stalls the caller.
  */
 export async function publishServerSave(playerPubkey: string, save: PlayerSave): Promise<void> {
   const { sk } = getServerIdentity();
-  const event = finalizeEvent(
-    {
-      kind: NOSTR_SAVE_KIND,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ["d", saveDTag(playerPubkey)],
-        ["p", playerPubkey], // who this save belongs to (queryable)
-      ],
-      content: JSON.stringify(save),
-    },
-    sk,
-  );
-  await raceTimeout(Promise.allSettled(getPool().publish(RELAYS, event)), 4000);
+  const created_at = Math.floor(Date.now() / 1000);
+  const content = JSON.stringify(save);
+  const baseTags = [
+    ["p", playerPubkey], // who this save belongs to (queryable)
+    ...(save.realm ? [["realm", save.realm.id]] : []),
+    ...(save.reason ? [["reason", save.reason]] : []),
+  ];
+  const events = [
+    finalizeEvent(
+      {
+        kind: NOSTR_SAVE_KIND,
+        created_at,
+        tags: [["d", saveDTag(playerPubkey)], ...baseTags],
+        content,
+      },
+      sk,
+    ),
+  ];
+  if (save.realm?.id) {
+    events.push(
+      finalizeEvent(
+        {
+          kind: NOSTR_SAVE_KIND,
+          created_at,
+          tags: [["d", playerRealmDTag(playerPubkey, save.realm.id)], ...baseTags],
+          content,
+        },
+        sk,
+      ),
+    );
+  }
+  await raceTimeout(Promise.allSettled(events.flatMap((event) => getPool().publish(RELAYS, event))), 4000);
 }
 
 /**
@@ -108,18 +147,20 @@ export async function fetchServerSave(
 }
 
 /**
- * Per-player coalescing writer: never runs two publishes for the same player at
- * once; a save requested while one is in flight queues the latest and fires it
- * after. Keeps level-up + death (which can land in the same tick) from racing.
+ * Per-player serial writer: never runs two publishes for the same player at
+ * once; saves requested while one is in flight queue behind it. Keeps level-up +
+ * death + logout publishes ordered for the same replaceable event addresses.
  */
 export class ServerSaver {
   private saving = new Set<string>();
-  private queued = new Map<string, PlayerSave>();
+  private queued = new Map<string, { save: PlayerSave; reason: string }[]>();
 
   save(playerPubkey: string, save: PlayerSave, reason: string): void {
     if (!playerPubkey) return;
     if (this.saving.has(playerPubkey)) {
-      this.queued.set(playerPubkey, save);
+      const q = this.queued.get(playerPubkey) ?? [];
+      q.push({ save, reason });
+      this.queued.set(playerPubkey, q);
       return;
     }
     void this.flush(playerPubkey, save, reason);
@@ -134,10 +175,12 @@ export class ServerSaver {
       console.warn("[nostr] save failed", err);
     } finally {
       this.saving.delete(playerPubkey);
-      const next = this.queued.get(playerPubkey);
+      const q = this.queued.get(playerPubkey);
+      const next = q?.shift();
       if (next) {
-        this.queued.delete(playerPubkey);
-        void this.flush(playerPubkey, next, "coalesced");
+        if (q && q.length > 0) this.queued.set(playerPubkey, q);
+        else this.queued.delete(playerPubkey);
+        void this.flush(playerPubkey, next.save, next.reason);
       }
     }
   }

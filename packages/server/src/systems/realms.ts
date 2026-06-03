@@ -4,6 +4,7 @@ import { join } from "node:path";
 import WebSocket from "ws";
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { finalizeEvent } from "nostr-tools/pure";
+import type { PlayerSaveRealm } from "@rpg/shared";
 import { getServerIdentity } from "./nostrIdentity";
 
 // Node (≤20) has no global WebSocket, which SimplePool needs — inject `ws`.
@@ -198,6 +199,17 @@ class RealmTracker {
         : null,
       last: this.last,
     };
+  }
+
+  /** Realm metadata embedded into per-player Nostr saves/events. */
+  playerSaveRealm(): PlayerSaveRealm | null {
+    return this.current
+      ? {
+          id: this.current.id,
+          startedAt: this.current.startedAt,
+          wave: this.current.wave,
+        }
+      : null;
   }
 
   // ---- persistence ----

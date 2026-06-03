@@ -681,6 +681,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.set(client.sessionId, p);
+    this.reportRealm(); // ensure a live realm exists before any immediate save trigger
     realmTracker.noteNpub(p.pubkey); // track the npub in the live realm (no-op for anon / no realm)
 
     // Inherit the old session's / saved inventory, or start empty.
@@ -782,7 +783,14 @@ export class GameRoom extends Room<GameState> {
    *  (coalesced per pubkey, so overlapping triggers never double-publish). */
   private persistSave(sid: string, p: Player, reason: string): void {
     if (!p.pubkey) return;
-    this.serverSaver.save(p.pubkey, buildServerSave(p, this.inventories.get(sid) ?? []), reason);
+    this.serverSaver.save(
+      p.pubkey,
+      buildServerSave(p, this.inventories.get(sid) ?? [], {
+        realm: realmTracker.playerSaveRealm(),
+        reason,
+      }),
+      reason,
+    );
   }
 
   /** Total synced entities across every collection — the "world size" the perf

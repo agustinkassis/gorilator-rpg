@@ -17,6 +17,12 @@ export interface InventorySlot {
   count: number;
 }
 
+export interface PlayerSaveRealm {
+  id: string;
+  startedAt: number;
+  wave: number;
+}
+
 /**
  * The full recoverable state of a player, stored as the JSON content of the
  * nostr save event (kind NOSTR_SAVE_KIND, d = saveDTag(pubkey)). The SERVER signs
@@ -25,6 +31,9 @@ export interface InventorySlot {
  */
 export interface PlayerSave {
   v: number; // save schema version
+  playerPubkey?: string;
+  realm?: PlayerSaveRealm;
+  reason?: string;
   level: number;
   xp: number;
   hp: number;
