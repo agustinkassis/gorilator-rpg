@@ -48,7 +48,7 @@ const SOUNDS = [
     text: "Item pickup, a bright cheerful coin-like ding blip, short, retro game collect" },
   { key: "heal", file: "sfx/heal.mp3", dur: 0.9, infl: 0.45,
     text: "Magical healing shimmer, a soft warm restorative chime, gentle sparkle, video game" },
-  { key: "click", file: "ui/click.mp3", dur: 0.4, infl: 0.7,
+  { key: "click", file: "ui/click.mp3", dur: 0.5, infl: 0.7,
     text: "Soft clean UI button click, a short crisp tick, menu" },
   { key: "music", file: "music/theme.mp3", dur: 24, infl: 0.4, loop: true,
     text: "Calm medieval fantasy exploration theme, gentle plucked lute and soft warm strings, peaceful and adventurous, seamless loop, light percussion" },
