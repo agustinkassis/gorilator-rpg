@@ -24,7 +24,7 @@ browser dials `wss://game.<domain>` for multiplayer.
 
 ## Prerequisites
 
-- A **Linux server** (Debian/Ubuntu recommended) or a **macOS** machine.
+- A **Linux server** (systemd-based recommended) or a **macOS** machine.
 - For public hosting: a **domain managed by Cloudflare** (free plan is fine). You do **not** pre-create any
   DNS records — `gorilator setup` makes them.
 - Nothing else. The installer adds Node, pnpm, and (for `setup`) cloudflared for you. On a fresh
@@ -55,9 +55,10 @@ CLI as `npx gorilator install`. The installer, in order:
 3. `pnpm install`, builds the shared schema, builds the client, and builds the CLI.
 4. Generates `.env` — the server port, a random monitor password, **and** the server's Nostr key
    (`NOSTR_NSEC`, which signs players' progress saves).
-5. Creates a durable `gorilator` command in a standard global bin directory, then registers a
-   **systemd**/**launchd** service, starts it, and waits for `/healthz`.
-6. Prints the local URLs and the monitor credentials.
+5. Installs/refreshes the global npm `gorilator` command and makes npm's global bin directory visible on
+   `PATH` for future shells when needed.
+6. Registers a **systemd**/**launchd** service, starts it, and waits for `/healthz`.
+7. Prints the local URLs and the monitor credentials.
 
 > Already have the repo checked out (or using a fork)? Everything also runs through the bundled wrapper,
 > which executes the very same Node CLI:

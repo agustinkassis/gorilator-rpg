@@ -22,7 +22,17 @@ import { waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
-import { canPrompt, confirm, isRoot, run, targetUser, tryRun, which } from "../lib/proc.js";
+import {
+  activateNpmGlobalBin,
+  activateSudoNpmGlobalBin,
+  canPrompt,
+  confirm,
+  isRoot,
+  run,
+  targetUser,
+  tryRun,
+  which,
+} from "../lib/proc.js";
 import { installService, manager, startService } from "../lib/service.js";
 import { printPorts, readEnvInfo } from "../lib/summary.js";
 import { runSetup } from "./setup.js";
@@ -111,8 +121,21 @@ function ensureGlobalCli(opts: Options, appDir: string): void {
   const found = which("gorilator");
   if (found && isTemporaryNpxCommand(found)) {
     log.info(`Ignoring temporary npx gorilator shim at ${found}.`);
-  } else if (durableGorilatorOnPath() && !opts.localCli) {
-    log.ok("Global 'gorilator' command already on PATH.");
+  } else {
+    const durable = durableGorilatorOnPath();
+    if (durable && !opts.localCli) {
+      log.ok(`Global 'gorilator' command found (${durable}); refreshing it from npm.`);
+    }
+  }
+
+  const target = opts.localCli ?? "gorilator";
+  log.info(`Installing the global gorilator command (npm i -g ${target})…`);
+  if (tryRun("npm", ["install", "-g", target])) {
+    finishGlobalCliInstall();
+    return;
+  }
+  if (!isRoot() && tryRun("sudo", ["npm", "install", "-g", target])) {
+    finishGlobalCliInstall();
     return;
   }
 
@@ -120,17 +143,25 @@ function ensureGlobalCli(opts: Options, appDir: string): void {
     return;
   }
 
-  const target = opts.localCli ?? "gorilator";
-  log.info(`Installing the global gorilator command (npm i -g ${target})…`);
-  if (tryRun("npm", ["install", "-g", target])) {
-    log.ok("Global 'gorilator' command installed.");
-    return;
-  }
-  if (!isRoot() && tryRun("sudo", ["npm", "install", "-g", target])) {
-    log.ok("Global 'gorilator' command installed.");
-    return;
-  }
   log.die(`Could not install the global command automatically. Run:  npm i -g ${target}`);
+}
+
+function finishGlobalCliInstall(): void {
+  let bin = activateNpmGlobalBin();
+  let installed = which("gorilator");
+  if (!installed) {
+    bin = activateSudoNpmGlobalBin() ?? bin;
+    installed = which("gorilator");
+  }
+  if (installed) {
+    log.ok(`Global 'gorilator' command installed${bin ? ` and PATH includes ${bin}` : ""}.`);
+    return;
+  }
+  log.warn("Global 'gorilator' package installed, but the command is not visible on PATH yet.");
+  if (bin) {
+    log.info(`This installer persisted ${bin} for future shells.`);
+    log.info(`For this terminal, run:  export PATH="${bin}:$PATH"`);
+  }
 }
 
 function printSummary(appDir: string, port: number, clientPort: number, healthy: boolean): void {

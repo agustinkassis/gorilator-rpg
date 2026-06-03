@@ -42,35 +42,56 @@ die()  { printf '%s %s\n' "${RED}✗${CLR}" "$*" >&2; exit 1; }
 SUDO=""
 [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
 
-need_privilege() {
-  if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then
-    die "sudo is required to install system packages. Re-run as root or install sudo first."
+run_privileged() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif [ -n "$SUDO" ]; then
+    $SUDO "$@"
+  else
+    die "Need root privileges to run: $*. Re-run with sudo or as root."
   fi
 }
 
-apt_install() {
-  need_privilege
-  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -y
-  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+run_privileged_stdin_env() {
+  if [ "$(id -u)" -eq 0 ]; then
+    env "$@"
+  elif [ -n "$SUDO" ]; then
+    $SUDO -E "$@"
+  else
+    die "Need root privileges to run: $*. Re-run with sudo or as root."
+  fi
 }
 
-ensure_curl() {
-  command -v curl >/dev/null 2>&1 && return 0
-  local os; os="$(uname -s)"
-  if [ "$os" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
-    info "Installing curl…"
-    apt_install ca-certificates curl
+install_packages() {
+  if command -v apt-get >/dev/null 2>&1; then
+    run_privileged apt-get update -y
+    run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    run_privileged dnf install -y "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    run_privileged yum install -y "$@"
+  elif command -v zypper >/dev/null 2>&1; then
+    run_privileged zypper --non-interactive install "$@"
+  elif command -v apk >/dev/null 2>&1; then
+    run_privileged apk add --no-cache "$@"
+  elif command -v pacman >/dev/null 2>&1; then
+    run_privileged pacman -Sy --noconfirm --needed "$@"
+  elif [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    brew install "$@"
+  else
+    die "No supported package manager found. Install these manually and re-run: $*"
+  fi
+}
+
+ensure_command() {
+  local cmd="$1"
+  shift
+  if command -v "$cmd" >/dev/null 2>&1; then
     return 0
   fi
-  die "curl is required to install Node automatically. Install curl and re-run."
-}
-
-run_nodesource_setup() {
-  if [ -n "$SUDO" ]; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
-  else
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-  fi
+  info "Installing $cmd…"
+  install_packages "$@"
+  command -v "$cmd" >/dev/null 2>&1 || die "$cmd was not found after installation."
 }
 
 # --- Node ≥ 20.6 is required (the daemon runs the server with `node --import
@@ -106,10 +127,16 @@ ensure_node() {
   fi
   info "Installing Node.js 20 (the daemon needs Node ≥ 20.6)…"
   if [ "$os" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
-    ensure_curl
-    need_privilege
-    run_nodesource_setup
-    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+    ensure_command curl curl ca-certificates
+    curl -fsSL https://deb.nodesource.com/setup_20.x | run_privileged_stdin_env bash -
+    run_privileged apt-get install -y nodejs
+  elif [ "$os" = "Linux" ] && { command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; }; then
+    ensure_command curl curl ca-certificates
+    curl -fsSL https://rpm.nodesource.com/setup_20.x | run_privileged_stdin_env bash -
+    install_packages nodejs
+  elif [ "$os" = "Linux" ]; then
+    warn "NodeSource does not support this package manager directly; trying distro packages."
+    install_packages nodejs npm
   elif [ "$os" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
     if brew install node@20; then
       brew link --overwrite --force node@20 2>/dev/null || true

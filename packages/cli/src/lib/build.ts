@@ -9,7 +9,15 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import * as log from "./log.js";
 import { cliEntryPath, isLinux } from "./paths.js";
-import { capture, isRoot, runAsTargetUser, runPrivileged, tryRun, which } from "./proc.js";
+import {
+  activateNpmGlobalBin,
+  capture,
+  isRoot,
+  runAsTargetUser,
+  runPrivileged,
+  tryRun,
+  which,
+} from "./proc.js";
 
 /** The daemon runs the server with `node --import tsx`, which needs Node ≥20.6
  *  (module.register / the --import flag). */
@@ -38,17 +46,20 @@ export function ensureGit(): void {
 /** Ensure pnpm is available (the workspace pins pnpm@10.14.0). Installs via
  *  `npm i -g` — NOT corepack, whose stale signing keys fail on fresh boxes. */
 export function ensurePnpm(): void {
+  activateNpmGlobalBin();
   if (which("pnpm")) {
     log.ok("pnpm present");
     return;
   }
   log.info("Installing pnpm@10.14.0 (via npm -g)…");
   if (tryRun("npm", ["install", "-g", "pnpm@10.14.0"])) {
+    activateNpmGlobalBin();
     log.ok("pnpm installed");
     return;
   }
   // A root-owned global prefix needs sudo.
   if (!isRoot() && tryRun("sudo", ["npm", "install", "-g", "pnpm@10.14.0"])) {
+    activateNpmGlobalBin();
     log.ok("pnpm installed");
     return;
   }

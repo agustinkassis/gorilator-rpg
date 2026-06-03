@@ -5,12 +5,14 @@ import { spawnSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  readFileSync,
   mkdirSync,
   openSync,
   readSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
-import { userInfo } from "node:os";
+import { homedir, platform, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
 export interface RunOpts {
@@ -171,4 +173,97 @@ export function promptDefault(question: string, def: string): string {
 export function canPrompt(): boolean {
   if (ASSUME_YES) return false;
   return process.stdin.isTTY === true || existsSync("/dev/tty");
+}
+
+/** Resolve npm's global executable directory. npm's `prefix` is more stable
+ *  than `bin -g`; `root -g` covers older/custom layouts. */
+export function npmGlobalBinDir(): string | null {
+  const prefix = capture("npm", ["config", "get", "prefix", "--global"]);
+  if (prefix && prefix !== "undefined" && prefix !== "null") return join(prefix, "bin");
+  const root = capture("npm", ["root", "-g"]);
+  if (root) return dirname(dirname(root));
+  return null;
+}
+
+/** Prepend a directory to PATH for commands spawned later in this installer. */
+export function prependPathDir(dir: string): void {
+  if (!dir || !existsSync(dir)) return;
+  const parts = (process.env.PATH ?? "").split(":").filter((part) => part && part !== dir);
+  process.env.PATH = [dir, ...parts].join(":");
+}
+
+function pathHasDir(dir: string): boolean {
+  return (process.env.PATH ?? "").split(":").includes(dir);
+}
+
+function targetHome(): string {
+  if (isRoot() && process.env.SUDO_USER && process.env.SUDO_USER !== "root") {
+    const user = process.env.SUDO_USER;
+    const passwd = capture("getent", ["passwd", user]);
+    const parsed = passwd?.split(":")[5];
+    if (parsed) return parsed;
+    return platform() === "darwin" ? `/Users/${user}` : `/home/${user}`;
+  }
+  return homedir();
+}
+
+function shellRcFiles(): string[] {
+  const home = targetHome();
+  return [join(home, ".bashrc"), join(home, ".zshrc")];
+}
+
+function restoreTargetOwner(filePath: string): void {
+  if (!isRoot() || !process.env.SUDO_UID || !process.env.SUDO_GID) return;
+  tryRun("chown", [`${process.env.SUDO_UID}:${process.env.SUDO_GID}`, filePath]);
+}
+
+/** Persist PATH for future interactive shells, following OpenClaw's strategy:
+ *  write once, near the top, and avoid duplicating an existing line. */
+export function persistPathPrepend(dir: string): boolean {
+  if (!dir) return false;
+  const line = `export PATH="${dir}:$PATH"`;
+  let wrote = false;
+  for (const rc of shellRcFiles()) {
+    if (!existsSync(rc)) continue;
+    const current = readFileSync(rc, "utf8");
+    if (!current.split(/\r?\n/).includes(line)) {
+      const tmp = `${rc}.gorilator-tmp`;
+      writeFileSync(tmp, `${line}\n${current.replace(new RegExp(`^${escapeRegExp(line)}\\r?\\n?`, "m"), "")}`);
+      restoreTargetOwner(tmp);
+      renameSync(tmp, rc);
+      restoreTargetOwner(rc);
+    }
+    wrote = true;
+  }
+  if (!wrote) {
+    const rc = join(targetHome(), ".bashrc");
+    writeFileSync(rc, `${line}\n`, { flag: "a" });
+    restoreTargetOwner(rc);
+    wrote = true;
+  }
+  return wrote;
+}
+
+export function activateNpmGlobalBin(): string | null {
+  const bin = npmGlobalBinDir();
+  if (!bin) return null;
+  const needsPersist = !pathHasDir(bin);
+  prependPathDir(bin);
+  if (needsPersist) persistPathPrepend(bin);
+  return bin;
+}
+
+export function activateSudoNpmGlobalBin(): string | null {
+  if (isRoot()) return null;
+  const prefix = capture("sudo", ["npm", "config", "get", "prefix", "--global"]);
+  if (!prefix || prefix === "undefined" || prefix === "null") return null;
+  const bin = join(prefix, "bin");
+  const needsPersist = !pathHasDir(bin);
+  prependPathDir(bin);
+  if (needsPersist) persistPathPrepend(bin);
+  return bin;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
