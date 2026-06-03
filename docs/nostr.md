@@ -180,7 +180,7 @@ access**.
 | `t` tag | `gorilator` (filter `{kinds:[30078], "#t":["gorilator"]}` to find every server) |
 | author | the server's pubkey (its reference/identity) |
 | refreshed | on every realm start/end **and every 30 minutes** |
-| content | server name, server `version`, play URL, `totalRealms`, `maxRounds`, the live realm (id, wave, players, joined npubs), and the last realm |
+| content | server name, server `version` (read from `packages/server/package.json`), play URL, `totalRealms`, `maxRounds`, the live realm (id, wave, players, joined npubs), and the last realm |
 
 A **realm** = one game (first live defender → La Crypta falls / room empties). See
 [gameplay.md](gameplay.md) for the lifecycle.
