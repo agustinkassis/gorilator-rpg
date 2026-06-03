@@ -90,17 +90,23 @@ export class GameMenu {
     }
   }
   private save() {
+    this.syncAudioSettings();
     try {
       localStorage.setItem(STORE, JSON.stringify(this.settings));
     } catch {
       /* storage unavailable */
     }
   }
+  private syncAudioSettings() {
+    this.settings.master = Math.round(this.deps.audio.getMasterVolume() * 100);
+    this.settings.music = Math.round(this.deps.audio.getMusicVolume() * 100);
+    this.settings.sfx = Math.round(this.deps.audio.getSfxVolume() * 100);
+  }
   private applySettings() {
     const s = this.settings;
-    this.deps.audio.engine.setMasterVolume(s.master / 100);
-    this.deps.audio.engine.setBusVolume("music", s.music / 100);
-    this.deps.audio.engine.setBusVolume("sfx", s.sfx / 100);
+    this.deps.audio.setMasterVolume(s.master / 100);
+    this.deps.audio.setMusicVolume(s.music / 100);
+    this.deps.audio.setSfxVolume(s.sfx / 100);
     this.setShadows(s.shadows);
     this.deps.engine.setHardwareScalingLevel(QUALITY_SCALE[s.quality]);
   }
@@ -188,32 +194,45 @@ export class GameMenu {
   }
 
   private renderSound() {
+    this.syncAudioSettings();
     const s = this.settings;
-    const slider = (id: string, label: string, val: number) =>
-      `<div class="gmRow"><label>${label}</label><input id="${id}" class="gmSlider" type="range" min="0" max="100" value="${val}"><span id="${id}v" class="gmVal">${val}%</span></div>`;
+    const audioBtn = (id: string, icon: string, label: string, val: number, active: boolean) =>
+      `<button id="${id}Toggle" class="gmAudioBtn${active ? " gmAudioOn" : ""}" style="opacity:${volumeOpacity(val / 100).toFixed(2)}" aria-label="${label}" title="${label}">${icon}</button>`;
+    const slider = (id: string, label: string, val: number, button = "") =>
+      `<div class="gmRow gmAudioRow">${button}<label>${label}</label><input id="${id}" class="gmSlider" type="range" min="0" max="100" value="${val}"><span id="${id}v" class="gmVal">${val}%</span></div>`;
     this.panel.innerHTML =
       this.head("Sound", true) +
       `<div class="gmBody">` +
-      slider("gmMaster", "🔊 Master", s.master) +
-      slider("gmMusic", "🎵 Music", s.music) +
+      slider("gmMaster", "Master", s.master, audioBtn("gmMaster", this.deps.audio.isMuted ? "🔇" : "🔊", "Toggle master sound", s.master, !this.deps.audio.isMuted)) +
+      slider("gmMusic", "Music", s.music, audioBtn("gmMusic", this.deps.audio.isMusicEnabled ? "♪" : "▶", "Toggle music", s.music, this.deps.audio.isMusicEnabled)) +
       slider("gmSfx", "💥 Effects", s.sfx) +
       `</div>`;
     this.wireHead();
     const wire = (id: string, key: "master" | "music" | "sfx", apply: (v: number) => void) => {
       const el = this.panel.querySelector<HTMLInputElement>("#" + id);
       const out = this.panel.querySelector<HTMLElement>("#" + id + "v");
+      const btn = this.panel.querySelector<HTMLElement>("#" + id + "Toggle");
       if (!el) return;
       el.oninput = () => {
         const n = +el.value;
         this.settings[key] = n;
         if (out) out.textContent = n + "%";
+        if (btn) btn.style.opacity = volumeOpacity(n / 100).toFixed(2);
         apply(n / 100);
         this.save();
       };
     };
-    wire("gmMaster", "master", (n) => this.deps.audio.engine.setMasterVolume(n));
-    wire("gmMusic", "music", (n) => this.deps.audio.engine.setBusVolume("music", n));
-    wire("gmSfx", "sfx", (n) => this.deps.audio.engine.setBusVolume("sfx", n));
+    wire("gmMaster", "master", (n) => this.deps.audio.setMasterVolume(n));
+    wire("gmMusic", "music", (n) => this.deps.audio.setMusicVolume(n));
+    wire("gmSfx", "sfx", (n) => this.deps.audio.setSfxVolume(n));
+    this.on("gmMasterToggle", () => {
+      this.deps.audio.toggleMute();
+      this.renderSound();
+    });
+    this.on("gmMusicToggle", () => {
+      this.deps.audio.toggleMusic();
+      this.renderSound();
+    });
   }
 
   private renderGraphics() {
@@ -246,6 +265,11 @@ export class GameMenu {
       };
     });
   }
+}
+
+function volumeOpacity(v: number): number {
+  const n = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  return 0.2 + n * 0.8;
 }
 
 let injected = false;
@@ -283,6 +307,15 @@ function injectStyles() {
     #gameMenu kbd { background:#11151d; border:1px solid #3a4456; border-radius:5px; padding:2px 7px; font:600 12px monospace; color:#ffe0a8; }
     #gameMenu .gmNote { margin-top:8px; font-size:11px; color:#8a94a6; line-height:1.5; }
     #gameMenu .gmRow { display:flex; align-items:center; gap:10px; padding:8px 4px; }
+    #gameMenu .gmAudioRow { gap:8px; }
+    #gameMenu .gmAudioBtn {
+      flex: 0 0 30px; width: 30px; height: 30px; cursor: pointer;
+      display: grid; place-items: center; border: 1px solid #ffffff22; border-radius: 7px;
+      background: #202838; color: #e8edf6; font-size: 16px; line-height: 1;
+      transition: opacity .12s ease, border-color .12s ease, background .12s ease;
+    }
+    #gameMenu .gmAudioBtn:hover { background:#2c3648; border-color:#c9a24a; }
+    #gameMenu .gmAudioOn { border-color:#a8d65a88; }
     #gameMenu .gmRow label { flex:0 0 96px; font-size:13px; color:#cdd3e0; }
     #gameMenu .gmSlider { flex:1; }
     #gameMenu .gmVal { width:40px; text-align:right; font-size:12px; color:#9fb0c0; }

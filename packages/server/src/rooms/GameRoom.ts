@@ -79,7 +79,7 @@ import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas
 import { goblinAiSystem, waveSystem, resetWaves, forceNextWave } from "../systems/goblins";
 import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
-import { spawnHouse } from "../systems/houses";
+import { houseRegenSystem, noteHouseDamage, spawnHouse, type HouseRegenTimers } from "../systems/houses";
 import { healingTowerPosition } from "../systems/healingTower";
 import { loadPropObstacles } from "../systems/props";
 import { loadSpawners, resetSpawners, spawnerSystem } from "../systems/spawners";
@@ -129,6 +129,9 @@ export class GameRoom extends Room<GameState> {
 
   /** Fractional sacred-circle healing is accumulated into whole-HP popups. */
   private sacredHealCarry = new Map<string, number>();
+
+  /** La Crypta regen timers reset every time the house receives damage. */
+  private houseRegen: HouseRegenTimers = new Map();
 
   /** Signs + publishes Nostr-logged-in players' progress with the SERVER key. */
   private serverSaver = new ServerSaver();
@@ -408,7 +411,10 @@ export class GameRoom extends Room<GameState> {
 
       const scaledMs = deltaMs * this.state.timeScale;
       const dt = scaledMs / 1000;
-      const emitDamage = (ev: DamageEvent) => this.broadcast("damage", ev);
+      const emitDamage = (ev: DamageEvent) => {
+        noteHouseDamage(this.state, this.houseRegen, ev.targetId);
+        this.broadcast("damage", ev);
+      };
       const emitKill = (ev: KillEvent) => this.broadcast("kill", ev);
       const emitXp = (ev: XpEvent) => this.broadcast("xp", ev);
       const emitHeal = (ev: HealEvent) => this.broadcast("heal", ev);
@@ -443,6 +449,7 @@ export class GameRoom extends Room<GameState> {
         potionRespawnSystem(this.state, dt);
       });
       perfTracker.span("bananas", () => bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp));
+      perfTracker.span("houseRegen", () => houseRegenSystem(this.state, scaledMs, this.houseRegen, emitHeal));
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {
@@ -598,6 +605,7 @@ export class GameRoom extends Room<GameState> {
     this.pendingThrows.clear();
     this.berserkerBase.clear();
     this.sacredHealCarry.clear();
+    this.houseRegen.clear();
     this.state.timeScale = 1;
 
     // Regenerate the whole world from scratch: clear runtime entities, rebuild

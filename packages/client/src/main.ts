@@ -653,6 +653,7 @@ const debugStats = new DebugStats(engine, scene);
 // (the splash "ENTER" click), so it's safe to build up-front.
 const audio = new AudioManager();
 game.setAudio(audio);
+void audio.ready.then(() => audio.startSplashMusic());
 const net = new NetworkClient();
 
 // Performance tracking: Babylon probes feed the tracker each frame (FPS, draw
@@ -929,7 +930,8 @@ async function start() {
 
     // Cinematic hand-off: the splash hero snaps into its attack animation, the camera
     // punches in, and a white flash masks the cut into the live game world.
-    await splash.playLaunch();
+    await splash.playLaunch(undefined, () => audio.splashRoar());
+    audio.stopSplashMusic();
     splash.dispose();
 
     // The world is live: show the music/mute widget and start the ambient bed.

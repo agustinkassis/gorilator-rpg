@@ -1,5 +1,11 @@
 {
+  "berserker": "/audio/sfx/berserker.mp3",
+  "body_hit": "/audio/sfx/body_hit.mp3",
+  "gorilla_attack": "/audio/sfx/gorilla_attack.mp3",
   "hit": "/audio/sfx/hit.mp3",
   "music": "/audio/music/theme.mp3",
+  "splashMusic": "/audio/music/splash.mp3",
+  "splash_roar": "/audio/sfx/splash_roar.mp3",
+  "tree_chop": "/audio/sfx/tree_chop.mp3",
   "waveMusic": "/audio/music/wave.mp3"
 }

@@ -220,6 +220,11 @@ export const ROCK_COLLISION_SCALE = 0.5; // a rock's collision/approach footprin
 // the client house model), so a ~5u collision radius covers its walls.
 export const HOUSE_HP = 300;
 export const HOUSE_COLLISION_RADIUS = 5;
+export const HOUSE_REGEN_IDLE_MS = 15_000; // no damage for this long before La Crypta starts healing
+export const HOUSE_REGEN_FULL_MS = 15_000; // once healing begins, the house is guaranteed full by this mark
+export const HOUSE_REGEN_START_PER_SEC = 4;
+export const HOUSE_REGEN_RATE_STEP_PER_SEC = 4;
+export const HOUSE_REGEN_MAX_PER_SEC = 20;
 export const TOWER_PROP_NAME = "Meshy_AI_Timberstone_Tow";
 export const SACRED_CIRCLE_RADIUS = 8;
 export const SACRED_CIRCLE_HEAL_PER_SEC_MIN = 3;
