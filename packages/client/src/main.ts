@@ -10,6 +10,7 @@ import { CharacterManager } from "./dev/CharacterManager";
 import { CharacterImporter } from "./dev/CharacterImporter";
 import { AnimationTester } from "./dev/AnimationTester";
 import { DevMode, frontOfPlayer } from "./dev/DevMode";
+import { DeveloperLabels } from "./dev/DeveloperLabels";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
 import { HealthGlobe } from "./ui/healthGlobe";
@@ -833,6 +834,7 @@ const inventory = new InventoryUI(
 const hotkeyBar = new HotkeyBar((slot) => net.sendUseItem(slot));
 const minimap = new Minimap(net); // top-left radar + hold TAB / Map button for the big map
 const chat = new ChatLog((text) => net.sendChat(text)); // Enter to chat (right-side log)
+const developerLabels = import.meta.env.DEV ? new DeveloperLabels(scene) : null;
 // Esc menu: resume, hotkeys, sound/graphics settings, login-with-Nostr, kill-yourself, exit.
 new GameMenu({
   net,
@@ -840,6 +842,12 @@ new GameMenu({
   engine,
   shadow,
   isNostrVerified: () => !!(game.localId && net.room?.state.players.get(game.localId)?.nostrVerified),
+  developerLabels: developerLabels
+    ? {
+        isEnabled: () => developerLabels.isEnabled(),
+        setEnabled: (on) => developerLabels.setEnabled(on),
+      }
+    : undefined,
 });
 
 // Imported-prop registry (loads props.json into the world). In dev builds it also
