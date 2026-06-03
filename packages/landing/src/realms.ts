@@ -13,6 +13,9 @@ const DISCOVERY_KIND = 30078;
 const DISCOVERY_D = "gorilator-server";
 const PROFILE_KIND = 0;
 
+/** Only surface servers whose discovery event is at most this old. */
+const DISCOVERY_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+
 /** Just the event fields we read — keeps us decoupled from nostr-tools' Event type. */
 interface RawEvent {
   content: string;
@@ -123,8 +126,12 @@ export function useGorilatorServers(): { servers: ServerStatus[]; status: LiveSt
 
   useEffect(() => {
     const pool = new SimplePool();
-    const sub = pool.subscribeMany(RELAYS, { kinds: [DISCOVERY_KIND], "#t": ["gorilator"] }, {
+    // Ask relays for discovery events from the last 48h only…
+    const since = Math.floor((Date.now() - DISCOVERY_WINDOW_MS) / 1000);
+    const sub = pool.subscribeMany(RELAYS, { kinds: [DISCOVERY_KIND], "#t": ["gorilator"], since }, {
       onevent(ev) {
+        // …and defend against relays that ignore `since`.
+        if (ev.created_at * 1000 < Date.now() - DISCOVERY_WINDOW_MS) return;
         const parsed = parseServer(ev);
         if (!parsed) return;
         setByPubkey((prev) => {
@@ -145,6 +152,30 @@ export function useGorilatorServers(): { servers: ServerStatus[]; status: LiveSt
 
   const servers = useMemo(() => Object.values(byPubkey), [byPubkey]);
   return { servers, status };
+}
+
+/**
+ * Collapse servers that advertise the same play URL into one entry (different server
+ * keys can point at the same game link). Keeps the most recently updated of each,
+ * preserving order. Servers without a URL are always kept (no link to dedupe on).
+ */
+export function dedupeByUrl<T extends { url: string; updatedAt: number }>(servers: T[]): T[] {
+  const indexByUrl = new Map<string, number>();
+  const out: T[] = [];
+  for (const s of servers) {
+    if (!s.url) {
+      out.push(s);
+      continue;
+    }
+    const at = indexByUrl.get(s.url);
+    if (at === undefined) {
+      indexByUrl.set(s.url, out.length);
+      out.push(s);
+    } else if (s.updatedAt > out[at].updatedAt) {
+      out[at] = s; // newer status for the same link wins
+    }
+  }
+  return out;
 }
 
 /** Health of a server we can reach over HTTP (those advertising a play URL). */

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ArrowLeft, Github, Play, Radio } from "lucide-react";
 import { npubEncode } from "nostr-tools/nip19";
 import {
+  dedupeByUrl,
   useGorilatorServers,
   useProfiles,
   useServerHealth,
@@ -170,11 +171,13 @@ function Stats() {
   const health = useServerHealth(servers);
   const merged = useMemo<(ServerStatus & { fetchedAt?: number; offline?: boolean })[]>(
     () =>
-      servers.map((s) => {
-        const h = s.url ? health[s.url] : undefined;
-        const base = h?.data ? { ...h.data, pubkey: s.pubkey } : s;
-        return { ...base, offline: h?.offline ?? false };
-      }),
+      dedupeByUrl(
+        servers.map((s) => {
+          const h = s.url ? health[s.url] : undefined;
+          const base = h?.data ? { ...h.data, pubkey: s.pubkey } : s;
+          return { ...base, offline: h?.offline ?? false };
+        }),
+      ),
     [servers, health],
   );
 
@@ -223,10 +226,8 @@ function Stats() {
     [merged],
   );
 
-  const sortedPlayers = useMemo(
-    () => [...allPubkeys].sort((a, b) => (livePubkeys.has(b) ? 1 : 0) - (livePubkeys.has(a) ? 1 : 0)),
-    [allPubkeys, livePubkeys],
-  );
+  // Players currently in a live realm — that's who we surface in the wall.
+  const onlinePlayers = useMemo(() => [...livePubkeys], [livePubkeys]);
 
   return (
     <main className="stats">
@@ -267,19 +268,21 @@ function Stats() {
       </section>
 
       <section className="statsSection">
-        <h2>Players</h2>
-        <p className="muted sectionSub">Defenders who log in with Nostr — others defend anonymously.</p>
-        {allPubkeys.length === 0 ? (
+        <h2>Online players</h2>
+        <p className="muted sectionSub">
+          Defenders currently in a live realm with Nostr — others defend anonymously.
+        </p>
+        {onlinePlayers.length === 0 ? (
           <p className="muted">
-            {status === "live" ? "No identified players yet." : "Listening for players…"}
+            {status === "live" ? "No identified players online right now." : "Listening for players…"}
           </p>
         ) : (
           <div className="avatarWall">
-            {sortedPlayers.map((pk) => (
-              <div className={`playerChip ${livePubkeys.has(pk) ? "live" : ""}`} key={pk}>
-                <Avatar pubkey={pk} profile={profiles[pk]} live={livePubkeys.has(pk)} />
+            {onlinePlayers.map((pk) => (
+              <div className="playerChip live" key={pk}>
+                <Avatar pubkey={pk} profile={profiles[pk]} live />
                 <span className="playerName">{profiles[pk]?.name || shortNpub(npubEncode(pk))}</span>
-                {livePubkeys.has(pk) && <span className="liveTag">in play</span>}
+                <span className="liveTag">in play</span>
               </div>
             ))}
           </div>
