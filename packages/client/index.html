@@ -712,6 +712,49 @@
         background: rgba(255, 212, 121, 0.15);
         outline: none;
       }
+      #worktreePanel .wtBranchBar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+        gap: 10px;
+        align-items: stretch;
+        margin-top: 10px;
+      }
+      #worktreePanel .wtBranchCurrent,
+      #worktreePanel .wtTargetWrap {
+        min-width: 0;
+        display: grid;
+        gap: 4px;
+        padding: 8px 9px;
+        border: 1px solid rgba(255, 212, 121, 0.18);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+      #worktreePanel .wtBranchLabel {
+        color: rgba(255, 230, 168, 0.58);
+        font-size: 10px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+      #worktreePanel .wtBranchValue {
+        min-width: 0;
+        color: #f4ead5;
+        font-weight: 900;
+        overflow-wrap: anywhere;
+      }
+      #worktreePanel .wtTargetSelect {
+        min-width: 0;
+        width: 100%;
+        border: 0;
+        border-radius: 4px;
+        background: rgba(8, 6, 10, 0.78);
+        color: #ffd479;
+        font: 900 12px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0;
+        outline: 1px solid rgba(255, 212, 121, 0.24);
+      }
+      #worktreePanel .wtTargetSelect:focus-visible {
+        outline-color: rgba(255, 212, 121, 0.86);
+      }
       #worktreePanel .wtChangesToggle {
         width: 100%;
         display: flex;
@@ -776,6 +819,11 @@
       #worktreePanel .wtEmpty {
         padding: 8px 0 2px;
         color: rgba(255, 230, 168, 0.56);
+      }
+      @media (max-width: 560px) {
+        #worktreePanel .wtBranchBar {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
 
       #splash {

@@ -72,6 +72,8 @@ interface WorktreeMeta {
   label: string;
   fullLabel: string;
   branch: string;
+  targetBranch: string;
+  branches: string[];
   isMain: boolean;
   isLinked: boolean;
   commits: WorktreeCommit[];
@@ -88,6 +90,7 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
     ...meta,
     commits: meta.commits ?? worktreeMeta.commits ?? [],
     changes: meta.changes ?? worktreeMeta.changes ?? [],
+    branches: meta.branches ?? worktreeMeta.branches ?? [],
   };
   const label = meta.label ?? "";
   const fullLabel = meta.fullLabel ?? label;
@@ -97,6 +100,7 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   worktreeEl.dataset.name = meta.name ?? "";
   worktreeEl.dataset.root = meta.root ?? "";
   worktreeEl.dataset.branch = meta.branch ?? "";
+  worktreeEl.dataset.targetBranch = meta.targetBranch ?? "";
   worktreeEl.classList.toggle("dirty", (meta.changes?.length ?? 0) > 0);
   worktreeEl.hidden = label === "";
   renderWorktreePanel();
@@ -121,6 +125,16 @@ async function saveWorktreeName(name: string): Promise<WorktreeMeta> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeMeta;
+}
+
+async function saveWorktreeTargetBranch(targetBranch: string): Promise<WorktreeMeta> {
+  const res = await fetch("/__worktree", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ targetBranch }),
   });
   if (!res.ok) throw new Error(await res.text());
   return (await res.json()) as WorktreeMeta;
@@ -163,6 +177,9 @@ function renderWorktreePanel() {
   const label = worktreeMeta.label ?? "";
   const commits = worktreeMeta.commits ?? [];
   const changes = worktreeMeta.changes ?? [];
+  const branch = worktreeMeta.branch || "detached";
+  const targetBranch = worktreeMeta.targetBranch || "main";
+  const branches = Array.from(new Set(["main", targetBranch, ...(worktreeMeta.branches ?? [])])).filter(Boolean);
   if (!label) {
     worktreePanelEl.hidden = true;
     return;
@@ -183,6 +200,39 @@ function renderWorktreePanel() {
     void editWorktreeName();
   });
   head.append(titleWrap, editBtn);
+
+  const branchBar = createWorktreeNode("div", "wtBranchBar");
+  const currentBranchEl = createWorktreeNode("div", "wtBranchCurrent");
+  currentBranchEl.append(
+    createWorktreeNode("span", "wtBranchLabel", "Current"),
+    createWorktreeNode("span", "wtBranchValue", branch),
+  );
+  const targetWrap = createWorktreeNode("label", "wtTargetWrap");
+  const targetLabel = createWorktreeNode("span", "wtBranchLabel", "Target");
+  const targetSelect = createWorktreeNode("select", "wtTargetSelect");
+  targetSelect.setAttribute("aria-label", "Target branch");
+  for (const optionBranch of branches) {
+    const option = createWorktreeNode("option", "", optionBranch);
+    option.value = optionBranch;
+    option.selected = optionBranch === targetBranch;
+    targetSelect.append(option);
+  }
+  targetSelect.addEventListener("change", (ev) => {
+    ev.stopPropagation();
+    const next = targetSelect.value || "main";
+    targetSelect.disabled = true;
+    void saveWorktreeTargetBranch(next)
+      .then((meta) => setWorktreeMeta(meta))
+      .catch((err) => {
+        console.warn("Could not save target branch", err);
+        window.alert("Could not save target branch.");
+      })
+      .finally(() => {
+        targetSelect.disabled = false;
+      });
+  });
+  targetWrap.append(targetLabel, targetSelect);
+  branchBar.append(currentBranchEl, targetWrap);
 
   const changesBtn = createWorktreeNode("button", "wtChangesToggle");
   changesBtn.type = "button";
@@ -234,7 +284,7 @@ function renderWorktreePanel() {
     }
   }
 
-  worktreePanelEl.append(head, changesBtn, changesList, commitsSection);
+  worktreePanelEl.append(head, branchBar, changesBtn, changesList, commitsSection);
   worktreePanelEl.hidden = !worktreePanelOpen;
 }
 

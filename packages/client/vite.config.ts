@@ -57,6 +57,8 @@ interface WorktreeInfo {
   label: string;
   fullLabel: string;
   branch: string;
+  targetBranch: string;
+  branches: string[];
   isMain: boolean;
   isLinked: boolean;
   commits: WorktreeCommit[];
@@ -71,6 +73,8 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   label: "",
   fullLabel: "",
   branch: "",
+  targetBranch: "main",
+  branches: [],
   isMain: false,
   isLinked: false,
   commits: [],
@@ -78,6 +82,7 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
 });
 
 const worktreeNamePathFor = (root: string) => resolve(root, ".gorilator/worktree-name");
+const workflowSettingsPathFor = (root: string) => resolve(root, "codex-workflow.json");
 
 function sanitizeWorktreeName(raw: unknown): string {
   return String(raw ?? "")
@@ -104,6 +109,85 @@ function writeWorktreeName(root: string, raw: unknown): string {
   mkdirSync(resolve(root, ".gorilator"), { recursive: true });
   writeFileSync(path, `${name}\n`);
   return name;
+}
+
+function sanitizeBranchName(raw: unknown): string {
+  const branch = String(raw ?? "")
+    .replace(/[\r\n\t\s]+/g, "")
+    .trim();
+  if (
+    !branch ||
+    branch.startsWith("/") ||
+    branch.endsWith("/") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("\\") ||
+    !/^[A-Za-z0-9._/-]+$/.test(branch)
+  ) {
+    return "main";
+  }
+  return branch;
+}
+
+function readTargetBranch(root: string): string {
+  try {
+    const raw = JSON.parse(readFileSync(workflowSettingsPathFor(root), "utf8")) as { targetBranch?: unknown };
+    return sanitizeBranchName(raw.targetBranch);
+  } catch {
+    return "main";
+  }
+}
+
+function writeTargetBranch(root: string, raw: unknown): string {
+  const targetBranch = sanitizeBranchName(raw);
+  let prev: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(readFileSync(workflowSettingsPathFor(root), "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) prev = parsed as Record<string, unknown>;
+  } catch {
+    prev = {};
+  }
+  writeFileSync(workflowSettingsPathFor(root), JSON.stringify({ ...prev, targetBranch }, null, 2) + "\n");
+  return targetBranch;
+}
+
+function splitGitLines(raw: string | null): string[] {
+  return raw
+    ? raw
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function currentBranch(root: string): string {
+  const branch = captureGit(["branch", "--show-current"], root);
+  if (branch) return branch;
+  const pointedBranches = splitGitLines(captureGit(["branch", "--points-at", "HEAD", "--format=%(refname:short)"], root))
+    .filter((name) => !name.includes("HEAD"));
+  return (
+    pointedBranches.find((name) => name.startsWith("codex/")) ??
+    pointedBranches.find((name) => name !== "main") ??
+    pointedBranches[0] ??
+    ""
+  );
+}
+
+function branchOptions(root: string): string[] {
+  const branches = new Set<string>(["main"]);
+  for (const branch of splitGitLines(captureGit(["branch", "--format=%(refname:short)"], root))) {
+    if (branch.startsWith("(") || branch.includes("HEAD")) continue;
+    branches.add(branch);
+  }
+  for (const raw of splitGitLines(captureGit(["branch", "-r", "--format=%(refname:short)"], root))) {
+    if (raw.startsWith("(") || raw.includes("HEAD")) continue;
+    branches.add(raw.startsWith("origin/") ? raw.slice("origin/".length) : raw);
+  }
+  return [...branches].sort((a, b) => {
+    if (a === "main") return -1;
+    if (b === "main") return 1;
+    return a.localeCompare(b);
+  });
 }
 
 function recentGitCommits(root: string): WorktreeCommit[] {
@@ -158,18 +242,21 @@ function formatWorktreeInfo(
   name = readWorktreeName(root),
   options: { branch?: string; isLinked?: boolean } = {},
 ): WorktreeInfo {
-  const branch = options.branch ?? captureGit(["branch", "--show-current"], root) ?? "";
+  const branch = options.branch ?? currentBranch(root);
+  const detachedHash = branch ? "" : captureGit(["rev-parse", "--short", "HEAD"], root) ?? "";
+  const branchLabel = branch || (detachedHash ? `detached ${detachedHash}` : "");
+  const targetBranch = readTargetBranch(root);
   const isMain = branch === "main";
   const isLinked = Boolean(options.isLinked);
   const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
-  const id = codexMatch?.[1] ?? (branch || basename(root));
-  const defaultLabel = isMain ? "main" : isLinked ? `worktree ${id}` : branch || `worktree ${id}`;
-  const label = isMain ? "main" : name ? `${name} · ${id}` : defaultLabel;
+  const id = codexMatch?.[1] ?? (branchLabel || basename(root));
+  const defaultLabel = branchLabel || (isLinked ? `worktree ${id}` : basename(root));
+  const label = isMain ? "main" : name ? `${name} · ${defaultLabel}` : defaultLabel;
   const fullLabel = isMain
-    ? `main · ${root}`
+    ? `main -> ${targetBranch} · ${root}`
     : name
-      ? `${name} · ${defaultLabel} · ${root}`
-      : `${defaultLabel} · ${root}`;
+      ? `${name} · ${defaultLabel} -> ${targetBranch} · ${root}`
+      : `${defaultLabel} -> ${targetBranch} · ${root}`;
   return {
     root,
     id,
@@ -178,6 +265,8 @@ function formatWorktreeInfo(
     label,
     fullLabel,
     branch,
+    targetBranch,
+    branches: branchOptions(root),
     isMain,
     isLinked,
     commits: recentGitCommits(root),
@@ -194,8 +283,7 @@ function worktreeInfo(): WorktreeInfo {
     return emptyWorktreeInfo();
   }
   const isLinked = resolve(root, gitDir) !== resolve(root, commonDir);
-  const branch = captureGit(["branch", "--show-current"], root) ?? "";
-  if (!isLinked && branch !== "main") return emptyWorktreeInfo();
+  const branch = currentBranch(root);
   return formatWorktreeInfo(root, readWorktreeName(root), { branch, isLinked });
 }
 
@@ -1053,7 +1141,7 @@ function perfLogs(): Plugin {
  * Dev-only endpoint for naming the active linked worktree. The name lives in the
  * ignored repo-local `.gorilator/worktree-name` file.
  *   GET  /__worktree       → current label/name/path metadata
- *   POST /__worktree {name} → set name, or clear it with an empty string
+ *   POST /__worktree {name,targetBranch} → set name/target branch
  */
 function worktreeTagger(): Plugin {
   return {
@@ -1067,8 +1155,11 @@ function worktreeTagger(): Plugin {
         if (req.method !== "POST") return fail(res, 405, "GET or POST only");
         void collectBody(req).then((buf) => {
           try {
-            const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown };
-            const name = writeWorktreeName(info.root, body.name);
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown; targetBranch?: unknown };
+            const hasName = Object.prototype.hasOwnProperty.call(body, "name");
+            const hasTarget = Object.prototype.hasOwnProperty.call(body, "targetBranch");
+            const name = hasName ? writeWorktreeName(info.root, body.name) : readWorktreeName(info.root);
+            if (hasTarget) writeTargetBranch(info.root, body.targetBranch);
             sendJson(res, { ok: true, ...formatWorktreeInfo(info.root, name) });
           } catch (e) {
             fail(res, 500, String(e));
