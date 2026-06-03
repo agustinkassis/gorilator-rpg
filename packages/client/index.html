@@ -717,13 +717,14 @@
       }
       #worktreePanel .wtBranchBar {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+        grid-template-columns: minmax(0, 1fr) minmax(180px, auto) auto;
         gap: 10px;
         align-items: stretch;
         margin-top: 10px;
       }
       #worktreePanel .wtBranchCurrent,
-      #worktreePanel .wtTargetWrap {
+      #worktreePanel .wtTargetWrap,
+      #worktreePanel .wtBringTargetWrap {
         min-width: 0;
         display: grid;
         gap: 4px;
@@ -758,15 +759,100 @@
       #worktreePanel .wtTargetSelect:focus-visible {
         outline-color: rgba(255, 212, 121, 0.86);
       }
+      #worktreePanel .wtBringTargetBtn {
+        min-width: 112px;
+        height: 26px;
+        border: 1px solid rgba(139, 240, 170, 0.38);
+        border-radius: 5px;
+        background: rgba(84, 217, 140, 0.1);
+        color: #bff8ca;
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+      }
+      #worktreePanel .wtBringTargetBtn:hover,
+      #worktreePanel .wtBringTargetBtn:focus-visible {
+        border-color: rgba(139, 240, 170, 0.86);
+        background: rgba(84, 217, 140, 0.18);
+        outline: none;
+      }
+      #worktreePanel .wtBringTargetBtn:disabled {
+        opacity: 0.52;
+        cursor: not-allowed;
+      }
+      #worktreePanel .wtChangesHead {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: stretch;
+        margin-top: 10px;
+      }
       #worktreePanel .wtChangesToggle {
         width: 100%;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        margin-top: 10px;
         padding: 9px 10px;
         text-align: left;
+      }
+      #worktreePanel .wtPackageToggle {
+        position: relative;
+        min-width: 126px;
+        display: grid;
+        grid-template-columns: 34px auto;
+        gap: 8px;
+        align-items: center;
+        box-sizing: border-box;
+        padding: 8px 9px;
+        border: 1px solid rgba(255, 212, 121, 0.28);
+        border-radius: 6px;
+        background: rgba(255, 212, 121, 0.055);
+        color: rgba(255, 230, 168, 0.7);
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-transform: uppercase;
+        cursor: pointer;
+        user-select: none;
+      }
+      #worktreePanel .wtPackageToggle:hover {
+        border-color: rgba(255, 212, 121, 0.62);
+        background: rgba(255, 212, 121, 0.1);
+      }
+      #worktreePanel .wtPackageToggle input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      #worktreePanel .wtPackageToggleTrack {
+        position: relative;
+        width: 32px;
+        height: 17px;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 212, 121, 0.26);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.055);
+      }
+      #worktreePanel .wtPackageToggleTrack::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 3px;
+        width: 11px;
+        height: 11px;
+        border-radius: 999px;
+        background: rgba(255, 230, 168, 0.72);
+        transition: transform 120ms ease, background 120ms ease;
+      }
+      #worktreePanel .wtPackageToggle input:checked + .wtPackageToggleTrack {
+        border-color: rgba(139, 240, 170, 0.5);
+        background: rgba(84, 217, 140, 0.15);
+      }
+      #worktreePanel .wtPackageToggle input:checked + .wtPackageToggleTrack::after {
+        transform: translateX(14px);
+        background: #8bf0aa;
+      }
+      #worktreePanel .wtPackageToggle input:focus-visible + .wtPackageToggleTrack {
+        outline: 1px solid rgba(255, 212, 121, 0.88);
+        outline-offset: 2px;
       }
       #worktreePanel .wtSectionTitle {
         color: #ffe0a8;
@@ -785,10 +871,12 @@
       }
       #worktreePanel .wtChangesList,
       #worktreePanel .wtPending,
+      #worktreePanel .wtIncoming,
       #worktreePanel .wtCommits {
         margin-top: 9px;
       }
-      #worktreePanel .wtPending {
+      #worktreePanel .wtPending,
+      #worktreePanel .wtIncoming {
         padding-top: 10px;
         border-top: 1px solid rgba(255, 212, 121, 0.16);
       }
@@ -807,6 +895,34 @@
         color: rgba(255, 230, 168, 0.5);
         overflow-wrap: anywhere;
       }
+      #worktreePanel .wtChangeGroup {
+        margin-top: 8px;
+        border: 1px solid rgba(255, 212, 121, 0.13);
+        border-radius: 6px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.024);
+      }
+      #worktreePanel .wtChangeGroup:first-child {
+        margin-top: 0;
+      }
+      #worktreePanel .wtChangeGroupHead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 8px;
+        border-bottom: 1px solid rgba(255, 212, 121, 0.11);
+        background: rgba(255, 212, 121, 0.05);
+      }
+      #worktreePanel .wtChangeGroupName {
+        color: #ffd479;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+      #worktreePanel .wtChangeGroupCount {
+        color: rgba(255, 230, 168, 0.54);
+        white-space: nowrap;
+      }
       #worktreePanel .wtChangeRow,
       #worktreePanel .wtCommitRow {
         display: grid;
@@ -822,8 +938,15 @@
       #worktreePanel .wtPendingRow {
         grid-template-columns: auto minmax(0, 1fr) auto auto;
       }
-      #worktreePanel .wtPendingRow.mergePreview {
+      #worktreePanel .wtIncomingRow {
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
+      }
+      #worktreePanel .wtPendingRow.mergePreview,
+      #worktreePanel .wtIncomingRow.mergePreview {
         background: rgba(255, 236, 190, 0.18);
+      }
+      #worktreePanel .wtPendingRow.conflict {
+        background: rgba(255, 106, 77, 0.055);
       }
       #worktreePanel .wtChangeStatus,
       #worktreePanel .wtCommitHash {
@@ -843,7 +966,7 @@
       }
       #worktreePanel .wtMergeBtn {
         box-sizing: border-box;
-        width: 58px;
+        width: var(--wt-merge-action-width, 58px);
         height: 23px;
         border: 1px solid rgba(139, 240, 170, 0.38);
         border-radius: 5px;
@@ -854,9 +977,15 @@
         padding: 0 7px;
       }
       #worktreePanel .wtMergeAction {
-        width: 58px;
+        width: var(--wt-merge-action-width, 58px);
         height: 23px;
         display: grid;
+      }
+      #worktreePanel .wtPendingAction {
+        --wt-merge-action-width: 132px;
+      }
+      #worktreePanel .wtIncomingAction {
+        --wt-merge-action-width: 74px;
       }
       #worktreePanel .wtMergeAction > * {
         grid-area: 1 / 1;
@@ -881,16 +1010,70 @@
         opacity: 0.55;
         cursor: progress;
       }
+      #worktreePanel .wtMergeBtn.conflict:disabled {
+        border-color: rgba(255, 106, 77, 0.38);
+        background: rgba(255, 106, 77, 0.11);
+        color: #ffad7a;
+        cursor: not-allowed;
+        opacity: 1;
+      }
+      #worktreePanel .wtMergeLabel {
+        box-sizing: border-box;
+        width: var(--wt-merge-action-width, 58px);
+        height: 23px;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 236, 190, 0.08);
+        color: #ffe0a8;
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-transform: uppercase;
+      }
+      #worktreePanel .wtIncomingRow .wtMergeLabel {
+        display: none;
+      }
+      #worktreePanel .wtIncomingRow.mergePreview:not(.mergeHover) .wtMergeBtn {
+        display: none;
+      }
+      #worktreePanel .wtIncomingRow.mergePreview:not(.mergeHover) .wtMergeLabel {
+        display: inline-flex;
+      }
+      #worktreePanel .wtIncomingBadge {
+        box-sizing: border-box;
+        min-width: 72px;
+        height: 23px;
+        border: 1px solid rgba(139, 240, 170, 0.38);
+        border-radius: 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(84, 217, 140, 0.1);
+        color: #bff8ca;
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #worktreePanel .wtIncomingBadge.conflict {
+        border-color: rgba(255, 106, 77, 0.36);
+        background: rgba(255, 106, 77, 0.09);
+        color: #ffad7a;
+      }
       #worktreePanel .wtMergeStatus {
         margin-top: 8px;
         color: #bff8ca;
         overflow-wrap: anywhere;
       }
-      #worktreePanel .wtChangeRow.json {
+      #worktreePanel .wtChangeRow.file {
         cursor: pointer;
       }
-      #worktreePanel .wtChangeRow.json:hover {
+      #worktreePanel .wtChangeRow.file:hover {
         background: rgba(255, 212, 121, 0.08);
+      }
+      #worktreePanel .wtChangeGroup .wtChangeRow {
+        padding-inline: 8px;
+      }
+      #worktreePanel .wtChangeGroup .wtChangeRow:last-child {
+        border-bottom: 0;
       }
       #worktreePanel .wtEmpty {
         padding: 8px 0 2px;
@@ -898,6 +1081,9 @@
       }
       @media (max-width: 560px) {
         #worktreePanel .wtBranchBar {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        #worktreePanel .wtChangesHead {
           grid-template-columns: minmax(0, 1fr);
         }
       }
@@ -914,7 +1100,7 @@
         pointer-events: auto;
       }
       #jsonEditorModal[hidden] { display: none; }
-      .jsonEditorShell {
+      .fileExplorerShell {
         width: min(1180px, calc(100vw - 36px));
         height: min(760px, calc(100vh - 36px));
         display: grid;
@@ -926,7 +1112,7 @@
         color: #ead7ad;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       }
-      .jsonEditorHead {
+      .fileExplorerHead {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 14px;
@@ -934,24 +1120,26 @@
         padding: 12px;
         border-bottom: 1px solid rgba(255, 212, 121, 0.18);
       }
-      .jsonEditorTitle {
+      .fileExplorerTitle {
         color: #ffd479;
         font: 900 15px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
         overflow-wrap: anywhere;
       }
-      .jsonEditorStatus {
+      .fileExplorerStatus {
         margin-top: 4px;
         font: 800 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
         overflow-wrap: anywhere;
       }
-      .jsonEditorStatus.ok { color: #8bf0aa; }
-      .jsonEditorStatus.bad { color: #ff8b7a; }
-      .jsonEditorActions {
+      .fileExplorerStatus.ok { color: #8bf0aa; }
+      .fileExplorerStatus.bad { color: #ff8b7a; }
+      .fileExplorerActions {
         display: flex;
         gap: 8px;
         align-items: center;
       }
-      .jsonEditorBtn {
+      .fileExplorerBtn {
+        box-sizing: border-box;
+        min-height: 31px;
         border: 1px solid rgba(255, 212, 121, 0.38);
         border-radius: 6px;
         background: rgba(255, 212, 121, 0.08);
@@ -959,29 +1147,42 @@
         font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         padding: 8px 10px;
         cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
-      .jsonEditorBtn.primary {
+      .fileExplorerBtn:visited {
+        color: #ffe0a8;
+      }
+      .fileExplorerBtn.primary {
         border-color: rgba(139, 240, 170, 0.44);
         background: rgba(84, 217, 140, 0.13);
         color: #bff8ca;
       }
-      .jsonEditorBtn:hover,
-      .jsonEditorBtn:focus-visible {
+      .fileExplorerBtn:hover,
+      .fileExplorerBtn:focus-visible {
         border-color: rgba(255, 212, 121, 0.88);
         outline: none;
       }
-      .jsonEditorBtn:disabled {
+      .fileExplorerBtn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .jsonEditorBody {
+      .fileExplorerBody {
         min-height: 0;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        gap: 12px;
         padding: 12px;
       }
-      .jsonEditorPane {
+      .fileExplorerBody.editable {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+      }
+      .fileExplorerBody.preview {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .fileExplorerPane,
+      .filePreviewPane {
         min-height: 0;
         display: grid;
         grid-template-rows: auto minmax(0, 1fr);
@@ -990,14 +1191,14 @@
         overflow: hidden;
         background: rgba(255, 255, 255, 0.035);
       }
-      .jsonEditorPaneTitle {
+      .fileExplorerPaneTitle {
         padding: 8px 10px;
         border-bottom: 1px solid rgba(255, 212, 121, 0.12);
         color: rgba(255, 230, 168, 0.7);
         font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         text-transform: uppercase;
       }
-      .jsonEditorText {
+      .fileExplorerText {
         min-width: 0;
         min-height: 0;
         resize: none;
@@ -1009,12 +1210,12 @@
         outline: none;
         tab-size: 2;
       }
-      .jsonDiff {
+      .fileDiff {
         min-height: 0;
         overflow: auto;
         background: rgba(3, 3, 6, 0.7);
       }
-      .jsonDiffLine {
+      .fileDiffLine {
         display: grid;
         grid-template-columns: 46px 46px 18px minmax(0, 1fr);
         gap: 6px;
@@ -1023,32 +1224,91 @@
         box-sizing: border-box;
         font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
       }
-      .jsonDiffLine.add { background: rgba(84, 217, 140, 0.13); }
-      .jsonDiffLine.remove { background: rgba(255, 106, 77, 0.13); }
-      .jsonDiffNum {
+      .fileDiffLine.add { background: rgba(84, 217, 140, 0.13); }
+      .fileDiffLine.remove { background: rgba(255, 106, 77, 0.13); }
+      .fileDiffNum {
         color: rgba(255, 230, 168, 0.34);
         text-align: right;
         user-select: none;
       }
-      .jsonDiffMark {
+      .fileDiffMark {
         color: rgba(255, 230, 168, 0.62);
         user-select: none;
       }
-      .jsonDiffText {
+      .fileDiffText {
         min-width: 0;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
         color: #f4ead5;
       }
-      .jsonDiffMore {
+      .fileDiffMore {
         padding: 8px 10px;
         color: rgba(255, 230, 168, 0.56);
       }
+      .filePreviewPane {
+        background: rgba(3, 3, 6, 0.7);
+      }
+      .filePreviewImage {
+        align-self: center;
+        justify-self: center;
+        max-width: calc(100% - 24px);
+        max-height: calc(100% - 24px);
+        object-fit: contain;
+        background: repeating-conic-gradient(rgba(255,255,255,0.08) 0% 25%, rgba(0,0,0,0.12) 0% 50%) 50% / 24px 24px;
+      }
+      .filePreviewPlayer {
+        align-self: center;
+        justify-self: center;
+        width: min(760px, calc(100% - 24px));
+      }
+      .filePreviewVideo {
+        align-self: center;
+        justify-self: center;
+        width: calc(100% - 24px);
+        height: calc(100% - 24px);
+        min-height: 320px;
+        background: #000;
+        object-fit: contain;
+      }
+      .filePreviewModelWrap {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+      }
+      .filePreviewModelCanvas {
+        width: 100%;
+        height: 100%;
+        min-height: 420px;
+        display: block;
+        touch-action: none;
+        outline: none;
+      }
+      .filePreviewUnsupported,
+      .filePreviewError {
+        align-self: center;
+        justify-self: center;
+        max-width: min(720px, calc(100% - 24px));
+        color: rgba(255, 230, 168, 0.72);
+        font: 800 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+      .filePreviewError {
+        position: absolute;
+        inset-inline: 18px;
+        bottom: 18px;
+        padding: 10px 12px;
+        border: 1px solid rgba(255, 106, 77, 0.38);
+        border-radius: 7px;
+        background: rgba(34, 9, 7, 0.88);
+        color: #ffad7a;
+      }
       @media (max-width: 820px) {
-        .jsonEditorBody {
+        .fileExplorerBody.editable {
           grid-template-columns: minmax(0, 1fr);
         }
-        .jsonEditorActions {
+        .fileExplorerActions {
           flex-wrap: wrap;
           justify-content: end;
         }

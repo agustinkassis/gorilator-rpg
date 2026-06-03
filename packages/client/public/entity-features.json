@@ -16,7 +16,7 @@
       "drops": [
         {
           "item": "stone",
-          "quantity": 40,
+          "quantity": 60,
           "probability": 1,
           "trigger": "damage"
         }

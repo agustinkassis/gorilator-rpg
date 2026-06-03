@@ -2,7 +2,7 @@ import type { Engine, ShadowGenerator } from "@babylonjs/core";
 import type { AudioManager } from "../audio/AudioManager";
 import type { NetworkClient } from "../net/NetworkClient";
 
-type View = "main" | "hotkeys" | "sound" | "graphics";
+type View = "main" | "hotkeys" | "sound" | "graphics" | "developer";
 type Quality = "low" | "medium" | "high";
 
 interface Settings {
@@ -11,10 +11,11 @@ interface Settings {
   sfx: number; // 0..100
   shadows: boolean;
   quality: Quality;
+  devLabels: boolean;
 }
 
 const STORE = "gorilator-settings";
-const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadows: true, quality: "medium" };
+const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadows: true, quality: "medium", devLabels: false };
 // hardware scaling: >1 lower-res/faster, <1 super-sampled/sharper-slower.
 const QUALITY_SCALE: Record<Quality, number> = { low: 2.0, medium: 1.0, high: 0.66 };
 
@@ -24,6 +25,10 @@ export interface GameMenuDeps {
   engine: Engine;
   shadow: ShadowGenerator;
   isNostrVerified: () => boolean;
+  developerLabels?: {
+    isEnabled: () => boolean;
+    setEnabled: (on: boolean) => void;
+  };
 }
 
 /**
@@ -109,6 +114,7 @@ export class GameMenu {
     this.deps.audio.setSfxVolume(s.sfx / 100);
     this.setShadows(s.shadows);
     this.deps.engine.setHardwareScalingLevel(QUALITY_SCALE[s.quality]);
+    this.deps.developerLabels?.setEnabled(s.devLabels);
   }
   private setShadows(on: boolean) {
     const light = this.deps.shadow.getLight() as unknown as { shadowEnabled: boolean };
@@ -121,6 +127,7 @@ export class GameMenu {
     if (this.view === "hotkeys") this.renderHotkeys();
     else if (this.view === "sound") this.renderSound();
     else if (this.view === "graphics") this.renderGraphics();
+    else if (this.view === "developer") this.renderDeveloper();
     else this.renderMain();
   }
 
@@ -153,6 +160,7 @@ export class GameMenu {
       item("gmHotkeys", "⌨️", "Hotkeys") +
       item("gmSound", "🔊", "Sound settings") +
       item("gmGraphics", "🖥️", "Graphics settings") +
+      (this.deps.developerLabels ? item("gmDeveloper", "DEV", "Developer Settings") : "") +
       (showNostr ? item("gmNostr", "⚡", "Login with Nostr") : "") +
       item("gmSuicide", "💀", "Kill yourself", "gmWarn") +
       item("gmExit", "🚪", "Exit game", "gmDanger") +
@@ -162,6 +170,7 @@ export class GameMenu {
     this.on("gmHotkeys", () => this.openTo("hotkeys"));
     this.on("gmSound", () => this.openTo("sound"));
     this.on("gmGraphics", () => this.openTo("graphics"));
+    this.on("gmDeveloper", () => this.openTo("developer"));
     // Nostr login + exit both return to the splash (the canonical entry); logging in
     // with Nostr there restores any saved character for that npub.
     this.on("gmNostr", () => window.location.reload());
@@ -264,6 +273,29 @@ export class GameMenu {
         this.renderGraphics(); // refresh the active highlight
       };
     });
+  }
+
+  private renderDeveloper() {
+    const labels = this.deps.developerLabels;
+    if (!labels) {
+      this.openTo("main");
+      return;
+    }
+    this.settings.devLabels = labels.isEnabled();
+    this.panel.innerHTML =
+      this.head("Developer Settings", true) +
+      `<div class="gmBody">` +
+      `<div class="gmRow"><label>Component labels</label><button id="gmDevLabels" class="gmToggle">${this.settings.devLabels ? "On" : "Off"}</button></div>` +
+      `</div>`;
+    this.wireHead();
+    const devLabels = this.panel.querySelector<HTMLElement>("#gmDevLabels");
+    if (!devLabels) return;
+    devLabels.onclick = () => {
+      this.settings.devLabels = !this.settings.devLabels;
+      labels.setEnabled(this.settings.devLabels);
+      devLabels.textContent = this.settings.devLabels ? "On" : "Off";
+      this.save();
+    };
   }
 }
 

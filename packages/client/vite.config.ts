@@ -10,8 +10,9 @@ import {
   rmSync,
   unlinkSync,
   statSync,
+  createReadStream,
 } from "fs";
-import { basename, dirname, relative, resolve } from "path";
+import { basename, dirname, extname, relative, resolve } from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 
@@ -40,10 +41,16 @@ function captureGit(args: string[], cwd?: string, trim = true): string | null {
   }
 }
 
+function execGit(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
+}
+
 interface WorktreeCommit {
   hash: string;
   subject: string;
   age: string;
+  conflict?: boolean;
+  conflictReason?: string;
 }
 
 interface WorktreeChange {
@@ -68,7 +75,9 @@ interface WorktreeInfo {
   branches: string[];
   isMain: boolean;
   isLinked: boolean;
+  hasTargetUpdates: boolean;
   pendingCommits: WorktreeCommit[];
+  incomingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
   changes: WorktreeChange[];
 }
@@ -77,6 +86,10 @@ interface WorktreeFilePayload {
   path: string;
   content: string;
   baseContent: string;
+  kind: string;
+  mime: string;
+  editable: boolean;
+  language: string;
 }
 
 const emptyWorktreeInfo = (): WorktreeInfo => ({
@@ -92,7 +105,9 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   branches: [],
   isMain: false,
   isLinked: false,
+  hasTargetUpdates: false,
   pendingCommits: [],
+  incomingCommits: [],
   commits: [],
   changes: [],
 });
@@ -237,6 +252,15 @@ function pendingGitCommitRefs(root: string, targetBranch: string): string[] {
   return raw.split("\n").filter(Boolean);
 }
 
+function incomingGitCommitRefs(root: string, targetBranch: string, current: string): string[] {
+  if (current === targetBranch) return [];
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) return [];
+  const raw = captureGit(["log", "--cherry-pick", "--left-only", "--reverse", "--pretty=format:%H", `${base}...HEAD`], root);
+  if (!raw) return [];
+  return raw.split("\n").filter(Boolean);
+}
+
 function pendingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
   if (current === targetBranch) return [];
   const base = pendingBaseRef(root, targetBranch);
@@ -246,17 +270,60 @@ function pendingGitCommits(root: string, targetBranch: string, current: string):
     "--cherry-pick",
     "--right-only",
     "--max-count=20",
-    "--pretty=format:%h%x1f%s%x1f%cr",
+    "--pretty=format:%H%x1f%h%x1f%s%x1f%cr",
     `${base}...HEAD`,
   ], root);
   if (!raw) return [];
-  return raw
+  const commits = raw
     .split("\n")
     .map((line) => {
-      const [hash = "", subject = "", age = ""] = line.split("\x1f");
-      return { hash, subject, age };
+      const [ref = "", hash = "", subject = "", age = ""] = line.split("\x1f");
+      return { ref, hash, subject, age };
     })
-    .filter((commit) => commit.hash && commit.subject);
+    .filter((commit) => commit.ref && commit.hash && commit.subject);
+  const conflictReasons = pendingTargetConflictReasons(
+    root,
+    targetBranch,
+    commits.map((commit) => commit.ref),
+  );
+  return commits.map(({ ref, hash, subject, age }) => {
+    const conflictReason = conflictReasons.get(ref) ?? "";
+    return { hash, subject, age, conflict: Boolean(conflictReason), conflictReason };
+  });
+}
+
+function mergeConflictReason(root: string, commit: string): string {
+  try {
+    execFileSync("git", ["merge-tree", "--write-tree", "HEAD", commit], { cwd: root, encoding: "utf8" });
+    return "";
+  } catch (err) {
+    const out = `${String((err as { stdout?: unknown }).stdout ?? "")}\n${String((err as { stderr?: unknown }).stderr ?? "")}`;
+    const paths = Array.from(
+      new Set(
+        out
+          .split("\n")
+          .map((line) => line.match(/^[0-9]{6} [0-9a-f]{40} [123]\t(.+)$/)?.[1])
+          .filter((path): path is string => Boolean(path)),
+      ),
+    );
+    if (!paths.length) return "Conflict";
+    const shown = paths.slice(0, 3).join(", ");
+    return paths.length > 3 ? `Conflicts: ${shown}, ...` : `Conflicts: ${shown}`;
+  }
+}
+
+function incomingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
+  const commits: WorktreeCommit[] = [];
+  for (const ref of incomingGitCommitRefs(root, targetBranch, current)) {
+    if (mergeConflictReason(root, ref)) continue;
+    const raw = captureGit(["show", "-s", "--pretty=format:%h%x1f%s%x1f%cr", ref], root);
+    if (!raw) continue;
+    const [hash = "", subject = "", age = ""] = raw.split("\x1f");
+    if (!hash || !subject) continue;
+    commits.push({ hash, subject, age });
+    if (commits.length >= 20) break;
+  }
+  return commits;
 }
 
 function gitStatusLabel(status: string): string {
@@ -294,37 +361,309 @@ function currentGitChanges(root: string): WorktreeChange[] {
     .filter((change) => change.path);
 }
 
-function repoJsonPath(root: string, rawPath: unknown): { abs: string; rel: string } {
+function repoFilePath(root: string, rawPath: unknown): { abs: string; rel: string } {
   const requested = String(rawPath ?? "").replace(/\\/g, "/");
   const abs = resolve(root, requested);
   const rel = relative(root, abs).replace(/\\/g, "/");
   if (!rel || rel.startsWith("../") || rel === ".." || resolve(root, rel) !== abs) {
     throw new Error("file must be inside the repository");
   }
-  if (!rel.toLowerCase().endsWith(".json")) throw new Error("only JSON files can be edited here");
   return { abs, rel };
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  ".avif": "image/avif",
+  ".cjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".flac": "audio/flac",
+  ".gif": "image/gif",
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".m4a": "audio/mp4",
+  ".md": "text/markdown; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".ogg": "audio/ogg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".ts": "text/typescript; charset=utf-8",
+  ".tsx": "text/typescript; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".wav": "audio/wav",
+  ".webm": "video/webm",
+  ".webp": "image/webp",
+  ".yaml": "text/yaml; charset=utf-8",
+  ".yml": "text/yaml; charset=utf-8",
+};
+
+const EDITABLE_EXTS = new Set([".json", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".css", ".html", ".md", ".txt", ".yaml", ".yml"]);
+const IMAGE_EXTS = new Set([".avif", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
+const AUDIO_EXTS = new Set([".flac", ".m4a", ".mp3", ".ogg", ".wav"]);
+const VIDEO_EXTS = new Set([".mov", ".mp4", ".webm"]);
+const MODEL_EXTS = new Set([".gbl", ".glb", ".gltf"]);
+
+function worktreeFileMeta(rel: string) {
+  const ext = extname(rel).toLowerCase();
+  const kind = IMAGE_EXTS.has(ext)
+    ? "image"
+    : AUDIO_EXTS.has(ext)
+      ? "audio"
+      : VIDEO_EXTS.has(ext)
+        ? "video"
+        : MODEL_EXTS.has(ext)
+          ? "model"
+          : ext === ".json"
+            ? "json"
+            : EDITABLE_EXTS.has(ext)
+              ? "code"
+              : "unsupported";
+  return {
+    kind,
+    mime: MIME_BY_EXT[ext] ?? "application/octet-stream",
+    editable: EDITABLE_EXTS.has(ext),
+    language: ext.replace(/^\./, "") || "text",
+  };
+}
+
 function readWorktreeFile(root: string, rawPath: unknown): WorktreeFilePayload {
-  const file = repoJsonPath(root, rawPath);
-  const content = existsSync(file.abs) ? readFileSync(file.abs, "utf8") : "";
-  const baseContent = captureGit(["show", `HEAD:${file.rel}`], root, false) ?? "";
-  return { path: file.rel, content, baseContent };
+  const file = repoFilePath(root, rawPath);
+  const meta = worktreeFileMeta(file.rel);
+  const content = meta.editable && existsSync(file.abs) ? readFileSync(file.abs, "utf8") : "";
+  const baseContent = meta.editable ? captureGit(["show", `HEAD:${file.rel}`], root, false) ?? "" : "";
+  return { path: file.rel, content, baseContent, ...meta };
 }
 
 function writeWorktreeFile(root: string, rawPath: unknown, rawContent: unknown): WorktreeFilePayload {
-  const file = repoJsonPath(root, rawPath);
+  const file = repoFilePath(root, rawPath);
+  const meta = worktreeFileMeta(file.rel);
+  if (!meta.editable) throw new Error("this file type is preview-only");
   const content = String(rawContent ?? "");
-  JSON.parse(content);
+  if (meta.kind === "json") JSON.parse(content);
   writeFileSync(file.abs, content.endsWith("\n") ? content : `${content}\n`);
   return readWorktreeFile(root, file.rel);
+}
+
+function sendWorktreeRawFile(res: ServerResponse, root: string, rawPath: unknown) {
+  const file = repoFilePath(root, rawPath);
+  if (!existsSync(file.abs)) throw new Error("file does not exist");
+  const meta = worktreeFileMeta(file.rel);
+  res.statusCode = 200;
+  res.setHeader("content-type", meta.mime);
+  res.setHeader("cache-control", "no-store");
+  createReadStream(file.abs).on("error", (err) => fail(res, 500, String(err))).pipe(res);
 }
 
 function ensureLocalTargetBranch(root: string, targetBranch: string) {
   if (gitCommitRef(root, targetBranch)) return;
   const remoteRef = `origin/${targetBranch}`;
   if (!gitCommitRef(root, remoteRef)) throw new Error(`Target branch ${targetBranch} was not found`);
-  execFileSync("git", ["branch", targetBranch, remoteRef], { cwd: root, encoding: "utf8" });
+  execGit(["branch", targetBranch, remoteRef], root);
+}
+
+function worktreePathForBranch(root: string, branch: string): string {
+  const raw = captureGit(["worktree", "list", "--porcelain"], root, false);
+  if (!raw) return "";
+  let path = "";
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) {
+      path = "";
+      continue;
+    }
+    if (line.startsWith("worktree ")) path = line.slice("worktree ".length).trim();
+    else if (line === `branch refs/heads/${branch}` && path) return path;
+  }
+  return "";
+}
+
+interface TargetMergeWorktree {
+  cwd: string;
+  temporary: boolean;
+  checkedOutTarget: boolean;
+}
+
+function targetMergeWorktree(root: string, targetBranch: string): TargetMergeWorktree {
+  const existing = worktreePathForBranch(root, targetBranch);
+  if (existing) {
+    return { cwd: existing, temporary: false, checkedOutTarget: true };
+  }
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-"));
+  execGit(["worktree", "add", "--quiet", tmp, targetBranch], root);
+  return { cwd: tmp, temporary: true, checkedOutTarget: false };
+}
+
+function removeTemporaryWorktree(root: string, cwd: string) {
+  try {
+    execGit(["worktree", "remove", "--force", cwd], root);
+  } catch {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+function gitErrorMessage(err: unknown): string {
+  const out = `${String((err as { stdout?: unknown }).stdout ?? "")}\n${String((err as { stderr?: unknown }).stderr ?? "")}`.trim();
+  return out || (err instanceof Error ? err.message : String(err));
+}
+
+function conflictSummaryFromMessage(message: string): string {
+  const paths = Array.from(
+    new Set(
+      message
+        .split("\n")
+        .map((line) => line.match(/CONFLICT \([^)]+\): .* in (.+)$/)?.[1] ?? line.match(/^[0-9]{6} [0-9a-f]{40} [123]\t(.+)$/)?.[1])
+        .filter((path): path is string => Boolean(path)),
+    ),
+  );
+  if (paths.length) {
+    const shown = paths.slice(0, 3).join(", ");
+    return paths.length > 3 ? `Conflicts: ${shown}, ...` : `Conflicts: ${shown}`;
+  }
+  return message.split("\n").find(Boolean)?.trim() || "Conflict";
+}
+
+function latestStashSha(cwd: string): string {
+  return captureGit(["rev-parse", "-q", "--verify", "stash@{0}"], cwd) ?? "";
+}
+
+function targetTrackedSnapshot(cwd: string): string {
+  return captureGit(["stash", "create", "gorilator preflight target merge"], cwd) ?? "";
+}
+
+function targetUntrackedPaths(cwd: string): string[] {
+  const raw = captureGit(["status", "--porcelain=v1", "--untracked-files=all"], cwd, false);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .filter((line) => line.startsWith("?? "))
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+}
+
+function pendingTargetConflictReasons(root: string, targetBranch: string, sources: string[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  if (!sources.length) return reasons;
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) {
+    for (const source of sources) reasons.set(source, `Target branch ${targetBranch} was not found`);
+    return reasons;
+  }
+  const existingTarget = worktreePathForBranch(root, targetBranch);
+  const trackedSnapshot = existingTarget ? targetTrackedSnapshot(existingTarget) : "";
+  const untrackedPaths = existingTarget ? targetUntrackedPaths(existingTarget) : [];
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-preflight-"));
+  try {
+    execGit(["worktree", "add", "--quiet", "--detach", tmp, base], root);
+    for (const source of sources) {
+      try {
+        execGit(["reset", "--hard", base], tmp);
+        execGit(["clean", "-fd"], tmp);
+        cherryPickCommit(tmp, source);
+        for (const path of untrackedPaths) {
+          if (existsSync(resolve(tmp, path))) {
+            reasons.set(source, `Untracked target file would be overwritten: ${path}`);
+            break;
+          }
+        }
+        if (!reasons.has(source) && trackedSnapshot) execGit(["stash", "apply", "--index", trackedSnapshot], tmp);
+      } catch (err) {
+        reasons.set(source, conflictSummaryFromMessage(gitErrorMessage(err)));
+      }
+    }
+  } catch (err) {
+    const reason = conflictSummaryFromMessage(gitErrorMessage(err));
+    for (const source of sources) reasons.set(source, reason);
+  } finally {
+    removeTemporaryWorktree(root, tmp);
+  }
+  return reasons;
+}
+
+function stashTargetChanges(cwd: string): string {
+  const status = execFileSync("git", ["status", "--porcelain=v1"], { cwd, encoding: "utf8" }).trim();
+  if (!status) return "";
+  const before = latestStashSha(cwd);
+  execGit(["stash", "push", "--include-untracked", "-m", "gorilator autostash before target merge"], cwd);
+  const after = latestStashSha(cwd);
+  return after && after !== before ? after : "";
+}
+
+function dropAutostash(cwd: string, stashSha: string) {
+  if (!stashSha || latestStashSha(cwd) !== stashSha) return;
+  execGit(["stash", "drop", "stash@{0}"], cwd);
+}
+
+function restoreAutostash(cwd: string, stashSha: string) {
+  if (!stashSha) return;
+  execGit(["stash", "apply", "--index", stashSha], cwd);
+  dropAutostash(cwd, stashSha);
+}
+
+function abortCherryPick(cwd: string) {
+  try {
+    execGit(["cherry-pick", "--abort"], cwd);
+  } catch {
+    // The pick may not have started.
+  }
+}
+
+function cherryPickCommit(cwd: string, source: string) {
+  try {
+    execGit(["cherry-pick", source], cwd);
+  } catch (err) {
+    abortCherryPick(cwd);
+    throw err;
+  }
+}
+
+function preflightTargetAutostash(root: string, targetBranch: string, source: string, stashSha: string) {
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-check-"));
+  try {
+    execGit(["worktree", "add", "--quiet", "--detach", tmp, targetBranch], root);
+    cherryPickCommit(tmp, source);
+    if (stashSha) execGit(["stash", "apply", "--index", stashSha], tmp);
+  } catch (err) {
+    throw new Error(
+      `Local changes in the checked-out ${targetBranch} worktree would conflict with ${source.slice(0, 7)}. ${gitErrorMessage(err)}`,
+    );
+  } finally {
+    removeTemporaryWorktree(root, tmp);
+  }
+}
+
+function cherryPickIntoCheckedOutTarget(root: string, targetBranch: string, cwd: string, source: string) {
+  const stashSha = stashTargetChanges(cwd);
+  let picked = false;
+  try {
+    if (stashSha) preflightTargetAutostash(root, targetBranch, source, stashSha);
+    cherryPickCommit(cwd, source);
+    picked = true;
+    restoreAutostash(cwd, stashSha);
+  } catch (err) {
+    if (!picked) {
+      try {
+        restoreAutostash(cwd, stashSha);
+      } catch (restoreErr) {
+        throw new Error(`Could not restore local changes after merge failed. ${gitErrorMessage(restoreErr)}`);
+      }
+    } else if (stashSha) {
+      throw new Error(
+        `Merged ${source.slice(0, 7)} into ${targetBranch}, but local changes could not be reapplied. They are still saved in the latest Git stash for ${cwd}. ${gitErrorMessage(err)}`,
+      );
+    }
+    throw err;
+  }
 }
 
 function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown): string {
@@ -340,32 +679,79 @@ function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown
   return resolved;
 }
 
+function targetIncomingCommitRef(root: string, targetBranch: string, current: string, rawCommit: unknown): string {
+  const commit = String(rawCommit ?? "").trim();
+  if (!commit) throw new Error("Missing target commit to merge");
+  if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new Error("Invalid target commit");
+  const resolved = gitCommitRef(root, commit);
+  if (!resolved) throw new Error(`Target commit ${commit} was not found`);
+  if (!incomingGitCommitRefs(root, targetBranch, current).includes(resolved)) {
+    throw new Error(`Target commit ${commit} is not pending for ${current}`);
+  }
+  const conflictReason = mergeConflictReason(root, resolved);
+  if (conflictReason) throw new Error(`Cannot merge target history through ${commit}: ${conflictReason}`);
+  return resolved;
+}
+
 function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): WorktreeInfo {
   const targetBranch = readTargetBranch(root);
   const current = currentBranch(root);
   if (current === targetBranch) return worktreeInfo();
   const source = pendingCommitRef(root, targetBranch, rawCommit);
   ensureLocalTargetBranch(root, targetBranch);
-  const parent = resolve(root, ".gorilator");
-  mkdirSync(parent, { recursive: true });
-  const tmp = mkdtempSync(resolve(parent, "merge-"));
+  const target = targetMergeWorktree(root, targetBranch);
   try {
-    execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
-    execFileSync("git", ["cherry-pick", source], { cwd: tmp, encoding: "utf8" });
-  } catch (err) {
-    try {
-      execFileSync("git", ["cherry-pick", "--abort"], { cwd: tmp, encoding: "utf8" });
-    } catch {
-      // The pick may not have started; removal below still cleans the temp worktree.
-    }
-    throw err;
+    if (target.checkedOutTarget) cherryPickIntoCheckedOutTarget(root, targetBranch, target.cwd, source);
+    else cherryPickCommit(target.cwd, source);
   } finally {
-    try {
-      execFileSync("git", ["worktree", "remove", "--force", tmp], { cwd: root, encoding: "utf8" });
-    } catch {
-      rmSync(tmp, { recursive: true, force: true });
+    if (target.temporary) removeTemporaryWorktree(root, target.cwd);
+  }
+  return worktreeInfo();
+}
+
+function mergeTargetIntoCurrentBranch(root: string, rawCommit?: unknown): WorktreeInfo {
+  const targetBranch = readTargetBranch(root);
+  const current = currentBranch(root);
+  if (!current) throw new Error("Could not resolve current branch");
+  if (current === targetBranch) return worktreeInfo();
+  if (!gitCommitRef(root, current)) throw new Error(`Current branch ${current} was not found`);
+  ensureLocalTargetBranch(root, targetBranch);
+  const hasCommit = rawCommit !== undefined && rawCommit !== null && String(rawCommit).trim() !== "";
+  const source = hasCommit ? targetIncomingCommitRef(root, targetBranch, current, rawCommit) : targetBranch;
+  const sourceLabel = hasCommit ? String(rawCommit).trim() : targetBranch;
+  const conflictReason = mergeConflictReason(root, source);
+  if (conflictReason) throw new Error(`Cannot merge ${sourceLabel} into ${current}: ${conflictReason}`);
+
+  const attachedBranch = captureGit(["branch", "--show-current"], root);
+  const before = captureGit(["rev-parse", "HEAD"], root);
+  if (!before) throw new Error("Could not resolve current HEAD");
+
+  if (!attachedBranch) {
+    const branchHead = gitCommitRef(root, current);
+    if (branchHead !== before) throw new Error(`Detached HEAD does not match ${current}; checkout the branch before merging`);
+    const activePath = worktreePathForBranch(root, current);
+    if (activePath && resolve(activePath) !== resolve(root)) {
+      throw new Error(`Current branch ${current} is checked out at ${activePath}`);
     }
   }
+
+  try {
+    execFileSync("git", ["merge", "--no-edit", source], { cwd: root, encoding: "utf8" });
+  } catch (err) {
+    try {
+      execFileSync("git", ["merge", "--abort"], { cwd: root, encoding: "utf8" });
+    } catch {
+      // The merge may have failed before Git entered a merge state.
+    }
+    throw err;
+  }
+
+  if (!attachedBranch) {
+    const after = captureGit(["rev-parse", "HEAD"], root);
+    if (!after) throw new Error("Could not resolve merged HEAD");
+    if (after !== before) execFileSync("git", ["update-ref", `refs/heads/${current}`, after, before], { cwd: root, encoding: "utf8" });
+  }
+
   return worktreeInfo();
 }
 
@@ -404,7 +790,9 @@ function formatWorktreeInfo(
     branches: branchOptions(root),
     isMain,
     isLinked,
+    hasTargetUpdates: incomingGitCommitRefs(root, targetBranch, branch).length > 0,
     pendingCommits: pendingGitCommits(root, targetBranch, branch),
+    incomingCommits: incomingGitCommits(root, targetBranch, branch),
     commits: recentGitCommits(root),
     changes: currentGitChanges(root),
   };
@@ -1307,6 +1695,7 @@ function perfLogs(): Plugin {
  *   GET  /__worktree       → current label/name/path metadata
  *   POST /__worktree {name,targetBranch} → set name/target branch
  *   POST /__worktree/merge {commit} → cherry-pick one pending commit into targetBranch
+ *   POST /__worktree/target-merge {commit?} → merge targetBranch or target history point into current branch
  */
 function worktreeTagger(): Plugin {
   return {
@@ -1335,6 +1724,18 @@ function worktreeTagger(): Plugin {
         });
       });
 
+      server.middlewares.use("/__worktree/raw", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        try {
+          const url = new URL(req.url ?? "/", "http://localhost");
+          sendWorktreeRawFile(res, info.root, url.searchParams.get("path"));
+        } catch (e) {
+          fail(res, 400, String(e));
+        }
+      });
+
       server.middlewares.use("/__worktree/merge", (req, res) => {
         const info = worktreeInfo();
         if (!info.root) return fail(res, 404, "not a git worktree");
@@ -1343,6 +1744,24 @@ function worktreeTagger(): Plugin {
           try {
             const body = JSON.parse(buf.toString("utf8") || "{}") as { commit?: unknown };
             sendJson(res, { ok: true, ...mergeCommitIntoTargetBranch(info.root, body.commit) });
+          } catch (e) {
+            fail(res, 409, String(e));
+          }
+        });
+      });
+
+      server.middlewares.use("/__worktree/bring", (_req, res) => {
+        fail(res, 410, "Per-commit cherry-pick is disabled. Use target merge to merge target history.");
+      });
+
+      server.middlewares.use("/__worktree/target-merge", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { commit?: unknown };
+            sendJson(res, { ok: true, ...mergeTargetIntoCurrentBranch(info.root, body.commit) });
           } catch (e) {
             fail(res, 409, String(e));
           }

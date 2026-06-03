@@ -13,8 +13,8 @@
     "id": "goblin_house",
     "name": "Goblin House",
     "model": "/models/goblin_house.glb",
-    "x": 4.7,
-    "z": 23.5,
+    "x": 6.7,
+    "z": 23.4,
     "scale": 5,
     "rotationY": 0,
     "collisionRadius": 2.5
