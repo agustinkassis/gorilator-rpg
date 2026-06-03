@@ -50,6 +50,20 @@ const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivEle
 const versionEl = document.getElementById("versionTag");
 if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
 const worktreeEl = document.getElementById("worktreeTag");
+const worktreePanelEl = document.getElementById("worktreePanel") as HTMLDivElement | null;
+interface WorktreeCommit {
+  hash: string;
+  subject: string;
+  age: string;
+}
+interface WorktreeChange {
+  status: string;
+  path: string;
+  label: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+}
 interface WorktreeMeta {
   root: string;
   id: string;
@@ -57,10 +71,24 @@ interface WorktreeMeta {
   defaultLabel: string;
   label: string;
   fullLabel: string;
+  branch: string;
+  isMain: boolean;
+  isLinked: boolean;
+  commits: WorktreeCommit[];
+  changes: WorktreeChange[];
 }
+let worktreeMeta: Partial<WorktreeMeta> = {};
+let worktreePanelOpen = false;
+let worktreeChangesOpen = false;
 
 function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   if (!worktreeEl) return;
+  worktreeMeta = {
+    ...worktreeMeta,
+    ...meta,
+    commits: meta.commits ?? worktreeMeta.commits ?? [],
+    changes: meta.changes ?? worktreeMeta.changes ?? [],
+  };
   const label = meta.label ?? "";
   const fullLabel = meta.fullLabel ?? label;
   worktreeEl.textContent = label;
@@ -68,11 +96,14 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   worktreeEl.dataset.fullLabel = fullLabel;
   worktreeEl.dataset.name = meta.name ?? "";
   worktreeEl.dataset.root = meta.root ?? "";
+  worktreeEl.dataset.branch = meta.branch ?? "";
+  worktreeEl.classList.toggle("dirty", (meta.changes?.length ?? 0) > 0);
   worktreeEl.hidden = label === "";
+  renderWorktreePanel();
 }
 
 function maybePromptForWorktreeName(meta: Partial<WorktreeMeta>) {
-  if (!worktreeEl || !meta.root || meta.name) return;
+  if (!worktreeEl || !meta.root || meta.name || meta.isMain) return;
   const key = `gorilator.worktreeTag.prompted:${meta.root}`;
   try {
     if (window.sessionStorage.getItem(key)) return;
@@ -108,26 +139,138 @@ async function editWorktreeName() {
   }
 }
 
+async function loadWorktreeMeta() {
+  const res = await fetch("/__worktree");
+  if (!res.ok) return undefined;
+  const meta = (await res.json()) as WorktreeMeta;
+  setWorktreeMeta(meta);
+  return meta;
+}
+
+function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function renderWorktreePanel() {
+  if (!worktreePanelEl || !worktreeEl) return;
+  const label = worktreeMeta.label ?? "";
+  const commits = worktreeMeta.commits ?? [];
+  const changes = worktreeMeta.changes ?? [];
+  if (!label) {
+    worktreePanelEl.hidden = true;
+    return;
+  }
+
+  worktreePanelEl.replaceChildren();
+  const head = createWorktreeNode("div", "wtPanelHead");
+  const titleWrap = createWorktreeNode("div", "wtPanelTitleWrap");
+  titleWrap.append(
+    createWorktreeNode("div", "wtPanelTitle", label),
+    createWorktreeNode("div", "wtPanelMeta", worktreeMeta.fullLabel ?? label),
+  );
+  const editBtn = createWorktreeNode("button", "wtPanelEdit", "Name");
+  editBtn.type = "button";
+  editBtn.hidden = Boolean(worktreeMeta.isMain);
+  editBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    void editWorktreeName();
+  });
+  head.append(titleWrap, editBtn);
+
+  const changesBtn = createWorktreeNode("button", "wtChangesToggle");
+  changesBtn.type = "button";
+  changesBtn.setAttribute("aria-expanded", String(worktreeChangesOpen));
+  const changeCount = changes.length;
+  changesBtn.append(
+    createWorktreeNode("span", "wtSectionTitle", "Current changes"),
+    createWorktreeNode(
+      "span",
+      changeCount ? "wtSectionPill dirty" : "wtSectionPill",
+      changeCount === 0 ? "clean" : `${changeCount} file${changeCount === 1 ? "" : "s"}`,
+    ),
+  );
+  changesBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    worktreeChangesOpen = !worktreeChangesOpen;
+    renderWorktreePanel();
+  });
+
+  const changesList = createWorktreeNode("div", "wtChangesList");
+  changesList.hidden = !worktreeChangesOpen;
+  if (!changes.length) {
+    changesList.append(createWorktreeNode("div", "wtEmpty", "No unstaged or uncommitted files."));
+  } else {
+    for (const change of changes) {
+      const row = createWorktreeNode("div", "wtChangeRow");
+      row.append(
+        createWorktreeNode("span", "wtChangeStatus", change.status.trim() || "M"),
+        createWorktreeNode("span", "wtChangePath", change.path),
+        createWorktreeNode("span", "wtChangeLabel", change.label),
+      );
+      changesList.append(row);
+    }
+  }
+
+  const commitsSection = createWorktreeNode("div", "wtCommits");
+  commitsSection.append(createWorktreeNode("div", "wtSectionTitle", "Recent commits"));
+  if (!commits.length) {
+    commitsSection.append(createWorktreeNode("div", "wtEmpty", "No commits found."));
+  } else {
+    for (const commit of commits) {
+      const row = createWorktreeNode("div", "wtCommitRow");
+      row.append(
+        createWorktreeNode("span", "wtCommitHash", commit.hash),
+        createWorktreeNode("span", "wtCommitSubject", commit.subject),
+        createWorktreeNode("span", "wtCommitAge", commit.age),
+      );
+      commitsSection.append(row);
+    }
+  }
+
+  worktreePanelEl.append(head, changesBtn, changesList, commitsSection);
+  worktreePanelEl.hidden = !worktreePanelOpen;
+}
+
+function setWorktreePanelOpen(open: boolean) {
+  if (!worktreePanelEl || !worktreeEl) return;
+  worktreePanelOpen = open;
+  worktreePanelEl.hidden = !open;
+  worktreeEl.classList.toggle("open", open);
+  worktreeEl.setAttribute("aria-expanded", String(open));
+  if (open) void loadWorktreeMeta().catch((err) => console.warn("Could not refresh worktree log", err));
+}
+
 if (worktreeEl) {
   setWorktreeMeta({ label: __WORKTREE_LABEL__, fullLabel: __WORKTREE_FULL_LABEL__ });
   if (import.meta.env.DEV && __WORKTREE_LABEL__) {
     worktreeEl.tabIndex = 0;
     worktreeEl.setAttribute("role", "button");
-    worktreeEl.setAttribute("aria-label", "Edit worktree name");
+    worktreeEl.setAttribute("aria-label", "Open worktree log");
+    worktreeEl.setAttribute("aria-expanded", "false");
     worktreeEl.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      void editWorktreeName();
+      setWorktreePanelOpen(!worktreePanelOpen);
     });
     worktreeEl.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
       ev.preventDefault();
-      void editWorktreeName();
+      setWorktreePanelOpen(!worktreePanelOpen);
     });
-    void fetch("/__worktree")
-      .then((res) => (res.ok ? res.json() : undefined))
+    worktreePanelEl?.addEventListener("click", (ev) => ev.stopPropagation());
+    document.addEventListener("click", () => setWorktreePanelOpen(false));
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") setWorktreePanelOpen(false);
+    });
+    void loadWorktreeMeta()
       .then((meta: WorktreeMeta | undefined) => {
         if (!meta) return;
-        setWorktreeMeta(meta);
         maybePromptForWorktreeName(meta);
       })
       .catch((err) => console.warn("Could not load worktree name", err));

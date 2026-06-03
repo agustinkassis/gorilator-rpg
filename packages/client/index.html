@@ -614,6 +614,10 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      #worktreeTag.dirty {
+        border-color: rgba(255, 126, 84, 0.82);
+        color: #ffb06d;
+      }
       #worktreeTag:hover,
       #worktreeTag:focus-visible {
         overflow: visible;
@@ -644,7 +648,135 @@
       }
       #worktreeTag:hover::after,
       #worktreeTag:focus-visible::after { display: block; }
+      #worktreeTag.open::after { display: none; }
       #worktreeTag[hidden] { display: none; }
+
+      #worktreePanel {
+        position: fixed;
+        left: 10px;
+        bottom: 48px;
+        z-index: 10000;
+        width: min(620px, calc(100vw - 20px));
+        max-height: min(560px, calc(100vh - 76px));
+        box-sizing: border-box;
+        padding: 10px;
+        border: 1px solid rgba(255, 212, 121, 0.62);
+        border-radius: 8px;
+        background: rgba(8, 6, 10, 0.95);
+        color: #ead7ad;
+        box-shadow: 0 12px 34px rgba(0, 0, 0, 0.62);
+        font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0;
+        overflow: auto;
+        pointer-events: auto;
+        user-select: text;
+      }
+      #worktreePanel[hidden] { display: none; }
+      #worktreePanel .wtPanelHead {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        padding-bottom: 9px;
+        border-bottom: 1px solid rgba(255, 212, 121, 0.16);
+      }
+      #worktreePanel .wtPanelTitle {
+        min-width: 0;
+        color: #ffd479;
+        font-size: 15px;
+        font-weight: 900;
+        overflow-wrap: anywhere;
+      }
+      #worktreePanel .wtPanelMeta {
+        margin-top: 3px;
+        color: rgba(255, 230, 168, 0.66);
+        overflow-wrap: anywhere;
+      }
+      #worktreePanel .wtPanelEdit,
+      #worktreePanel .wtChangesToggle {
+        border: 1px solid rgba(255, 212, 121, 0.38);
+        border-radius: 6px;
+        background: rgba(255, 212, 121, 0.08);
+        color: #ffe0a8;
+        font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+      }
+      #worktreePanel .wtPanelEdit {
+        padding: 7px 9px;
+      }
+      #worktreePanel .wtPanelEdit:hover,
+      #worktreePanel .wtPanelEdit:focus-visible,
+      #worktreePanel .wtChangesToggle:hover,
+      #worktreePanel .wtChangesToggle:focus-visible {
+        border-color: rgba(255, 212, 121, 0.82);
+        background: rgba(255, 212, 121, 0.15);
+        outline: none;
+      }
+      #worktreePanel .wtChangesToggle {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 10px;
+        padding: 9px 10px;
+        text-align: left;
+      }
+      #worktreePanel .wtSectionTitle {
+        color: #ffe0a8;
+        font-weight: 900;
+      }
+      #worktreePanel .wtSectionPill {
+        flex: none;
+        padding: 3px 7px;
+        border-radius: 999px;
+        background: rgba(84, 217, 140, 0.12);
+        color: #8bf0aa;
+      }
+      #worktreePanel .wtSectionPill.dirty {
+        background: rgba(255, 106, 77, 0.14);
+        color: #ffad7a;
+      }
+      #worktreePanel .wtChangesList,
+      #worktreePanel .wtCommits {
+        margin-top: 9px;
+      }
+      #worktreePanel .wtCommits {
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 212, 121, 0.16);
+      }
+      #worktreePanel .wtChangeRow,
+      #worktreePanel .wtCommitRow {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 9px;
+        align-items: baseline;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+      }
+      #worktreePanel .wtCommitRow {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+      }
+      #worktreePanel .wtChangeStatus,
+      #worktreePanel .wtCommitHash {
+        color: #ffd479;
+        font-weight: 900;
+      }
+      #worktreePanel .wtChangePath,
+      #worktreePanel .wtCommitSubject {
+        min-width: 0;
+        color: #f4ead5;
+        overflow-wrap: anywhere;
+      }
+      #worktreePanel .wtChangeLabel,
+      #worktreePanel .wtCommitAge {
+        color: rgba(255, 230, 168, 0.58);
+        white-space: nowrap;
+      }
+      #worktreePanel .wtEmpty {
+        padding: 8px 0 2px;
+        color: rgba(255, 230, 168, 0.56);
+      }
 
       #splash {
         position: fixed;
@@ -1422,6 +1554,7 @@
     <!-- Tiny build version, always visible in the bottom-right (set in main.ts). -->
     <div id="versionTag"></div>
     <!-- Current linked worktree, always visible in the lower-left during local dev. -->
+    <div id="worktreePanel" hidden></div>
     <div id="worktreeTag" hidden></div>
     <!-- Local-player identity (top-center): Nostr avatar + name + level. -->
     <div id="playerBadge" hidden>

@@ -24,12 +24,29 @@ function appVersion(): string {
   }
 }
 
-function captureGit(args: string[]): string | null {
+function captureGit(args: string[], cwd?: string, trim = true): string | null {
   try {
-    return execFileSync("git", args, { encoding: "utf8" }).trim() || null;
+    const raw = execFileSync("git", args, { cwd, encoding: "utf8" });
+    const text = trim ? raw.trim() : raw.replace(/\r?\n$/, "");
+    return text || null;
   } catch {
     return null;
   }
+}
+
+interface WorktreeCommit {
+  hash: string;
+  subject: string;
+  age: string;
+}
+
+interface WorktreeChange {
+  status: string;
+  path: string;
+  label: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
 }
 
 interface WorktreeInfo {
@@ -39,6 +56,11 @@ interface WorktreeInfo {
   defaultLabel: string;
   label: string;
   fullLabel: string;
+  branch: string;
+  isMain: boolean;
+  isLinked: boolean;
+  commits: WorktreeCommit[];
+  changes: WorktreeChange[];
 }
 
 const emptyWorktreeInfo = (): WorktreeInfo => ({
@@ -48,6 +70,11 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   defaultLabel: "",
   label: "",
   fullLabel: "",
+  branch: "",
+  isMain: false,
+  isLinked: false,
+  commits: [],
+  changes: [],
 });
 
 const worktreeNamePathFor = (root: string) => resolve(root, ".gorilator/worktree-name");
@@ -79,24 +106,97 @@ function writeWorktreeName(root: string, raw: unknown): string {
   return name;
 }
 
-function formatWorktreeInfo(root: string, name = readWorktreeName(root)): WorktreeInfo {
-  const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
-  const id = codexMatch?.[1] ?? basename(root);
-  const defaultLabel = `worktree ${id}`;
-  const label = name ? `${name} · ${id}` : defaultLabel;
-  const fullLabel = name ? `${name} · ${defaultLabel} · ${root}` : `${defaultLabel} · ${root}`;
-  return { root, id, name, defaultLabel, label, fullLabel };
+function recentGitCommits(root: string): WorktreeCommit[] {
+  const raw = captureGit(["log", "--max-count=8", "--pretty=format:%h%x1f%s%x1f%cr"], root);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      const [hash = "", subject = "", age = ""] = line.split("\x1f");
+      return { hash, subject, age };
+    })
+    .filter((commit) => commit.hash && commit.subject);
 }
 
-/** The linked worktree currently serving this client during local dev. */
+function gitStatusLabel(status: string): string {
+  if (status === "??") return "untracked";
+  const staged = status[0] !== " " && status[0] !== "?";
+  const unstaged = status[1] !== " ";
+  if (staged && unstaged) return "staged + unstaged";
+  if (staged) return "staged";
+  if (unstaged) return "unstaged";
+  return "changed";
+}
+
+function currentGitChanges(root: string): WorktreeChange[] {
+  const raw = captureGit(["status", "--porcelain=v1"], root, false);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      const status = line.slice(0, 2);
+      let path = line.slice(2).trimStart();
+      const renameAt = path.indexOf(" -> ");
+      if (renameAt >= 0) path = path.slice(renameAt + 4);
+      const untracked = status === "??";
+      const staged = status[0] !== " " && status[0] !== "?";
+      const unstaged = untracked || status[1] !== " ";
+      return {
+        status,
+        path,
+        label: gitStatusLabel(status),
+        staged,
+        unstaged,
+        untracked,
+      };
+    })
+    .filter((change) => change.path);
+}
+
+function formatWorktreeInfo(
+  root: string,
+  name = readWorktreeName(root),
+  options: { branch?: string; isLinked?: boolean } = {},
+): WorktreeInfo {
+  const branch = options.branch ?? captureGit(["branch", "--show-current"], root) ?? "";
+  const isMain = branch === "main";
+  const isLinked = Boolean(options.isLinked);
+  const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
+  const id = codexMatch?.[1] ?? (branch || basename(root));
+  const defaultLabel = isMain ? "main" : isLinked ? `worktree ${id}` : branch || `worktree ${id}`;
+  const label = isMain ? "main" : name ? `${name} · ${id}` : defaultLabel;
+  const fullLabel = isMain
+    ? `main · ${root}`
+    : name
+      ? `${name} · ${defaultLabel} · ${root}`
+      : `${defaultLabel} · ${root}`;
+  return {
+    root,
+    id,
+    name,
+    defaultLabel,
+    label,
+    fullLabel,
+    branch,
+    isMain,
+    isLinked,
+    commits: recentGitCommits(root),
+    changes: currentGitChanges(root),
+  };
+}
+
+/** The repo/worktree currently serving this client during local dev. */
 function worktreeInfo(): WorktreeInfo {
   const root = captureGit(["rev-parse", "--show-toplevel"]);
   const gitDir = captureGit(["rev-parse", "--git-dir"]);
   const commonDir = captureGit(["rev-parse", "--git-common-dir"]);
-  if (!root || !gitDir || !commonDir || resolve(gitDir) === resolve(commonDir)) {
+  if (!root || !gitDir || !commonDir) {
     return emptyWorktreeInfo();
   }
-  return formatWorktreeInfo(root);
+  const isLinked = resolve(root, gitDir) !== resolve(root, commonDir);
+  const branch = captureGit(["branch", "--show-current"], root) ?? "";
+  if (!isLinked && branch !== "main") return emptyWorktreeInfo();
+  return formatWorktreeInfo(root, readWorktreeName(root), { branch, isLinked });
 }
 
 interface PropEntry {
