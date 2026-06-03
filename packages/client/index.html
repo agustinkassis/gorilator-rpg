@@ -596,6 +596,60 @@
         user-select: none;
       }
 
+      #worktreeTag {
+        position: fixed;
+        left: 10px;
+        bottom: 8px;
+        z-index: 10000;
+        max-width: min(420px, calc(100vw - 20px));
+        box-sizing: border-box;
+        padding: 5px 9px 6px;
+        border: 1px solid rgba(255, 212, 121, 0.55);
+        border-radius: 6px;
+        background: rgba(8, 6, 10, 0.76);
+        color: #ffd479;
+        font: 800 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0;
+        cursor: pointer;
+        pointer-events: auto;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.92);
+        user-select: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #worktreeTag:hover,
+      #worktreeTag:focus-visible {
+        overflow: visible;
+        border-color: rgba(255, 212, 121, 0.9);
+        background: rgba(8, 6, 10, 0.9);
+        outline: none;
+      }
+      #worktreeTag::after {
+        content: attr(data-full-label);
+        position: absolute;
+        left: 0;
+        bottom: calc(100% + 8px);
+        display: none;
+        box-sizing: border-box;
+        width: max-content;
+        max-width: calc(100vw - 20px);
+        padding: 7px 10px;
+        border: 1px solid rgba(255, 212, 121, 0.75);
+        border-radius: 6px;
+        background: rgba(8, 6, 10, 0.94);
+        color: #ffe6a8;
+        font: 800 15px/1.28 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.92);
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.48);
+      }
+      #worktreeTag:hover::after,
+      #worktreeTag:focus-visible::after { display: block; }
+      #worktreeTag[hidden] { display: none; }
+
       #splash {
         position: fixed;
         inset: 0;
@@ -1371,6 +1425,8 @@
     <div id="status">connecting…</div>
     <!-- Tiny build version, always visible in the bottom-right (set in main.ts). -->
     <div id="versionTag"></div>
+    <!-- Current linked worktree, always visible in the lower-left during local dev. -->
+    <div id="worktreeTag" hidden></div>
     <!-- Local-player identity (top-center): Nostr avatar + name + level. -->
     <div id="playerBadge" hidden>
       <div id="pbAvatar">

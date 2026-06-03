@@ -9,7 +9,7 @@ import {
   unlinkSync,
   statSync,
 } from "fs";
-import { resolve } from "path";
+import { basename, resolve } from "path";
 import { execFileSync } from "child_process";
 
 /** The app version shown in-game (the tiny footer tag), read from this package's
@@ -22,6 +22,81 @@ function appVersion(): string {
   } catch {
     return "0.0.0";
   }
+}
+
+function captureGit(args: string[]): string | null {
+  try {
+    return execFileSync("git", args, { encoding: "utf8" }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+interface WorktreeInfo {
+  root: string;
+  id: string;
+  name: string;
+  defaultLabel: string;
+  label: string;
+  fullLabel: string;
+}
+
+const emptyWorktreeInfo = (): WorktreeInfo => ({
+  root: "",
+  id: "",
+  name: "",
+  defaultLabel: "",
+  label: "",
+  fullLabel: "",
+});
+
+const worktreeNamePathFor = (root: string) => resolve(root, ".gorilator/worktree-name");
+
+function sanitizeWorktreeName(raw: unknown): string {
+  return String(raw ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function readWorktreeName(root: string): string {
+  try {
+    return sanitizeWorktreeName(readFileSync(worktreeNamePathFor(root), "utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function writeWorktreeName(root: string, raw: unknown): string {
+  const name = sanitizeWorktreeName(raw);
+  const path = worktreeNamePathFor(root);
+  if (!name) {
+    if (existsSync(path)) unlinkSync(path);
+    return "";
+  }
+  mkdirSync(resolve(root, ".gorilator"), { recursive: true });
+  writeFileSync(path, `${name}\n`);
+  return name;
+}
+
+function formatWorktreeInfo(root: string, name = readWorktreeName(root)): WorktreeInfo {
+  const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
+  const id = codexMatch?.[1] ?? basename(root);
+  const defaultLabel = `worktree ${id}`;
+  const label = name ? `${name} · ${id}` : defaultLabel;
+  const fullLabel = name ? `${name} · ${defaultLabel} · ${root}` : `${defaultLabel} · ${root}`;
+  return { root, id, name, defaultLabel, label, fullLabel };
+}
+
+/** The linked worktree currently serving this client during local dev. */
+function worktreeInfo(): WorktreeInfo {
+  const root = captureGit(["rev-parse", "--show-toplevel"]);
+  const gitDir = captureGit(["rev-parse", "--git-dir"]);
+  const commonDir = captureGit(["rev-parse", "--git-common-dir"]);
+  if (!root || !gitDir || !commonDir || resolve(gitDir) === resolve(commonDir)) {
+    return emptyWorktreeInfo();
+  }
+  return formatWorktreeInfo(root);
 }
 
 interface PropEntry {
@@ -902,15 +977,52 @@ function perfLogs(): Plugin {
   };
 }
 
+/**
+ * Dev-only endpoint for naming the active linked worktree. The name lives in the
+ * ignored repo-local `.gorilator/worktree-name` file.
+ *   GET  /__worktree       → current label/name/path metadata
+ *   POST /__worktree {name} → set name, or clear it with an empty string
+ */
+function worktreeTagger(): Plugin {
+  return {
+    name: "rpg-worktree-tagger",
+    apply: "serve",
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use("/__worktree", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a linked worktree");
+        if (req.method === "GET") return sendJson(res, { ok: true, ...info });
+        if (req.method !== "POST") return fail(res, 405, "GET or POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown };
+            const name = writeWorktreeName(info.root, body.name);
+            sendJson(res, { ok: true, ...formatWorktreeInfo(info.root, name) });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+    },
+  };
+}
+
 // @rpg/shared is consumed as its compiled output (packages/shared/dist), resolved
 // via the workspace symlink + its package.json "exports". That keeps the Colyseus
 // schema decorators compiled correctly by tsc, independent of esbuild's handling.
-export default defineConfig({
-  // Inject the package version as a global constant for the footer version tag.
-  define: { __APP_VERSION__: JSON.stringify(appVersion()) },
-  plugins: [modelImporter(), perfLogs()],
-  server: {
-    port: Number(process.env.CLIENT_PORT) || 5173,
-    strictPort: true,
-  },
+export default defineConfig(({ command }) => {
+  const worktree = command === "serve" ? worktreeInfo() : emptyWorktreeInfo();
+  return {
+    // Inject local build metadata for the always-visible footer tags.
+    define: {
+      __APP_VERSION__: JSON.stringify(appVersion()),
+      __WORKTREE_LABEL__: JSON.stringify(worktree.label),
+      __WORKTREE_FULL_LABEL__: JSON.stringify(worktree.fullLabel),
+    },
+    plugins: [modelImporter(), perfLogs(), worktreeTagger()],
+    server: {
+      port: Number(process.env.CLIENT_PORT) || 5173,
+      strictPort: true,
+    },
+  };
 });

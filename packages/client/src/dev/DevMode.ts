@@ -327,6 +327,7 @@ export class DevMode {
   private enter() {
     this.active = true;
     this.net.sendGodMode(true);
+    this.setScale(0); // entering Dev Mode freezes authoritative gameplay for everyone
     void this.loadSpawners(); // reflect existing spawners in object inspectors
     void this.loadFeatures(); // generic HP/drop/brain/stat feature config
     void this.loadCharacterDefs(); // custom spawn targets for spawner rules
@@ -341,7 +342,6 @@ export class DevMode {
     this.setVisibilityControls(true);
     this.banner.style.display = "block";
     this.timeBar.style.display = "flex";
-    this.setScale(0);
     this.inspector.show();
     this.selectNone();
   }
