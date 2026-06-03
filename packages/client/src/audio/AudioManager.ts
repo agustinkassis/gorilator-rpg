@@ -6,7 +6,6 @@
 import { AnimState } from "@rpg/shared";
 import type { ArcRotateCamera } from "@babylonjs/core";
 import { AudioEngine, Category } from "./engine";
-import { AmbientMusic } from "./music";
 import { SYNTHS, SfxKey } from "./synth";
 
 interface Vec2 {
@@ -23,6 +22,9 @@ interface SfxDef {
 }
 
 const MANIFEST_URL = "/audio/manifest.json";
+const THEME_GAIN = 0.7;
+const WAVE_GAIN = 0.82;
+const WAVE_CLEAR_FADE_SECONDS = 0.22;
 
 const DEFS: Record<SfxKey, SfxDef> = {
   hit: { category: "sfx", volume: 0.9, spatial: true, cooldownMs: 40 },
@@ -45,25 +47,34 @@ const FOOT_INTERVAL_SPRINT = 0.26; // ...quicker when sprinting
 export class AudioManager {
   readonly engine: AudioEngine;
   readonly ready: Promise<void>;
-  private readonly ambient: AmbientMusic;
+  private readonly listeners = new Set<() => void>();
 
   private muted = false;
   private readonly lastPlay = new Map<SfxKey, number>(); // key → ctx time of last play
   private readonly stepAcc = new Map<string, number>(); // entity id → footstep timer
   private readonly lastState = new Map<string, AnimState>(); // entity id → last anim state
 
-  // Optional file-based music (manifest "music"); else the procedural ambient bed.
-  private musicBuffer: AudioBuffer | null = null;
-  private musicSource: AudioBufferSourceNode | null = null;
-  private readonly musicGain: GainNode;
+  // File-based music. No built-in theme fallback: if manifest "music" is absent,
+  // the game stays quiet between waves.
+  private themeBuffer: AudioBuffer | null = null;
+  private themeSource: AudioBufferSourceNode | null = null;
+  private waveBuffer: AudioBuffer | null = null;
+  private waveSource: AudioBufferSourceNode | null = null;
+  private readonly themeGain: GainNode;
+  private readonly waveGain: GainNode;
+  private requestedMusicMode: "theme" | "wave" = "theme";
+  private musicMode: "theme" | "wave" | "stopped" = "stopped";
+  private musicEnabled = true;
   private musicOn = false;
 
   constructor() {
     this.engine = new AudioEngine();
-    this.ambient = new AmbientMusic(this.engine.ctx, this.engine.bus("music"));
-    this.musicGain = this.engine.ctx.createGain();
-    this.musicGain.gain.value = 0;
-    this.musicGain.connect(this.engine.bus("music"));
+    this.themeGain = this.engine.ctx.createGain();
+    this.themeGain.gain.value = 0;
+    this.themeGain.connect(this.engine.bus("music"));
+    this.waveGain = this.engine.ctx.createGain();
+    this.waveGain.gain.value = 0;
+    this.waveGain.connect(this.engine.bus("music"));
 
     // Browsers block audio until a user gesture — unlock on the first one (the
     // splash "ENTER" click / a keypress), then stop listening.
@@ -84,6 +95,15 @@ export class AudioManager {
     this.ready = this.loadManifest();
   }
 
+  onStateChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emitStateChange() {
+    this.listeners.forEach((listener) => listener());
+  }
+
   /** Load optional sample overrides. Missing manifest/files → everything is synthesized. */
   private async loadManifest() {
     try {
@@ -93,14 +113,16 @@ export class AudioManager {
       for (const [key, file] of Object.entries(map)) {
         if (typeof file !== "string" || !file) continue;
         if (key === "music") {
-          this.musicBuffer = await this.engine.load(file);
+          this.themeBuffer = await this.engine.load(file);
+        } else if (key === "waveMusic") {
+          this.waveBuffer = await this.engine.load(file);
         } else if (key in DEFS) {
           DEFS[key as SfxKey].file = file;
           await this.engine.load(file);
         }
       }
     } catch {
-      /* no manifest → fully procedural */
+      /* no manifest → built-in SFX only, no file music */
     }
   }
 
@@ -210,32 +232,54 @@ export class AudioManager {
   }
 
   // ---- music ----
-  startMusic() {
-    if (this.musicBuffer) {
-      if (!this.musicSource) {
-        const src = this.engine.ctx.createBufferSource();
-        src.buffer = this.musicBuffer;
-        src.loop = true;
-        src.connect(this.musicGain);
-        src.start();
-        this.musicSource = src;
-      }
-      this.rampMusic(0.7, 1.5);
-    } else {
-      this.ambient.start();
+  startMusic(restart = true) {
+    this.requestedMusicMode = "theme";
+    this.fadeOutWave(WAVE_CLEAR_FADE_SECONDS);
+    if (!this.musicEnabled || !this.themeBuffer) {
+      this.musicOn = false;
+      this.musicMode = "stopped";
+      this.emitStateChange();
+      return;
     }
+    if (restart || !this.themeSource) this.startThemeSource();
+    this.rampGain(this.themeGain, THEME_GAIN, 1.5);
     this.musicOn = true;
+    this.musicMode = "theme";
+    this.emitStateChange();
+  }
+
+  startWaveMusic() {
+    this.requestedMusicMode = "wave";
+    this.fadeOutTheme(0.9);
+    if (!this.musicEnabled || !this.waveBuffer) {
+      this.musicOn = false;
+      this.musicMode = "stopped";
+      this.emitStateChange();
+      return;
+    }
+    this.startWaveSource();
+    this.rampGain(this.waveGain, WAVE_GAIN, 0.85);
+    this.musicOn = true;
+    this.musicMode = "wave";
+    this.emitStateChange();
   }
 
   pauseMusic() {
-    if (this.musicBuffer) this.rampMusic(0, 0.6);
-    else this.ambient.pause();
+    this.musicEnabled = false;
+    this.fadeOutTheme(0.6);
+    this.fadeOutWave(0.6);
     this.musicOn = false;
+    this.musicMode = "stopped";
+    this.emitStateChange();
   }
 
   toggleMusic(): boolean {
-    if (this.musicOn) this.pauseMusic();
-    else this.startMusic();
+    if (this.musicEnabled) this.pauseMusic();
+    else {
+      this.musicEnabled = true;
+      if (this.requestedMusicMode === "wave") this.startWaveMusic();
+      else this.startMusic();
+    }
     return this.musicOn;
   }
 
@@ -243,17 +287,86 @@ export class AudioManager {
     return this.musicOn;
   }
 
-  private rampMusic(to: number, secs: number) {
+  get isWaveMusicPlaying(): boolean {
+    return this.musicMode === "wave";
+  }
+
+  private startThemeSource() {
+    if (!this.themeBuffer) return;
+    this.stopThemeSource(0);
+    const src = this.engine.ctx.createBufferSource();
+    src.buffer = this.themeBuffer;
+    src.loop = true;
+    src.connect(this.themeGain);
+    src.start();
+    src.onended = () => {
+      if (this.themeSource === src) this.themeSource = null;
+      src.disconnect();
+    };
+    this.themeGain.gain.value = 0;
+    this.themeSource = src;
+  }
+
+  private startWaveSource() {
+    if (!this.waveBuffer) return;
+    this.stopWaveSource(0);
+    const src = this.engine.ctx.createBufferSource();
+    src.buffer = this.waveBuffer;
+    src.loop = true;
+    src.connect(this.waveGain);
+    src.start();
+    src.onended = () => {
+      if (this.waveSource === src) this.waveSource = null;
+      src.disconnect();
+    };
+    this.waveGain.gain.value = 0;
+    this.waveSource = src;
+  }
+
+  private fadeOutTheme(secs: number) {
+    this.rampGain(this.themeGain, 0, secs);
+    this.stopThemeSource(secs);
+  }
+
+  private fadeOutWave(secs: number) {
+    this.rampGain(this.waveGain, 0, secs);
+    this.stopWaveSource(secs);
+  }
+
+  private stopThemeSource(afterSec: number) {
+    const src = this.themeSource;
+    if (!src) return;
+    this.themeSource = null;
+    this.stopSource(src, afterSec);
+  }
+
+  private stopWaveSource(afterSec: number) {
+    const src = this.waveSource;
+    if (!src) return;
+    this.waveSource = null;
+    this.stopSource(src, afterSec);
+  }
+
+  private stopSource(src: AudioBufferSourceNode, afterSec: number) {
+    try {
+      src.stop(this.engine.ctx.currentTime + Math.max(0.01, afterSec));
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  private rampGain(gain: GainNode, to: number, secs: number) {
     const t = this.engine.ctx.currentTime;
-    this.musicGain.gain.cancelScheduledValues(t);
-    this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, t);
-    this.musicGain.gain.linearRampToValueAtTime(to, t + secs);
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setValueAtTime(gain.gain.value, t);
+    gain.gain.linearRampToValueAtTime(to, t + secs);
   }
 
   // ---- master mute ----
   toggleMute(): boolean {
     this.muted = !this.muted;
     this.engine.setMasterVolume(this.muted ? 0 : 0.9);
+    this.emitStateChange();
     return this.muted;
   }
 

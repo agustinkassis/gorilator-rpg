@@ -576,11 +576,11 @@
       body.preGame #charImportBtn,
       body.preGame #charImporterPanel { display: none !important; }
 
-      /* Tiny always-on version tag, pinned to the bottom-right corner — above the
+      /* Tiny always-on version tag, pinned to the bottom-right corner - above the
          splash + HUD, and never intercepts clicks. */
-      #versionTag {
+      #versionTag,
+      #checkoutTag {
         position: fixed;
-        right: 9px;
         bottom: 7px;
         z-index: 9999;
         font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -591,6 +591,17 @@
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
         user-select: none;
       }
+      #versionTag {
+        right: 9px;
+      }
+      #checkoutTag {
+        left: 9px;
+        max-width: min(46vw, 360px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #checkoutTag:empty { display: none; }
 
       #splash {
         position: fixed;
@@ -1365,8 +1376,9 @@
       <div id="splashFlash"></div>
     </div>
     <div id="status">connecting…</div>
-    <!-- Tiny build version, always visible in the bottom-right (set in main.ts). -->
+    <!-- Tiny footer labels are filled by vite.config.ts. -->
     <div id="versionTag"></div>
+    <div id="checkoutTag"></div>
     <!-- Local-player identity (top-center): Nostr avatar + name + level. -->
     <div id="playerBadge" hidden>
       <div id="pbAvatar">

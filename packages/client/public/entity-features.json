@@ -88,13 +88,13 @@
         {
           "item": "potion",
           "quantity": 1,
-          "probability": 0.15,
+          "probability": 0.07,
           "trigger": "kill"
         },
         {
           "item": "berserker_potion",
           "quantity": 1,
-          "probability": 0.05,
+          "probability": 0.03,
           "trigger": "kill"
         }
       ]

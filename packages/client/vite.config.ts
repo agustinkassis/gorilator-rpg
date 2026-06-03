@@ -9,19 +9,68 @@ import {
   unlinkSync,
   statSync,
 } from "fs";
-import { resolve } from "path";
+import { dirname, resolve } from "path";
 import { execFileSync } from "child_process";
+import { fileURLToPath } from "url";
+
+const configDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(configDir, "../..");
 
 /** The app version shown in-game (the tiny footer tag), read from this package's
- *  package.json. Vite runs with the package dir as cwd, so a cwd-relative read is
- *  reliable; fall back to 0.0.0 if it can't be read. */
+ *  package.json. Falls back to 0.0.0 if it can't be read. */
 function appVersion(): string {
   try {
-    const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version?: string };
+    const pkg = JSON.parse(readFileSync(resolve(configDir, "package.json"), "utf8")) as {
+      version?: string;
+    };
     return pkg.version ?? "0.0.0";
   } catch {
     return "0.0.0";
   }
+}
+
+function gitValue(args: string[]): string | null {
+  try {
+    return execFileSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function checkoutLabel(): string {
+  const gitDir = gitValue(["rev-parse", "--git-dir"]);
+  const commonDir = gitValue(["rev-parse", "--git-common-dir"]);
+  if (gitDir && commonDir && gitDir !== commonDir) return "worktree";
+  return gitValue(["branch", "--show-current"]) ?? gitValue(["rev-parse", "--short", "HEAD"]) ?? "";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function footerLabels(): Plugin {
+  return {
+    name: "rpg-footer-labels",
+    transformIndexHtml(html) {
+      return html
+        .replace(
+          '<div id="versionTag"></div>',
+          `<div id="versionTag">v${escapeHtml(appVersion())}</div>`,
+        )
+        .replace(
+          '<div id="checkoutTag"></div>',
+          `<div id="checkoutTag">${escapeHtml(checkoutLabel())}</div>`,
+        );
+    },
+  };
 }
 
 interface PropEntry {
@@ -906,9 +955,11 @@ function perfLogs(): Plugin {
 // via the workspace symlink + its package.json "exports". That keeps the Colyseus
 // schema decorators compiled correctly by tsc, independent of esbuild's handling.
 export default defineConfig({
-  // Inject the package version as a global constant for the footer version tag.
-  define: { __APP_VERSION__: JSON.stringify(appVersion()) },
-  plugins: [modelImporter(), perfLogs()],
+  // Keep the app version available for bundled perf metadata.
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion()),
+  },
+  plugins: [footerLabels(), modelImporter(), perfLogs()],
   server: {
     port: Number(process.env.CLIENT_PORT) || 5173,
     strictPort: true,

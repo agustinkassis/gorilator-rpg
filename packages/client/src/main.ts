@@ -45,11 +45,6 @@ const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDi
 const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
 const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
 
-// Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
-// time by Vite with the package.json version (see vite.config.ts).
-const versionEl = document.getElementById("versionTag");
-if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
-
 // DEV-only: `?mocknostr=gen|nsec1…|<hex>` installs a fake NIP-07 signer so the
 // Nostr login flow can be tested without a browser extension. Installed up-front
 // (before the splash) so window.nostr is ready when "Login with Nostr" is clicked.
@@ -152,6 +147,7 @@ const splash = new SplashScreen(engine);
 // removed from state on collapse.
 let homeMaxHp = 0;
 let lastAnnouncedWave: number | null = null;
+let activeMusicWave: number | null = null;
 
 interface AssetTask {
   label: string;
@@ -477,6 +473,13 @@ engine.runRenderLoop(() => {
     }
     const wave = st.waveNumber;
     homeBar.setWave(wave, st.waveTimerMs);
+    if (wave > 0 && st.waveActive && activeMusicWave !== wave) {
+      audio.startWaveMusic();
+      activeMusicWave = wave;
+    } else if (activeMusicWave !== null && (!st.waveActive || wave < activeMusicWave)) {
+      audio.startMusic(true); // restart the normal theme from the beginning
+      activeMusicWave = null;
+    }
     if (lastAnnouncedWave === null) {
       lastAnnouncedWave = wave;
     } else if (wave > lastAnnouncedWave) {
