@@ -850,6 +850,14 @@
         font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         padding: 0 7px;
       }
+      #worktreePanel .wtMergeAction {
+        width: 58px;
+        height: 23px;
+        display: grid;
+      }
+      #worktreePanel .wtMergeAction > * {
+        grid-area: 1 / 1;
+      }
       #worktreePanel .wtMergeBtn {
         background: rgba(84, 217, 140, 0.1);
         color: #bff8ca;
@@ -865,6 +873,15 @@
         background: transparent;
         color: #8bf0aa;
         text-transform: uppercase;
+      }
+      #worktreePanel .wtMergePassive {
+        display: none;
+      }
+      #worktreePanel .wtPendingRow.mergePreview:not(.mergeHover) .wtMergePassive {
+        display: inline-flex;
+      }
+      #worktreePanel .wtPendingRow.mergePreview:not(.mergeHover) .wtMergeBtn {
+        display: none;
       }
       #worktreePanel .wtMergeBtn:hover,
       #worktreePanel .wtMergeBtn:focus-visible {

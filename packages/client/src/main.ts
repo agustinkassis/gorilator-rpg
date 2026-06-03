@@ -210,6 +210,17 @@ function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+function setWorktreeMergePreview(index: number | null) {
+  worktreeMergePreviewIndex = index;
+  const rows = worktreePanelEl?.querySelectorAll<HTMLElement>(".wtPendingRow") ?? [];
+  for (const row of rows) {
+    const rowIndex = Number(row.dataset.mergeIndex);
+    const selected = index !== null && Number.isFinite(rowIndex) && rowIndex <= index;
+    row.classList.toggle("mergePreview", selected);
+    row.classList.toggle("mergeHover", selected && rowIndex === index);
+  }
+}
+
 type DiffRow = { type: "same" | "add" | "remove"; text: string; oldLine: number | null; newLine: number | null };
 
 function splitEditorLines(text: string): string[] {
@@ -460,40 +471,23 @@ function renderWorktreePanel() {
       const previewed = worktreeMergePreviewIndex !== null && index <= worktreeMergePreviewIndex;
       const hovered = worktreeMergePreviewIndex === index;
       const row = createWorktreeNode("div", previewed ? "wtCommitRow wtPendingRow mergePreview" : "wtCommitRow wtPendingRow");
-      row.addEventListener("mouseenter", () => {
-        if (worktreeMergePreviewIndex === index) return;
-        worktreeMergePreviewIndex = index;
-        renderWorktreePanel();
-      });
-      row.addEventListener("mouseleave", () => {
-        if (worktreeMergePreviewIndex === null) return;
-        worktreeMergePreviewIndex = null;
-        renderWorktreePanel();
-      });
+      row.dataset.mergeIndex = String(index);
+      row.classList.toggle("mergeHover", hovered);
       row.append(
         createWorktreeNode("span", "wtCommitHash", commit.hash),
         createWorktreeNode("span", "wtCommitSubject", commit.subject),
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
-      if (previewed && !hovered) {
-        row.append(createWorktreeNode("span", "wtMergePassive", "merge"));
-        pendingSection.append(row);
-        return;
-      }
 
       const mergeBtn = createWorktreeNode("button", hovered ? "wtMergeBtn preview" : "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
       mergeBtn.type = "button";
       mergeBtn.title = `Merge current branch into ${targetBranch}`;
       mergeBtn.disabled = worktreeMergeBusy;
       mergeBtn.addEventListener("mouseenter", () => {
-        if (worktreeMergePreviewIndex === index) return;
-        worktreeMergePreviewIndex = index;
-        renderWorktreePanel();
+        setWorktreeMergePreview(index);
       });
       mergeBtn.addEventListener("mouseleave", () => {
-        if (worktreeMergePreviewIndex === null) return;
-        worktreeMergePreviewIndex = null;
-        renderWorktreePanel();
+        setWorktreeMergePreview(null);
       });
       mergeBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -515,7 +509,9 @@ function renderWorktreePanel() {
             renderWorktreePanel();
           });
       });
-      row.append(mergeBtn);
+      const action = createWorktreeNode("span", "wtMergeAction");
+      action.append(createWorktreeNode("span", "wtMergePassive", "merge"), mergeBtn);
+      row.append(action);
       pendingSection.append(row);
     });
   }
