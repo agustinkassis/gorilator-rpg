@@ -250,6 +250,33 @@ function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+function copyTextWithTextarea(text: string): boolean {
+  const textarea = createWorktreeNode("textarea") as HTMLTextAreaElement;
+  textarea.value = text;
+  textarea.readOnly = true;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.focus({ preventScroll: true });
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+  try {
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function copyTextToClipboard(text: string) {
+  if (copyTextWithTextarea(text)) return;
+  if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+  else throw new Error("copy command failed");
+}
+
 function renderWorktreePanelPreservingScroll() {
   const panel = worktreePanelEl;
   if (!panel) {
@@ -698,10 +725,34 @@ function renderWorktreePanel() {
 
   const branchBar = createWorktreeNode("div", "wtBranchBar");
   const currentBranchEl = createWorktreeNode("div", "wtBranchCurrent");
-  currentBranchEl.append(
-    createWorktreeNode("span", "wtBranchLabel", "Current"),
-    createWorktreeNode("span", "wtBranchValue", branch),
-  );
+  const canCopyBranch = Boolean(worktreeMeta.root);
+  const currentBranchLine = createWorktreeNode("div", "wtBranchValueLine");
+  currentBranchLine.append(createWorktreeNode("span", "wtBranchValue", branch));
+  const copyBranchBtn = createWorktreeNode("button", "wtBranchCopy") as HTMLButtonElement;
+  copyBranchBtn.type = "button";
+  copyBranchBtn.disabled = !canCopyBranch;
+  copyBranchBtn.title = canCopyBranch ? `Copy ${branch}` : "Loading branch";
+  copyBranchBtn.setAttribute("aria-label", canCopyBranch ? `Copy branch ${branch}` : "Loading branch");
+  copyBranchBtn.append(createWorktreeNode("span", "wtBranchCopyIcon"));
+  copyBranchBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (!canCopyBranch) return;
+    void copyTextToClipboard(branch)
+      .then(() => {
+        copyBranchBtn.classList.add("copied");
+        copyBranchBtn.title = "Copied";
+        window.setTimeout(() => {
+          copyBranchBtn.classList.remove("copied");
+          copyBranchBtn.title = `Copy ${branch}`;
+        }, 900);
+      })
+      .catch((err) => {
+        console.warn("Could not copy branch", err);
+        copyBranchBtn.title = "Could not copy";
+      });
+  });
+  currentBranchLine.append(copyBranchBtn);
+  currentBranchEl.append(createWorktreeNode("span", "wtBranchLabel", "Current"), currentBranchLine);
   const targetWrap = createWorktreeNode("label", "wtTargetWrap");
   const targetLabel = createWorktreeNode("span", "wtBranchLabel", "Target");
   const targetSelect = createWorktreeNode("select", "wtTargetSelect");
