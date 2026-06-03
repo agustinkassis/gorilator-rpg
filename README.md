@@ -14,7 +14,7 @@
 
 [**▶ Play now**](https://game.gorilator.io) · [Live servers](https://gorilator.io/stats.html) · [Docs](docs/README.md) · [Self-host](DEPLOY.md)
 
-![Gorilator splash screen](packages/landing/public/screenshots/gorilator-splash.png)
+![Gorilator splash screen](packages/landing/public/screenshots/screenshot-1-splash.png)
 
 </div>
 
@@ -30,9 +30,9 @@ It's early and under active development — and intentionally **easy to contribu
 
 <div align="center">
 
-![Gorilator in-game HUD](packages/landing/public/screenshots/gorilator-hud.png)
+![Gorilator multiplayer combat](packages/landing/public/screenshots/screenshot-2-multiplayer.png)
 
-*Isometric combat, inventory, resource pickups, and the in-game dev toolbar (Insert Element / Dev Mode).*
+*Isometric multiplayer combat — hold La Crypta against the waves with other players in real time.*
 
 </div>
 
@@ -86,6 +86,14 @@ Gorilator's developer SDK lives in the client (`packages/client/src/dev/`). Togg
 | ✅ **Commit system** | Persist your edits from within the game — develop the game *as you play it*. |
 
 This makes content creation approachable: artists and designers can contribute models, props, and entities without touching the engine internals.
+
+<div align="center">
+
+![Gorilator dev mode editor](packages/landing/public/screenshots/screenshot-3-dev.png)
+
+*Dev Mode: select an entity and edit identity, transform, physics, and spawners — live, in the running game.*
+
+</div>
 
 ---
 

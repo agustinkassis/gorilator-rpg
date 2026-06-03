@@ -438,9 +438,9 @@ function App() {
       </section>
 
       <Shot
-        src="/screenshots/gorilator-hud.png"
-        alt="Gorilator in-game: isometric combat, inventory, resource pickups, and the dev toolbar"
-        caption="Isometric combat, loot, and the in-game dev toolbar — all in the same window."
+        src="/screenshots/screenshot-2-multiplayer.png"
+        alt="Gorilator multiplayer combat: gorillas defending La Crypta against waves of goblins"
+        caption="Hold La Crypta against the waves — with other players, in real time."
       />
 
       <section className="band sdk" aria-label="In-game developer SDK">
@@ -476,6 +476,12 @@ function App() {
           <Boxes size={16} /> Start contributing on GitHub <ArrowUpRight size={14} />
         </a>
       </section>
+
+      <Shot
+        src="/screenshots/screenshot-3-dev.png"
+        alt="Gorilator Dev Mode: editing an entity's identity, transform, physics, and spawners in the running game"
+        caption="Dev Mode — select an entity and edit identity, transform, physics, and spawners, live."
+      />
 
       <section
         className={`band stack ${stackReveal.shown ? "in" : ""}`}
