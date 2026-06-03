@@ -12,11 +12,11 @@
       ]
     },
     "rock": {
-      "hp": 1000,
+      "hp": 400,
       "drops": [
         {
           "item": "stone",
-          "quantity": 120,
+          "quantity": 60,
           "probability": 1,
           "trigger": "damage"
         }
