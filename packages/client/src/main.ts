@@ -370,7 +370,7 @@ function setWorktreeIncomingMergePreview(index: number | null) {
   const rows = worktreePanelEl?.querySelectorAll<HTMLElement>(".wtIncomingRow") ?? [];
   for (const row of rows) {
     const rowIndex = Number(row.dataset.mergeIndex);
-    const selected = index !== null && Number.isFinite(rowIndex) && rowIndex <= index;
+    const selected = !row.classList.contains("conflict") && index !== null && Number.isFinite(rowIndex) && rowIndex <= index;
     const hovered = selected && rowIndex === index;
     row.classList.toggle("mergePreview", selected);
     row.classList.toggle("mergeHover", hovered);
@@ -968,15 +968,14 @@ function renderWorktreePanel() {
     createWorktreeNode("div", "wtSectionMeta", `Merge target history into ${branch}; newer rows include older commits.`),
   );
   if (!incomingCommits.length) {
-    incomingSection.append(createWorktreeNode("div", "wtEmpty", `No conflict-free target commits to merge from ${targetBranch}.`));
+    incomingSection.append(createWorktreeNode("div", "wtEmpty", `No target commits to merge from ${targetBranch}.`));
   } else {
     incomingCommits.forEach((commit, index) => {
-      const previewed = worktreeIncomingMergePreviewIndex !== null && index <= worktreeIncomingMergePreviewIndex;
-      const hovered = worktreeIncomingMergePreviewIndex === index;
-      const row = createWorktreeNode(
-        "div",
-        `${previewed ? "wtCommitRow wtIncomingRow mergePreview" : "wtCommitRow wtIncomingRow"}${hovered ? " mergeHover" : ""}`,
-      );
+      const hasConflict = Boolean(commit.conflict);
+      const previewed = !hasConflict && worktreeIncomingMergePreviewIndex !== null && index <= worktreeIncomingMergePreviewIndex;
+      const hovered = !hasConflict && worktreeIncomingMergePreviewIndex === index;
+      const rowClass = `${previewed ? "wtCommitRow wtIncomingRow mergePreview" : "wtCommitRow wtIncomingRow"}${hovered ? " mergeHover" : ""}${hasConflict ? " conflict" : ""}`;
+      const row = createWorktreeNode("div", rowClass);
       row.dataset.mergeIndex = String(index);
       row.append(
         createWorktreeNode("span", "wtCommitHash", commit.hash),
@@ -984,18 +983,27 @@ function renderWorktreePanel() {
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
 
-      const mergeBtn = createWorktreeNode("button", "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge In");
+      const mergeBtn = createWorktreeNode(
+        "button",
+        hasConflict ? "wtMergeBtn conflict" : "wtMergeBtn",
+        hasConflict ? "Conflict" : worktreeMergeBusy ? "Merging" : "Merge In",
+      );
       mergeBtn.type = "button";
-      mergeBtn.title = `Merge ${targetBranch} history through ${commit.hash} into ${branch}`;
-      mergeBtn.disabled = worktreeMergeBusy;
+      mergeBtn.title = hasConflict
+        ? (commit.conflictReason ?? `Cannot merge ${targetBranch} history through ${commit.hash}`)
+        : `Merge ${targetBranch} history through ${commit.hash} into ${branch}`;
+      mergeBtn.disabled = worktreeMergeBusy || hasConflict;
       mergeBtn.addEventListener("mouseenter", () => {
+        if (hasConflict) return;
         setWorktreeIncomingMergePreview(index);
       });
       mergeBtn.addEventListener("mouseleave", () => {
+        if (hasConflict) return;
         setWorktreeIncomingMergePreview(null);
       });
       mergeBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        if (hasConflict) return;
         worktreeMergeBusy = true;
         worktreeMergeMessage = `Merging ${targetBranch} through ${commit.hash} into ${branch}...`;
         renderWorktreePanel();
@@ -1016,7 +1024,8 @@ function renderWorktreePanel() {
       });
       const mergeLabel = createWorktreeNode("span", "wtMergeLabel", "Merge In");
       const action = createWorktreeNode("span", "wtMergeAction wtIncomingAction");
-      action.append(mergeBtn, mergeLabel);
+      action.append(mergeBtn);
+      if (!hasConflict) action.append(mergeLabel);
       row.append(action);
       incomingSection.append(row);
     });
