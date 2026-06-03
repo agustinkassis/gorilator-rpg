@@ -31,6 +31,7 @@ export class GameState extends Schema {
   // "Wave N · next in Xs").
   @type("number") waveNumber = 0;
   @type("number") waveTimerMs = 0; // ms until the next wave spawns
+  @type("boolean") waveActive = false; // true while the current wave is spawning or alive
 
   // Realm-over intermission: when La Crypta falls the realm ends and this counts
   // down (ms) to the next realm. > 0 means "game over — restarting" (the world is

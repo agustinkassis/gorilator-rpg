@@ -46,10 +46,17 @@ function homeOf(state: GameState): House | null {
 }
 
 /** Make one goblin at (x,z), its power derived from `level`, pointed at the home. */
-export function makeGoblin(state: GameState, x: number, z: number, level: number = GOBLIN_LEVEL): Enemy {
+export function makeGoblin(
+  state: GameState,
+  x: number,
+  z: number,
+  level: number = GOBLIN_LEVEL,
+  waveNumber = 0,
+): Enemy {
   const spot = nearestFreeWorld(x, z);
   const g = new Enemy();
   configureEnemy(g, { kind: "goblin", id: `goblin-${seq++}`, x: spot.x, z: spot.z, stats: { level } });
+  g.waveNumber = Math.max(0, Math.round(waveNumber));
   const home = homeOf(state);
   g.targetX = home ? home.x : 0;
   g.targetZ = home ? home.z : 0;
@@ -127,6 +134,21 @@ interface WaveClock {
 }
 const waveClocks = new WeakMap<GameState, WaveClock>();
 
+function liveWaveGoblins(state: GameState, waveNumber: number): number {
+  let live = 0;
+  state.enemies.forEach((e) => {
+    if (e.kind === "goblin" && e.waveNumber === waveNumber && e.state !== AnimState.DEAD) live++;
+  });
+  return live;
+}
+
+function syncWaveState(state: GameState, clock: WaveClock) {
+  state.waveNumber = clock.number;
+  state.waveTimerMs = Math.max(0, clock.timer);
+  state.waveActive =
+    clock.number > 0 && (clock.pending.length > 0 || liveWaveGoblins(state, clock.number) > 0);
+}
+
 /** The rest after wave N — it grows so there's more time to rebuild as the siege
  *  escalates: 2.5 min, 3 min, 3.5 min … capped at WAVE_INTERVAL_MAX_MS. */
 function intervalAfterWave(n: number): number {
@@ -155,8 +177,7 @@ export function waveSystem(state: GameState, dt: number) {
   const { alive } = playerLevelStats(state);
   if (alive === 0) {
     // nobody defending — hold the countdown in place (don't reset it to a grace)
-    state.waveNumber = clock.number;
-    state.waveTimerMs = Math.max(0, clock.timer);
+    syncWaveState(state, clock);
     return;
   }
 
@@ -165,7 +186,7 @@ export function waveSystem(state: GameState, dt: number) {
     clock.pending.forEach((g) => (g.delayMs -= dtMs));
     const ready = clock.pending.filter((g) => g.delayMs <= 0);
     clock.pending = clock.pending.filter((g) => g.delayMs > 0);
-    ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level));
+    ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level, clock.number));
   }
 
   clock.timer -= dtMs;
@@ -180,8 +201,7 @@ export function waveSystem(state: GameState, dt: number) {
     }
     clock.timer = intervalAfterWave(clock.number); // growing rest before the next wave
   }
-  state.waveNumber = clock.number;
-  state.waveTimerMs = Math.max(0, clock.timer);
+  syncWaveState(state, clock);
 }
 
 /** Restart the wave clock for a fresh round (called after a wipe): the next wave is
@@ -197,6 +217,7 @@ export function resetWaves(state: GameState, resetSpawnIds = false) {
   }
   state.waveNumber = 0;
   state.waveTimerMs = firstDelay;
+  state.waveActive = false;
 }
 
 export function forceNextWave(state: GameState) {
@@ -209,10 +230,9 @@ export function forceNextWave(state: GameState) {
   clock.pending = scheduleWave(state, clock.number);
   const ready = clock.pending.filter((g) => g.delayMs <= 0);
   clock.pending = clock.pending.filter((g) => g.delayMs > 0);
-  ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level));
+  ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level, clock.number));
   clock.timer = intervalAfterWave(clock.number);
-  state.waveNumber = clock.number;
-  state.waveTimerMs = Math.max(0, clock.timer);
+  syncWaveState(state, clock);
 }
 
 /** Steer the goblin toward (tx,tz); returns the distance it had to go. */

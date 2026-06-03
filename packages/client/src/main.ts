@@ -123,7 +123,7 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
 }
 
 function maybePromptForWorktreeName(meta: Partial<WorktreeMeta>) {
-  if (!worktreeEl || !meta.root || meta.name || meta.isMain) return;
+  if (!worktreeEl || !meta.root || !meta.isLinked || meta.name || meta.isMain) return;
   const key = `gorilator.worktreeTag.prompted:${meta.root}`;
   try {
     if (window.sessionStorage.getItem(key)) return;
@@ -730,6 +730,7 @@ const splash = new SplashScreen(engine);
 // removed from state on collapse.
 let homeMaxHp = 0;
 let lastAnnouncedWave: number | null = null;
+let activeMusicWave: number | null = null;
 
 interface AssetTask {
   label: string;
@@ -1056,6 +1057,13 @@ engine.runRenderLoop(() => {
     }
     const wave = st.waveNumber;
     topBar.setWave(wave, st.waveTimerMs);
+    if (wave > 0 && st.waveActive && activeMusicWave !== wave) {
+      audio.startWaveMusic();
+      activeMusicWave = wave;
+    } else if (activeMusicWave !== null && (!st.waveActive || wave < activeMusicWave)) {
+      audio.startMusic(true); // restart the normal theme from the beginning
+      activeMusicWave = null;
+    }
     if (lastAnnouncedWave === null) {
       lastAnnouncedWave = wave;
     } else if (wave > lastAnnouncedWave) {

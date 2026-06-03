@@ -11,15 +11,19 @@ import {
   unlinkSync,
   statSync,
 } from "fs";
-import { basename, relative, resolve } from "path";
+import { basename, dirname, relative, resolve } from "path";
 import { execFileSync } from "child_process";
+import { fileURLToPath } from "url";
+
+const configDir = dirname(fileURLToPath(import.meta.url));
 
 /** The app version shown in-game (the tiny footer tag), read from this package's
- *  package.json. Vite runs with the package dir as cwd, so a cwd-relative read is
- *  reliable; fall back to 0.0.0 if it can't be read. */
+ *  package.json. Falls back to 0.0.0 if it can't be read. */
 function appVersion(): string {
   try {
-    const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version?: string };
+    const pkg = JSON.parse(readFileSync(resolve(configDir, "package.json"), "utf8")) as {
+      version?: string;
+    };
     return pkg.version ?? "0.0.0";
   } catch {
     return "0.0.0";
@@ -353,11 +357,12 @@ function formatWorktreeInfo(
   const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
   const id = codexMatch?.[1] ?? (branchLabel || basename(root));
   const defaultLabel = branchLabel || (isLinked ? `worktree ${id}` : basename(root));
-  const label = isMain ? "main" : name ? `${name} · ${defaultLabel}` : defaultLabel;
+  const displayName = isLinked ? name : "";
+  const label = isMain ? "main" : displayName ? `${displayName} · ${defaultLabel}` : defaultLabel;
   const fullLabel = isMain
     ? `main -> ${targetBranch} · ${root}`
-    : name
-      ? `${name} · ${defaultLabel} -> ${targetBranch} · ${root}`
+    : displayName
+      ? `${displayName} · ${defaultLabel} -> ${targetBranch} · ${root}`
       : `${defaultLabel} -> ${targetBranch} · ${root}`;
   return {
     root,
