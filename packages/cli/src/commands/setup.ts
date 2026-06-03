@@ -234,13 +234,11 @@ async function nsecMenu(opts: Options): Promise<void> {
     const choice = await selectMenu("Server NSEC", [
       { label: "Insert or update NOSTR_NSEC", hint: maskSecret(ctx.env.NOSTR_NSEC) },
       { label: "Generate a new NOSTR_NSEC", hint: "server will publish as a new Nostr identity" },
-      { label: "Set NOSTR_IDENTITY_FILE", hint: ctx.env.NOSTR_IDENTITY_FILE || "default .nostr-identity" },
       { label: "Back" },
     ]);
 
     if (choice === 0) updateNsec(opts);
     else if (choice === 1) generateServerNsec(opts);
-    else if (choice === 2) updateOptionalEnv(opts, "NOSTR_IDENTITY_FILE", "Nostr identity file");
     else return;
   }
 }
@@ -326,7 +324,6 @@ async function environmentMenu(opts: Options): Promise<void> {
       { label: "Update server display name", hint: ctx.env.SERVER_NAME || "Gorilator Server" },
       { label: "Update Colyseus monitor credentials", hint: ctx.env.MONITOR_USER || "disabled" },
       { label: "Update server stats file", hint: ctx.env.SERVER_STATS_FILE || "default .server-realms.json" },
-      { label: "Update Nostr identity file", hint: ctx.env.NOSTR_IDENTITY_FILE || "default .nostr-identity" },
       { label: "Set custom supported server env var" },
       { label: "Show current environment" },
       { label: "Back" },
@@ -335,9 +332,8 @@ async function environmentMenu(opts: Options): Promise<void> {
     if (choice === 0) updateServerName(opts);
     else if (choice === 1) updateMonitorCredentials(opts);
     else if (choice === 2) updateOptionalEnv(opts, "SERVER_STATS_FILE", "Server stats file");
-    else if (choice === 3) updateOptionalEnv(opts, "NOSTR_IDENTITY_FILE", "Nostr identity file");
-    else if (choice === 4) updateCustomEnv(opts);
-    else if (choice === 5) {
+    else if (choice === 3) updateCustomEnv(opts);
+    else if (choice === 4) {
       showCurrentSettings(requireInstall(opts));
       pause();
     } else return;
@@ -386,7 +382,6 @@ function updateCustomEnv(opts: Options): void {
   const allowed = [
     "MONITOR_USER",
     "MONITOR_PASS",
-    "NOSTR_IDENTITY_FILE",
     "SERVER_NAME",
     "SERVER_STATS_FILE",
   ];
@@ -582,8 +577,7 @@ function showCurrentSettings(ctx: SetupContext): void {
   process.stdout.write(`  SERVER_NAME:      ${env.SERVER_NAME || "Gorilator Server"}\n`);
   process.stdout.write(`  SERVER_STATS_FILE: ${env.SERVER_STATS_FILE || ".server-realms.json"}\n\n`);
   process.stdout.write(`${log.bold("Nostr")}\n`);
-  process.stdout.write(`  NOSTR_NSEC:          ${maskSecret(env.NOSTR_NSEC)}\n`);
-  process.stdout.write(`  NOSTR_IDENTITY_FILE: ${env.NOSTR_IDENTITY_FILE || ".nostr-identity"}\n\n`);
+  process.stdout.write(`  NOSTR_NSEC: ${maskSecret(env.NOSTR_NSEC)}\n\n`);
   process.stdout.write(`${log.bold("Colyseus Monitor")}\n`);
   process.stdout.write(`  MONITOR_USER: ${env.MONITOR_USER || "(disabled)"}\n`);
   process.stdout.write(`  MONITOR_PASS: ${maskSecret(env.MONITOR_PASS)}\n\n`);

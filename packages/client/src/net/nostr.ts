@@ -67,7 +67,12 @@ export function hasNostrExtension(): boolean {
 }
 
 function httpBase(): string {
+  const fromEnv = import.meta.env.VITE_SERVER_URL as string | undefined;
+  if (fromEnv) return fromEnv.replace(/^wss?:/, location.protocol === "https:" ? "https:" : "http:");
+
   const proto = location.protocol === "https:" ? "https" : "http";
+  if (import.meta.env.VITE_SAME_ORIGIN === "1") return `${proto}://${location.host}`;
+
   const serverPort = (import.meta.env.VITE_SERVER_PORT as string | undefined) || String(SERVER_PORT);
   return `${proto}://${location.hostname}:${serverPort}`;
 }

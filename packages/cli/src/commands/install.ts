@@ -89,15 +89,24 @@ function ensureEnv(appDir: string, user: string, port: number, clientPort: numbe
   const ef = envFile(appDir);
   if (existsSync(ef)) {
     const env = parseEnv(readFileSync(ef, "utf8"));
-    if (isValidNsec(env.NOSTR_NSEC)) {
+    const patch: Record<string, string> = {};
+    if (!isValidNsec(env.NOSTR_NSEC)) {
+      const reason = env.NOSTR_NSEC ? "invalid" : "missing";
+      patch.NOSTR_NSEC = generateNsec();
+      log.ok(`Generated ${reason} NOSTR_NSEC in ${ef}`);
+    }
+    if (!clientPort && env.VITE_SAME_ORIGIN !== "1") {
+      patch.VITE_SAME_ORIGIN = "1";
+      patch.VITE_SERVER_URL = "";
+      patch.CLIENT_PORT = "";
+      log.ok(`Enabled same-origin client build in ${ef}`);
+    }
+    if (Object.keys(patch).length === 0) {
       log.ok(`Using existing ${ef}`);
       return;
     }
-    const reason = env.NOSTR_NSEC ? "invalid" : "missing";
-    const nsec = generateNsec();
-    writeFileSync(ef, renderEnv({ ...env, NOSTR_NSEC: nsec }), { mode: 0o600 });
+    writeFileSync(ef, renderEnv({ ...env, ...patch }), { mode: 0o600 });
     if (isRoot() && user !== "root") run("chown", [user, ef]);
-    log.ok(`Generated ${reason} NOSTR_NSEC in ${ef}`);
     return;
   }
   const body = renderEnv({

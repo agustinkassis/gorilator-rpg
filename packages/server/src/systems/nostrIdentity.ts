@@ -1,6 +1,4 @@
 import "./webcrypto";
-import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
-import { resolve } from "node:path";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { decode, npubEncode, nsecEncode } from "nostr-tools/nip19";
 
@@ -23,13 +21,6 @@ export interface ServerIdentity {
 
 let cached: ServerIdentity | null = null;
 
-/** Where a generated key is persisted when NOSTR_NSEC isn't set in the env.
- *  Override with NOSTR_IDENTITY_FILE; defaults to `.nostr-identity` in the
- *  server's working directory. Gitignored — it's a secret. */
-function identityFile(): string {
-  return resolve(process.env.NOSTR_IDENTITY_FILE?.trim() || ".nostr-identity");
-}
-
 function decodeNsec(raw: string): Uint8Array | null {
   try {
     const dec = decode(raw.trim());
@@ -42,12 +33,11 @@ function decodeNsec(raw: string): Uint8Array | null {
 /**
  * Resolve the server identity (memoised). Resolution order:
  *   1. `NOSTR_NSEC` from the environment (explicit, wins — e.g. in production).
- *   2. A previously-generated key persisted at `identityFile()`.
- *   3. Generate a fresh key AND persist it, so it survives the next restart.
+ *   2. Generate a fresh ephemeral key for local/manual runs.
  *
- * Persisting (step 3) is the key fix: without it a generated key was EPHEMERAL,
- * so every restart minted a new identity — orphaning every player's save AND,
- * since login challenges are signed with this key, breaking logins on restart.
+ * Production installs should always set `NOSTR_NSEC`; otherwise each restart
+ * mints a new identity, orphaning saved player progress and invalidating any
+ * login challenge issued by the previous process.
  */
 export function getServerIdentity(): ServerIdentity {
   if (cached) return cached;
@@ -62,37 +52,15 @@ export function getServerIdentity(): ServerIdentity {
     else console.warn("[nostr] NOSTR_NSEC is not a valid nsec — ignoring it.");
   }
 
-  const file = identityFile();
-  if (!sk && existsSync(file)) {
-    try {
-      sk = decodeNsec(readFileSync(file, "utf8"));
-      if (sk) source = `file ${file}`;
-      else console.warn(`[nostr] ${file} doesn't contain a valid nsec — regenerating.`);
-    } catch {
-      /* unreadable — fall through to generate */
-    }
-  }
-
   if (!sk) {
     sk = generateSecretKey();
-    try {
-      writeFileSync(file, nsecEncode(sk), { mode: 0o600 });
-      try {
-        chmodSync(file, 0o600);
-      } catch {
-        /* best-effort perms */
-      }
-      source = `generated → ${file}`;
-      console.log(`[nostr] no NOSTR_NSEC set — generated a server key and saved it to ${file}.`);
-    } catch (err) {
-      source = "generated (EPHEMERAL — could not persist)";
-      console.warn(
-        "[nostr] no NOSTR_NSEC set and couldn't write the identity file " +
-          `(${err instanceof Error ? err.message : err}). Player progress will NOT ` +
-          "survive a restart. Set NOSTR_NSEC to fix permanently:\n" +
-          `           NOSTR_NSEC=${nsecEncode(sk)}`,
-      );
-    }
+    source = "generated ephemeral key";
+    console.warn(
+      "[nostr] no NOSTR_NSEC set — generated an ephemeral server key. Player " +
+        "progress and in-flight login challenges will NOT survive a restart. " +
+        "Set NOSTR_NSEC to fix permanently:\n" +
+        `           NOSTR_NSEC=${nsecEncode(sk)}`,
+    );
   }
 
   const pubkey = getPublicKey(sk);

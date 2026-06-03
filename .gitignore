@@ -15,7 +15,8 @@ packages/*/dist/
 # JSONL when PERF_LOG=1). Local profiling artefacts; analyze with scripts/perf-analyze.mjs
 perf-logs/
 
-# Auto-generated server Nostr identity (a secret nsec; set NOSTR_NSEC to override)
+# Legacy local Nostr secret file; the server now uses NOSTR_NSEC only, but keep
+# old secrets out of git.
 .nostr-identity
 
 # User-imported 3D models (large binaries; imported locally via Dev Mode)
