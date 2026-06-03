@@ -355,7 +355,10 @@ function renderJsonEditor(status = "") {
   });
   const closeBtn = createWorktreeNode("button", "jsonEditorBtn", "Close");
   closeBtn.type = "button";
-  closeBtn.addEventListener("click", closeJsonEditor);
+  closeBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeJsonEditor();
+  });
   actions.append(formatBtn, saveBtn, closeBtn);
   head.append(titleWrap, actions);
 
@@ -728,6 +731,7 @@ if (worktreeEl) {
       }
     });
     document.getElementById("jsonEditorModal")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
       if (ev.target === ev.currentTarget) closeJsonEditor();
     });
     void loadWorktreeMeta()
