@@ -13,6 +13,14 @@ import {
 } from "../lib/service.js";
 import { printPackageVersions, printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
 
+export interface LogsFlags {
+  lines?: string;
+  follow?: boolean;
+  "no-follow"?: boolean;
+  filter?: string;
+  since?: string;
+}
+
 export function startCmd(): void {
   startService();
   log.ok("Started.");
@@ -34,9 +42,26 @@ export function restartCmd(): void {
   log.ok("Restarted.");
 }
 
-export function logsCmd(): void {
+export function logsCmd(flags: LogsFlags = {}): void {
   const cfg = loadConfig();
-  logsService(cfg?.appDir ?? defaultAppDir());
+  const lines = parseLines(flags.lines);
+  const follow = Boolean(flags.follow) && !flags["no-follow"];
+  if (flags.filter) log.info(`Filtering logs by: ${flags.filter}`);
+  if (follow) log.info("Following logs in realtime. Press Ctrl-C to stop.");
+  logsService(cfg?.appDir ?? defaultAppDir(), {
+    lines,
+    follow,
+    filter: flags.filter,
+    since: flags.since,
+  });
+}
+
+function parseLines(raw: string | undefined): number {
+  if (!raw) return 100;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n > 0 && n <= 10000) return n;
+  log.warn(`Invalid --lines value '${raw}', using 100.`);
+  return 100;
 }
 
 /** `gorilator status` (alias `info`) — service state + health + ports + URLs. */

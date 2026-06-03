@@ -3,8 +3,16 @@
 import { spawnSync } from "node:child_process";
 import * as log from "./log.js";
 import { SYSTEMD_UNIT, SYSTEMD_UNIT_PATH } from "./paths.js";
-import { isRoot, runPrivileged, tryPrivileged, tryRun, writeFileMaybeSudo } from "./proc.js";
-import type { ServiceExec, ServiceStatus } from "./service.js";
+import {
+  isRoot,
+  printCommandOutput,
+  runPrivileged,
+  streamCommandOutput,
+  tryPrivileged,
+  tryRun,
+  writeFileMaybeSudo,
+} from "./proc.js";
+import type { ServiceExec, ServiceLogOptions, ServiceStatus } from "./service.js";
 
 function renderUnit(appDir: string, user: string, exec: ServiceExec): string {
   return `[Unit]
@@ -55,12 +63,14 @@ export function status(): ServiceStatus {
   return { active, raw };
 }
 
-export function logs(_appDir: string): void {
-  // journalctl -f; a system unit's journal usually needs privilege. Ctrl-C
-  // exits non-zero — swallow it (don't inherit the throw of run()).
-  const args = ["-u", SYSTEMD_UNIT, "-n", "100", "-f"];
-  if (isRoot()) spawnSync("journalctl", args, { stdio: "inherit" });
-  else spawnSync("sudo", ["journalctl", ...args], { stdio: "inherit" });
+export function logs(_appDir: string, opts: ServiceLogOptions): void {
+  const args = ["-u", SYSTEMD_UNIT, "--no-pager", "-n", String(opts.lines)];
+  if (opts.since) args.push("--since", opts.since);
+  if (opts.follow) args.push("-f");
+  const cmd = isRoot() ? "journalctl" : "sudo";
+  const finalArgs = isRoot() ? args : ["journalctl", ...args];
+  if (opts.follow) streamCommandOutput(cmd, finalArgs, { filter: opts.filter });
+  else printCommandOutput(cmd, finalArgs, { filter: opts.filter });
 }
 
 export function uninstall(): void {

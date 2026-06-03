@@ -16,13 +16,20 @@ export interface ServiceStatus {
   raw: string;
 }
 
+export interface ServiceLogOptions {
+  lines: number;
+  follow: boolean;
+  filter?: string;
+  since?: string;
+}
+
 export interface ServiceBackend {
   install(appDir: string, user: string, exec: ServiceExec): void;
   start(): void;
   stop(): void;
   restart(): void;
   status(): ServiceStatus;
-  logs(appDir: string): void;
+  logs(appDir: string, opts: ServiceLogOptions): void;
   uninstall(): void;
 }
 
@@ -46,5 +53,6 @@ export const startService = (): void => backend().start();
 export const stopService = (): void => backend().stop();
 export const restartService = (): void => backend().restart();
 export const statusService = (): ServiceStatus => backend().status();
-export const logsService = (appDir: string): void => backend().logs(appDir);
+export const logsService = (appDir: string, opts: ServiceLogOptions): void =>
+  backend().logs(appDir, opts);
 export const uninstallService = (): void => backend().uninstall();

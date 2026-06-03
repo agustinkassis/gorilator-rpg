@@ -36,6 +36,7 @@ function usage(): void {
   process.stdout.write(`${log.bold("gorilator")} ${VERSION} — native install & daemon for the Gorilator RPG (no Docker)
 
 Usage: gorilator <command> [options]
+       gorilator help <command>
 
   install            Clone the game, build it, run it as a service, put 'gorilator' on PATH
   setup              Open the setup menu: server ports, NSEC, Cloudflare, env settings
@@ -43,12 +44,13 @@ Usage: gorilator <command> [options]
   stop               Stop the daemon
   restart            Restart the daemon
   status, info       Service state + health check + local & public URLs
-  logs               Stream the server logs (Ctrl-C to detach)
+  logs               Show server logs; add --follow to stream realtime
   update             Stop services, git pull, rebuild, start services
   tunnel <cmd>       Manage the Cloudflare tunnel — login | status | restart
   uninstall          Stop and remove Gorilator services, config, global command, and installed files
   serve              Run the server in the foreground (used by the service)
   version            Print the version
+  help <command>     Show detailed help for one command
 
 Options (install):
   --repo <url>       Game repository      (env GORILATOR_REPO)
@@ -61,11 +63,206 @@ Options (install):
   --skip-tunnel      Don't offer the Cloudflare setup after install
   --local-cli <pkg>  Install the global command from a local path/tarball (testing)
 
+Options (logs):
+  --lines <n>        Number of recent lines to show (default 100)
+  --follow           Stream logs in realtime after printing recent lines
+  --filter <text>    Show only lines containing text (case-insensitive)
+  --since <time>     Linux/systemd only: journalctl --since value, e.g. "1 hour ago"
+
 Options (uninstall):
   --keep-files       Stop services/config, but keep the installed app directory
   --keep-command     Keep the global npm 'gorilator' command
   --keep-tunnel      Keep the local cloudflared service/config
 `);
+}
+
+const COMMAND_HELP: Record<string, string> = {
+  install: `${log.bold("gorilator install")} — install and start Gorilator
+
+Usage:
+  gorilator install [options]
+  gorilator help install
+
+Installs prerequisites, clones/updates the game checkout, generates .env, builds the client/server/shared packages, installs the OS service, installs the global npm 'gorilator' command, starts the daemon, and optionally offers Cloudflare setup.
+
+Options:
+  --repo <url>       Game repository      (env GORILATOR_REPO)
+  --ref <ref>        Branch or tag        (env GORILATOR_REF, default main)
+  --dir <path>       Install directory    (env GORILATOR_DIR)
+  --port <n>         Server port          (env GAME_SERVER_PORT, default 2567)
+  --client-port <n>  Optional extra client web port (env CLIENT_PORT)
+  --yes              Assume yes to prompts (env GORILATOR_YES=1)
+  --skip-service     Clone + build only; do not register the OS service
+  --skip-tunnel      Do not offer Cloudflare setup after install
+  --local-cli <pkg>  Install global command from a local path/tarball
+
+Examples:
+  gorilator install
+  gorilator install --port 3000 --skip-tunnel
+  GORILATOR_REPO=https://github.com/you/fork.git gorilator install
+`,
+  setup: `${log.bold("gorilator setup")} — configure an installed server
+
+Usage:
+  gorilator setup [options]
+  gorilator help setup
+
+Opens the interactive setup menu for server ports, logs, NSEC, Cloudflare, monitor credentials, and supported environment values. In non-interactive Cloudflare automation, set GORILATOR_DOMAIN and optionally GORILATOR_HOST.
+
+Options:
+  --dir <path>       Install directory override (env GORILATOR_DIR)
+  --port <n>         Server port override
+  --yes              Non-interactive mode when env values are supplied
+
+Examples:
+  gorilator setup
+  GORILATOR_DOMAIN=example.com gorilator setup --yes
+`,
+  start: `${log.bold("gorilator start")} — start the Gorilator daemon
+
+Usage:
+  gorilator start
+  gorilator help start
+
+Starts the configured systemd service on Linux or launchd agent on macOS, then prints local/public URLs when available.
+`,
+  stop: `${log.bold("gorilator stop")} — stop the Gorilator daemon
+
+Usage:
+  gorilator stop
+  gorilator help stop
+
+Stops the configured systemd service on Linux or launchd agent on macOS.
+`,
+  restart: `${log.bold("gorilator restart")} — restart the Gorilator daemon
+
+Usage:
+  gorilator restart
+  gorilator help restart
+
+Restarts the configured systemd service on Linux or launchd agent on macOS.
+`,
+  status: `${log.bold("gorilator status")} — inspect service state
+
+Usage:
+  gorilator status
+  gorilator info
+  gorilator help status
+
+Shows service state, health check, local/public URLs, package versions, install path, and recent service-manager status output.
+`,
+  info: `${log.bold("gorilator info")} — alias for status
+
+Usage:
+  gorilator info
+  gorilator status
+
+Shows the same output as 'gorilator status'.
+`,
+  logs: `${log.bold("gorilator logs")} — inspect server logs
+
+Usage:
+  gorilator logs [options]
+  gorilator help logs
+
+Shows recent server logs by default. Add --follow to keep streaming realtime logs. Linux uses journalctl for the systemd unit; macOS tails the launchd log file.
+
+Options:
+  --lines <n>        Number of recent lines to show (default 100, max 10000)
+  --follow, -f       Stream logs in realtime after recent lines
+  --filter <text>    Show only lines containing text (case-insensitive)
+  --since <time>     Linux/systemd only; passed to journalctl --since
+
+Examples:
+  gorilator logs
+  gorilator logs --lines 250
+  gorilator logs --follow
+  gorilator logs --filter error --since "1 hour ago"
+`,
+  update: `${log.bold("gorilator update")} — update the installed checkout
+
+Usage:
+  gorilator update
+  gorilator help update
+
+Stops services, updates the installed git checkout, reinstalls dependencies, rebuilds packages, and starts services again.
+`,
+  tunnel: `${log.bold("gorilator tunnel")} — manage the Cloudflare tunnel
+
+Usage:
+  gorilator tunnel [status|login|restart]
+  gorilator help tunnel
+
+Subcommands:
+  status             Show local cloudflared tunnel status
+  login              Authorize cloudflared with Cloudflare
+  restart            Restart the local cloudflared tunnel service
+
+Examples:
+  gorilator tunnel
+  gorilator tunnel login
+  gorilator tunnel restart
+`,
+  uninstall: `${log.bold("gorilator uninstall")} — remove Gorilator from this machine
+
+Usage:
+  gorilator uninstall [options]
+  gorilator help uninstall
+
+Stops/removes Gorilator services, local config, the global command, and installed files unless keep options are supplied.
+
+Options:
+  --keep-files       Keep the installed app directory
+  --keep-command     Keep the global npm 'gorilator' command
+  --keep-tunnel      Keep local cloudflared service/config
+
+Examples:
+  gorilator uninstall
+  gorilator uninstall --keep-files
+`,
+  serve: `${log.bold("gorilator serve")} — run the supervised foreground process
+
+Usage:
+  gorilator serve [options]
+  gorilator help serve
+
+Internal command used by the OS service. It starts the game server process in the foreground using the saved install config unless explicit flags override it.
+
+Options:
+  --dir <path>       Install directory override
+  --port <n>         Server port override
+  --client-port <n>  Optional extra client web port
+`,
+  version: `${log.bold("gorilator version")} — print the CLI version
+
+Usage:
+  gorilator version
+  gorilator --version
+  gorilator help version
+`,
+  help: `${log.bold("gorilator help")} — show help
+
+Usage:
+  gorilator help
+  gorilator help <command>
+  gorilator <command> --help
+
+Examples:
+  gorilator help logs
+  gorilator help install
+`,
+};
+
+function printCommandHelp(command: string | undefined): boolean {
+  if (!command) {
+    usage();
+    return true;
+  }
+  const key = command === "info" ? "status" : command;
+  const body = COMMAND_HELP[key];
+  if (!body) return false;
+  process.stdout.write(`${body.trimEnd()}\n`);
+  return true;
 }
 
 async function main(): Promise<void> {
@@ -84,6 +281,11 @@ async function main(): Promise<void> {
       "keep-files": { type: "boolean" },
       "keep-command": { type: "boolean" },
       "keep-tunnel": { type: "boolean" },
+      lines: { type: "string" },
+      follow: { type: "boolean", short: "f" },
+      "no-follow": { type: "boolean" },
+      filter: { type: "string" },
+      since: { type: "string" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -95,7 +297,23 @@ async function main(): Promise<void> {
   }
 
   const cmd = positionals[0];
-  if (values.help || cmd === undefined || cmd === "help") {
+  if (cmd === "help") {
+    if (!printCommandHelp(positionals[1])) {
+      log.err(`Unknown command: ${positionals[1]}`);
+      usage();
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (values.help && cmd !== undefined) {
+    if (!printCommandHelp(cmd)) {
+      log.err(`Unknown command: ${cmd}`);
+      usage();
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (values.help || cmd === undefined) {
     usage();
     return;
   }
@@ -126,7 +344,7 @@ async function main(): Promise<void> {
       await statusCmd();
       break;
     case "logs":
-      logsCmd();
+      logsCmd(values);
       break;
     case "update":
       await update();

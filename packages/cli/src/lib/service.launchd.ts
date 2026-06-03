@@ -2,13 +2,12 @@
 // `gorilator serve`, restarts on exit (KeepAlive), and logs to a file the
 // `logs` command tails. Uses the classic load/unload/start/stop verbs, which
 // remain functional across macOS releases.
-import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import * as log from "./log.js";
 import { LAUNCHD_LABEL, launchdPlistPath, logFile } from "./paths.js";
-import { capture, tryRun, writeFileMaybeSudo } from "./proc.js";
-import type { ServiceExec, ServiceStatus } from "./service.js";
+import { capture, printCommandOutput, streamCommandOutput, tryRun, writeFileMaybeSudo } from "./proc.js";
+import type { ServiceExec, ServiceLogOptions, ServiceStatus } from "./service.js";
 
 function renderPlist(appDir: string, exec: ServiceExec): string {
   const out = logFile(appDir);
@@ -82,8 +81,15 @@ export function status(): ServiceStatus {
   return { active, raw: raw ?? `${LAUNCHD_LABEL}: not loaded` };
 }
 
-export function logs(appDir: string): void {
-  spawnSync("tail", ["-n", "100", "-f", logFile(appDir)], { stdio: "inherit" });
+export function logs(appDir: string, opts: ServiceLogOptions): void {
+  if (opts.since) {
+    log.warn("--since is only supported by the Linux systemd backend; showing file logs.");
+  }
+  const args = ["-n", String(opts.lines)];
+  if (opts.follow) args.push("-f");
+  args.push(logFile(appDir));
+  if (opts.follow) streamCommandOutput("tail", args, { filter: opts.filter });
+  else printCommandOutput("tail", args, { filter: opts.filter });
 }
 
 export function uninstall(): void {

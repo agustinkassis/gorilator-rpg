@@ -1,7 +1,8 @@
 // Process & privilege helpers — synchronous, dependency-free wrappers around
 // child_process plus sudo elevation and TTY prompts (ports the bash CLI's
 // as_root / runAsTargetUser / _read / confirm).
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import readline from "node:readline";
 import {
   closeSync,
   existsSync,
@@ -68,6 +69,43 @@ export function capture(cmd: string, args: string[], opts: RunOpts = {}): string
   const r = spawnSync(cmd, args, { cwd: opts.cwd, encoding: "utf8" });
   if (r.error || r.status !== 0) return null;
   return (r.stdout ?? "").trim();
+}
+
+export function printCommandOutput(
+  cmd: string,
+  args: string[],
+  opts: RunOpts & { filter?: string } = {},
+): void {
+  const r = spawnSync(cmd, args, {
+    cwd: opts.cwd,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const filter = opts.filter?.toLowerCase();
+  for (const line of (r.stdout ?? "").split(/\r?\n/)) {
+    if (!line) continue;
+    if (!filter || line.toLowerCase().includes(filter)) process.stdout.write(`${line}\n`);
+  }
+  if (r.stderr) process.stderr.write(r.stderr);
+}
+
+export function streamCommandOutput(
+  cmd: string,
+  args: string[],
+  opts: RunOpts & { filter?: string } = {},
+): void {
+  const child = spawn(cmd, args, {
+    cwd: opts.cwd,
+    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const filter = opts.filter?.toLowerCase();
+  const rl = readline.createInterface({ input: child.stdout });
+  rl.on("line", (line) => {
+    if (!filter || line.toLowerCase().includes(filter)) process.stdout.write(`${line}\n`);
+  });
+  child.on("close", () => rl.close());
 }
 
 /** Run a privileged command — directly when root, else via sudo. */

@@ -3,6 +3,7 @@
 // also exposes server ports, Nostr identity, monitor auth, and supported env.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { buildClient } from "../lib/build.js";
+import { logsCmd } from "./service.js";
 import { loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
 import {
   createTunnel,
@@ -73,6 +74,10 @@ async function runSetupMenu(opts: Options): Promise<void> {
         hint: info.serverHost ? `https://${info.serverHost}` : "not configured",
       },
       {
+        label: "Logs",
+        hint: "recent, follow, filter",
+      },
+      {
         label: "Colyseus and environment",
         hint: "monitor auth, server name, stats files",
       },
@@ -91,14 +96,55 @@ async function runSetupMenu(opts: Options): Promise<void> {
         await cloudflareMenu(opts);
         break;
       case 3:
-        await environmentMenu(opts);
+        await logsMenu();
         break;
       case 4:
+        await environmentMenu(opts);
+        break;
+      case 5:
         showCurrentSettings(requireInstall(opts));
         pause();
         break;
       default:
         return;
+    }
+  }
+}
+
+async function logsMenu(): Promise<void> {
+  for (;;) {
+    const choice = await selectMenu("Logs", [
+      { label: "Show last 100 lines", hint: "default" },
+      { label: "Show last 250 lines" },
+      { label: "Follow realtime logs", hint: "Ctrl-C to stop" },
+      { label: "Filter recent logs" },
+      { label: "Advanced logs" },
+      { label: "Back" },
+    ]);
+
+    if (choice === 0) {
+      logsCmd({ lines: "100" });
+      pause();
+    } else if (choice === 1) {
+      logsCmd({ lines: "250" });
+      pause();
+    } else if (choice === 2) {
+      logsCmd({ lines: "", follow: true });
+      return;
+    } else if (choice === 3) {
+      const filter = ask("Filter text: ").trim();
+      if (filter) logsCmd({ lines: "200", filter });
+      pause();
+    } else if (choice === 4) {
+      const lines = ask("Lines to show [100]: ").trim() || "100";
+      const follow = /^y/i.test(ask("Follow realtime? [y/N] "));
+      const filter = ask("Filter text [blank for none]: ").trim() || undefined;
+      const since = ask('Since [Linux journalctl, e.g. "1 hour ago", blank for none]: ').trim() || undefined;
+      logsCmd({ lines, follow, filter, since });
+      if (follow) return;
+      pause();
+    } else {
+      return;
     }
   }
 }

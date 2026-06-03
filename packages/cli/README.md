@@ -65,11 +65,12 @@ gorilator status      # service state + health check + local & public URLs   (al
 gorilator start       # start the service (prints the port it listens on)
 gorilator stop        # stop the service
 gorilator restart     # restart the service
-gorilator logs        # stream server logs (Ctrl-C to detach)
+gorilator logs        # show recent logs; add --follow, --lines, --filter, --since
 gorilator update      # stop services, git pull, rebuild, start services
 gorilator setup       # interactive setup menu: ports, NSEC, Cloudflare, env
 gorilator tunnel <cmd># Cloudflare tunnel — login | status | restart
 gorilator uninstall   # stop and remove services, config, command, and installed files
+gorilator help <cmd>  # show detailed help for any command
 ```
 
 `gorilator uninstall` removes the local Gorilator daemon, local tunnel service/config,

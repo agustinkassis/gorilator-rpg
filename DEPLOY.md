@@ -100,11 +100,12 @@ gorilator status        Service state + health + local & public URLs   (alias: i
 gorilator start         Start the daemon (prints the port it listens on)
 gorilator stop          Stop the daemon
 gorilator restart       Restart the daemon
-gorilator logs          Stream server logs (Ctrl-C to detach)
+gorilator logs          Show recent server logs (--follow, --lines, --filter, --since)
 gorilator update        stop services, git pull, rebuild, start services
 gorilator setup         Interactive setup: server ports, NSEC, Cloudflare, env settings
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
 gorilator uninstall     Stop & remove services, config, command, and installed files
+gorilator help <cmd>    Show detailed help for any command
 ```
 
 The three entry points run **identical code** — `npx gorilator <cmd>`, the global `gorilator <cmd>`, and the
