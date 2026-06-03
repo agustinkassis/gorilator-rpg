@@ -229,11 +229,26 @@ function recentGitCommits(root: string): WorktreeCommit[] {
     .filter((commit) => commit.hash && commit.subject);
 }
 
+function pendingGitCommitRefs(root: string, targetBranch: string): string[] {
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) return [];
+  const raw = captureGit(["log", "--cherry-pick", "--right-only", "--pretty=format:%H", `${base}...HEAD`], root);
+  if (!raw) return [];
+  return raw.split("\n").filter(Boolean);
+}
+
 function pendingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
   if (current === targetBranch) return [];
   const base = pendingBaseRef(root, targetBranch);
   if (!base) return [];
-  const raw = captureGit(["log", "--max-count=20", "--pretty=format:%h%x1f%s%x1f%cr", `${base}..HEAD`], root);
+  const raw = captureGit([
+    "log",
+    "--cherry-pick",
+    "--right-only",
+    "--max-count=20",
+    "--pretty=format:%h%x1f%s%x1f%cr",
+    `${base}...HEAD`,
+  ], root);
   if (!raw) return [];
   return raw
     .split("\n")
@@ -312,24 +327,36 @@ function ensureLocalTargetBranch(root: string, targetBranch: string) {
   execFileSync("git", ["branch", targetBranch, remoteRef], { cwd: root, encoding: "utf8" });
 }
 
-function mergeIntoTargetBranch(root: string): WorktreeInfo {
+function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown): string {
+  const commit = String(rawCommit ?? "").trim();
+  if (!commit) throw new Error("Missing commit to merge");
+  if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new Error("Invalid commit");
+  const resolved = gitCommitRef(root, commit);
+  if (!resolved) throw new Error(`Commit ${commit} was not found`);
+  if (!pendingBaseRef(root, targetBranch)) throw new Error(`Target branch ${targetBranch} was not found`);
+  if (!pendingGitCommitRefs(root, targetBranch).includes(resolved)) {
+    throw new Error(`Commit ${commit} is not pending for ${targetBranch}`);
+  }
+  return resolved;
+}
+
+function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): WorktreeInfo {
   const targetBranch = readTargetBranch(root);
   const current = currentBranch(root);
   if (current === targetBranch) return worktreeInfo();
-  const source = captureGit(["rev-parse", "HEAD"], root);
-  if (!source) throw new Error("Could not resolve current HEAD");
+  const source = pendingCommitRef(root, targetBranch, rawCommit);
   ensureLocalTargetBranch(root, targetBranch);
   const parent = resolve(root, ".gorilator");
   mkdirSync(parent, { recursive: true });
   const tmp = mkdtempSync(resolve(parent, "merge-"));
   try {
     execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
-    execFileSync("git", ["merge", "--no-edit", source], { cwd: tmp, encoding: "utf8" });
+    execFileSync("git", ["cherry-pick", source], { cwd: tmp, encoding: "utf8" });
   } catch (err) {
     try {
-      execFileSync("git", ["merge", "--abort"], { cwd: tmp, encoding: "utf8" });
+      execFileSync("git", ["cherry-pick", "--abort"], { cwd: tmp, encoding: "utf8" });
     } catch {
-      // The merge may not have started; removal below still cleans the temp worktree.
+      // The pick may not have started; removal below still cleans the temp worktree.
     }
     throw err;
   } finally {
@@ -1279,6 +1306,7 @@ function perfLogs(): Plugin {
  * ignored repo-local `.gorilator/worktree-name` file.
  *   GET  /__worktree       → current label/name/path metadata
  *   POST /__worktree {name,targetBranch} → set name/target branch
+ *   POST /__worktree/merge {commit} → cherry-pick one pending commit into targetBranch
  */
 function worktreeTagger(): Plugin {
   return {
@@ -1311,11 +1339,14 @@ function worktreeTagger(): Plugin {
         const info = worktreeInfo();
         if (!info.root) return fail(res, 404, "not a git worktree");
         if (req.method !== "POST") return fail(res, 405, "POST only");
-        try {
-          sendJson(res, { ok: true, ...mergeIntoTargetBranch(info.root) });
-        } catch (e) {
-          fail(res, 409, String(e));
-        }
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { commit?: unknown };
+            sendJson(res, { ok: true, ...mergeCommitIntoTargetBranch(info.root, body.commit) });
+          } catch (e) {
+            fail(res, 409, String(e));
+          }
+        });
       });
 
       server.middlewares.use("/__worktree", (req, res) => {
