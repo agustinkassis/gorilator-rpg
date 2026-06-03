@@ -32,6 +32,9 @@ import { setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
 import { TOWER_PROP_NAME } from "@rpg/shared";
+import { PerfTracker } from "./perf/PerfTracker";
+import { attachBabylonProbes } from "./perf/babylonProbes";
+import { PerfOverlay } from "./perf/overlay";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -71,6 +74,17 @@ const debugStats = new DebugStats(engine, scene);
 const audio = new AudioManager();
 game.setAudio(audio);
 const net = new NetworkClient();
+
+// Performance tracking: Babylon probes feed the tracker each frame (FPS, draw
+// calls, meshes, triangles always; CPU+GPU frame time + heap while the overlay or
+// a benchmark is active). Toggle the on-screen HUD with F3 or `?perf`; drive it
+// from the console via window.__perf (see docs/performance.md).
+const perf = new PerfTracker();
+const perfProbes = attachBabylonProbes(engine, scene, perf);
+const perfOverlay = new PerfOverlay(perf, perfProbes, net.httpBase());
+(window as Window & { __perf?: unknown }).__perf = perf;
+if (new URLSearchParams(location.search).has("perf")) perfOverlay.toggle();
+
 const inventory = new InventoryUI(
   (from, to) => net.sendInventoryMove(from, to),
   (slot) => net.sendUseItem(slot),
@@ -409,9 +423,9 @@ engine.runRenderLoop(() => {
   const paused = timeScale === 0;
   scene.animationsEnabled = !paused; // freeze skeletal animations when paused
   game.setGhost(paused); // local player goes translucent + floats while paused
-  game.update(dt * timeScale); // the world stays frozen at pause…
+  perf.span("game.update", () => game.update(dt * timeScale)); // the world stays frozen at pause…
   if (paused) game.updateGhost(dt); // …but the ghost free-roams + camera follows at real dt
-  minimap.update(); // redraws only while TAB is held
+  perf.span("minimap", () => minimap.update()); // redraws only while TAB is held
 
   const hp = game.localHp();
   if (hp) globe.set(hp.hp, hp.maxHp);
@@ -482,7 +496,7 @@ engine.runRenderLoop(() => {
 
   debugStats.setGameStats(game.debugStats());
   const renderStartedAt = performance.now();
-  scene.render();
+  perf.span("scene.render", () => scene.render());
   debugStats.endFrame(frameStartedAt, renderStartedAt);
 });
 

@@ -12,6 +12,7 @@ import { GameRoom } from "./rooms/GameRoom";
 import { issueChallenge } from "./systems/nostr";
 import { getServerIdentity } from "./systems/nostrIdentity";
 import { realmTracker } from "./systems/realms";
+import { perfTracker } from "./systems/perf";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -77,6 +78,11 @@ app.get("/nostr/challenge", (_req, res) => {
 app.get("/api/status", (_req, res) => res.json(realmTracker.status()));
 app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
 
+// Live server performance snapshot (latest tick + a 5s rolling summary + per-system
+// span times). The F3 perf overlay polls this; also handy with curl/jq. See
+// docs/performance.md.
+app.get("/api/perf", (_req, res) => res.json(perfTracker.snapshot()));
+
 // SPA fallback (single-service only): unmatched GETs return index.html so the
 // client renders, but never shadow the monitor or Colyseus matchmaking routes.
 if (clientDist) {
@@ -119,6 +125,7 @@ gameServer
     console.log(`[server] listening on ws://localhost:${port}`);
     console.log(`[server] monitor:  http://localhost:${port}/colyseus`);
     realmTracker.init(); // realm/stats tracking + Nostr discovery event + /api/* (see REALMS.md)
+    perfTracker.init(); // CPU/memory/tick sampling + /api/perf (+ JSONL when PERF_LOG=1)
   })
   .catch((err) => {
     console.error("[server] failed to start", err);

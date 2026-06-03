@@ -93,10 +93,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 
 export class NetworkClient {
   private client: Client;
+  private endpoint: string;
   room?: Room<GameState>;
 
   constructor(endpoint: string = defaultEndpoint()) {
+    this.endpoint = endpoint;
     this.client = new Client(endpoint);
+  }
+
+  /** The server's HTTP(S) base (the WebSocket endpoint with ws→http), for the
+   *  REST API — the perf overlay polls `${httpBase()}/api/perf`, etc. */
+  httpBase(): string {
+    return this.endpoint.replace(/^ws/, "http");
   }
 
   async connect(
