@@ -238,7 +238,7 @@ export class DevMode {
     banner.id = "devModeBanner";
     banner.textContent = "DEV MODE — immortal · click to select";
     banner.style.cssText =
-      "position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:60; display:none;" +
+      "position:fixed; bottom:122px; left:50%; transform:translateX(-50%); z-index:60; display:none;" +
       "background:#2a7a32e0; color:#eafaea; border:1px solid #9fe0a0; border-radius:6px;" +
       "padding:4px 12px; font:bold 12px system-ui,sans-serif; letter-spacing:0.5px; pointer-events:none;";
     document.body.appendChild(banner);
