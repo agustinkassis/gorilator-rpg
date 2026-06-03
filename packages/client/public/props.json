@@ -10,9 +10,9 @@
     "id": "/models/meshy_ai_timberstone_tow_1780332210503.glb"
   },
   {
-    "id": "meshy_ai_timberstone_tow_1780338285634",
+    "id": "goblin_house",
     "name": "Goblin House",
-    "model": "/models/meshy_ai_timberstone_tow_1780338285634.glb",
+    "model": "/models/goblin_house.glb",
     "x": 4.4,
     "z": 23.5,
     "scale": 5,
@@ -20,46 +20,19 @@
     "collisionRadius": 2.5
   },
   {
-    "id": "meshy_ai_warrior_s_basti_1780338969291",
-    "name": "Meshy_AI_Warrior_s_Basti",
-    "model": "/models/meshy_ai_warrior_s_basti_1780338969291.glb",
-    "x": 27.2,
-    "z": -5.9,
+    "id": "goblin_house_1780338969291",
+    "name": "Goblin House",
+    "model": "/models/goblin_house.glb",
+    "x": -46.8,
+    "z": -52.2,
     "scale": 5,
     "rotationY": 0,
     "collisionRadius": 2.5
   },
   {
-    "id": "meshy_ai_tree_0601185041_1780339849254",
-    "name": "Meshy_AI_tree_0601185041",
-    "model": "/models/meshy_ai_tree_0601185041_1780339849254.glb",
-    "x": -4.4,
-    "z": 24.5,
-    "scale": 5,
-    "rotationY": 0
-  },
-  {
-    "id": "meshy_ai_tree_0601185041_1780339865961",
-    "name": "Meshy_AI_tree_0601185041",
-    "model": "/models/meshy_ai_tree_0601185041_1780339865961.glb",
-    "x": -4.4,
-    "z": 24.5,
-    "scale": 5,
-    "rotationY": 0
-  },
-  {
-    "id": "meshy_ai_a_demonic_looki_1780352350401",
-    "name": "Meshy_AI_a_demonic_looki",
-    "model": "/models/meshy_ai_a_demonic_looki_1780352350401.glb",
-    "x": 4.2,
-    "z": -10.9,
-    "scale": 5,
-    "rotationY": 0
-  },
-  {
-    "id": "meshy_ai_timberstone_tow_1780338285634_1780491200577",
-    "name": "meshy_ai_timberstone_tow_1780338285634",
-    "model": "/models/meshy_ai_timberstone_tow_1780338285634.glb",
+    "id": "goblin_house_1780491200577",
+    "name": "Goblin House",
+    "model": "/models/goblin_house.glb",
     "x": 11.4,
     "z": 144.7,
     "scale": 5,
@@ -67,9 +40,9 @@
     "collisionRadius": 2.5
   },
   {
-    "id": "meshy_ai_timberstone_tow_1780338285634_1780491249381",
-    "name": "meshy_ai_timberstone_tow_1780338285634",
-    "model": "/models/meshy_ai_timberstone_tow_1780338285634.glb",
+    "id": "goblin_house_1780491249381",
+    "name": "Goblin House",
+    "model": "/models/goblin_house.glb",
     "x": 17.1,
     "z": 145.2,
     "scale": 5,
@@ -77,9 +50,9 @@
     "collisionRadius": 2.5
   },
   {
-    "id": "meshy_ai_timberstone_tow_1780338285634_1780491252333",
-    "name": "meshy_ai_timberstone_tow_1780338285634",
-    "model": "/models/meshy_ai_timberstone_tow_1780338285634.glb",
+    "id": "goblin_house_1780491252333",
+    "name": "Goblin House",
+    "model": "/models/goblin_house.glb",
     "x": 4.9,
     "z": 147.9,
     "scale": 5,
