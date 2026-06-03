@@ -24,8 +24,6 @@ export interface SpawnRuleConfig {
   type: string;
   modelId?: string;
   label?: string;
-  x: number;
-  z: number;
   intervalMs: number;
   cap: number;
   brain?: BrainId;
@@ -43,4 +41,3 @@ export interface EntityFeatureManifest {
   defaults?: Record<string, EntityFeatureConfig>;
   instances?: Record<string, EntityFeatureConfig>;
 }
-

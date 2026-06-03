@@ -177,7 +177,7 @@ export class GameRoom extends Room<GameState> {
       p.pickupTargetId = ""; // a manual move cancels any pursuit
       if (this.state.timeScale === 0) {
         // paused → ghost free-roam: fly straight to the point (no pathfinding,
-        // ignoring obstacles); ghostMovementSystem glides there at 1.08× speed.
+        // ignoring obstacles); ghostMovementSystem glides there at 3× speed.
         p.path = [];
         p.targetX = clampToWorld(msg.x);
         p.targetZ = clampToWorld(msg.z);

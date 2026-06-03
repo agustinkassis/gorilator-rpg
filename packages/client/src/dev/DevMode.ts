@@ -640,6 +640,7 @@ export class DevMode {
     const sel = this.selection.selected;
     if (!sel) return;
     this.stopMaskEdit();
+    if (spawnable(sel.kind)) void this.deleteSpawnersForOwner(sel.id);
     if (sel.kind === "prop") {
       void this.propManager.persistDelete(sel.id);
       this.selectNone();
@@ -1314,8 +1315,9 @@ export class DevMode {
       const list = (await (await fetch("/__spawners/list", { cache: "no-store" })).json()) as SpawnerCfg[];
       this.spawners.clear();
       for (const raw of list) {
-        const s = { ...raw, ownerId: raw.ownerId ?? raw.id, type: raw.type ?? "goblin", behavior: raw.behavior ?? {} };
-        const owner = s.ownerId ?? s.id;
+        if (!raw.ownerId) continue;
+        const s = { ...raw, type: raw.type ?? "goblin", behavior: raw.behavior ?? {} };
+        const owner = s.ownerId;
         const arr = this.spawners.get(owner) ?? [];
         arr.push(s);
         this.spawners.set(owner, arr);
@@ -1363,8 +1365,8 @@ export class DevMode {
           this.showSelection(sel);
         },
       });
-      fields.push(this.spawnerNum("interval s", sp.intervalMs / 1000, 0.5, (v) => (sp.intervalMs = Math.max(200, Math.round(v * 1000))), sp, sel));
-      fields.push(this.spawnerNum("max alive", sp.cap, 1, (v) => (sp.cap = Math.max(0, Math.round(v))), sp, sel));
+      fields.push(this.spawnerNum("interval s", sp.intervalMs / 1000, 0.5, (v) => (sp.intervalMs = Math.max(200, Math.round(v * 1000))), sp));
+      fields.push(this.spawnerNum("max alive", sp.cap, 1, (v) => (sp.cap = Math.max(0, Math.round(v))), sp));
       fields.push({
         kind: "select",
         label: "brain",
@@ -1376,11 +1378,11 @@ export class DevMode {
         },
       });
       fields.push(
-        this.spawnerNum("hp", stats.maxHp ?? b.hp ?? 0, 5, (v) => { stats.maxHp = v || undefined; b.hp = v || undefined; }, sp, sel),
-        this.spawnerNum("attack", stats.attack ?? b.attack ?? 0, 5, (v) => { stats.attack = v || undefined; b.attack = v || undefined; }, sp, sel),
-        this.spawnerNum("armor", stats.armor ?? 0, 1, (v) => (stats.armor = v || undefined), sp, sel),
-        this.spawnerNum("move spd", stats.moveSpeed ?? b.chaseSpeed ?? 0, 0.25, (v) => { stats.moveSpeed = v || undefined; b.chaseSpeed = v || undefined; }, sp, sel),
-        this.spawnerNum("atk cd ms", b.attackCooldownMs ?? 0, 100, (v) => (b.attackCooldownMs = v || undefined), sp, sel),
+        this.spawnerNum("hp", stats.maxHp ?? b.hp ?? 0, 5, (v) => { stats.maxHp = v || undefined; b.hp = v || undefined; }, sp),
+        this.spawnerNum("attack", stats.attack ?? b.attack ?? 0, 5, (v) => { stats.attack = v || undefined; b.attack = v || undefined; }, sp),
+        this.spawnerNum("armor", stats.armor ?? 0, 1, (v) => (stats.armor = v || undefined), sp),
+        this.spawnerNum("move spd", stats.moveSpeed ?? b.chaseSpeed ?? 0, 0.25, (v) => { stats.moveSpeed = v || undefined; b.chaseSpeed = v || undefined; }, sp),
+        this.spawnerNum("atk cd ms", b.attackCooldownMs ?? 0, 100, (v) => (b.attackCooldownMs = v || undefined), sp),
       );
       fields.push({
         kind: "select",
@@ -1408,8 +1410,6 @@ export class DevMode {
           id,
           ownerId: sel.id,
           type: "goblin",
-          x: round(sel.root.position.x),
-          z: round(sel.root.position.z),
           intervalMs: 4000,
           cap: 3,
           behavior: { brain: "attacks_home", stats: {} },
@@ -1422,7 +1422,7 @@ export class DevMode {
     });
   }
 
-  private spawnerNum(label: string, value: number, step: number, set: (v: number) => void, sp: SpawnerCfg, sel: Selectable): Field {
+  private spawnerNum(label: string, value: number, step: number, set: (v: number) => void, sp: SpawnerCfg): Field {
     return {
       kind: "number",
       label,
@@ -1431,8 +1431,6 @@ export class DevMode {
       step,
       onChange: (v) => {
         set(v);
-        sp.x = round(sel.root.position.x); // keep the spawner at the object
-        sp.z = round(sel.root.position.z);
         this.scheduleSpawnerSave(sp.id);
       },
     };
@@ -1457,6 +1455,14 @@ export class DevMode {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id }),
     }).catch((e) => console.warn("[spawner] delete failed", e));
+  }
+  private async deleteSpawnersForOwner(ownerId: string) {
+    this.spawners.delete(ownerId);
+    await fetch("/__spawners/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ownerId }),
+    }).catch((e) => console.warn("[spawner] owner delete failed", e));
   }
   private scheduleSpawnerSave(id: string) {
     if (this.spawnerSaveTimer) clearTimeout(this.spawnerSaveTimer);
@@ -2176,12 +2182,10 @@ interface LootEntry {
 
 interface SpawnerCfg {
   id: string;
-  ownerId?: string;
+  ownerId: string;
   type?: string;
   modelId?: string;
   label?: string;
-  x: number;
-  z: number;
   intervalMs: number;
   cap: number;
   behavior: {
