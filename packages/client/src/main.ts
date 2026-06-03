@@ -250,6 +250,23 @@ function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+function renderWorktreePanelPreservingScroll() {
+  const panel = worktreePanelEl;
+  if (!panel) {
+    renderWorktreePanel();
+    return;
+  }
+  const scrollTop = panel.scrollTop;
+  const scrollLeft = panel.scrollLeft;
+  renderWorktreePanel();
+  panel.scrollTop = scrollTop;
+  panel.scrollLeft = scrollLeft;
+  window.requestAnimationFrame(() => {
+    panel.scrollTop = scrollTop;
+    panel.scrollLeft = scrollLeft;
+  });
+}
+
 function readWorktreeGroupChangesPreference(): boolean {
   try {
     return window.localStorage.getItem("gorilator.worktreeLog.groupChangesByPackage") !== "0";
@@ -854,7 +871,7 @@ function renderWorktreePanel() {
     ev.stopPropagation();
     worktreeGroupChangesByPackage = packageToggleInput.checked;
     saveWorktreeGroupChangesPreference(worktreeGroupChangesByPackage);
-    renderWorktreePanel();
+    renderWorktreePanelPreservingScroll();
   });
   packageToggle.append(
     packageToggleInput,
