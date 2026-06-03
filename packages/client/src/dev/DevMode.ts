@@ -64,7 +64,6 @@ export class DevMode {
   private explorer: LibraryExplorer;
   private itemLibrary: ItemLibrary;
   private btn: HTMLButtonElement;
-  private addBtn: HTMLButtonElement;
   private itemsBtn: HTMLButtonElement;
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
@@ -171,18 +170,6 @@ export class DevMode {
     btn.onclick = () => this.toggle();
     document.body.appendChild(btn);
     this.btn = btn;
-
-    // "New entity" opens the entity library directly on the placement tab.
-    const addBtn = document.createElement("button");
-    addBtn.id = "devAddModelBtn";
-    addBtn.textContent = "＋ New entity";
-    addBtn.style.cssText =
-      "position:fixed; right:16px; bottom:240px; z-index:40; cursor:pointer; display:none;" +
-      "background:#283; color:#fff; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
-    addBtn.onclick = () => this.explorer.openNew();
-    document.body.appendChild(addBtn);
-    this.addBtn = addBtn;
 
     // Custom inventory/gameplay items: create definitions and test-give/drop them.
     const itemsBtn = document.createElement("button");
@@ -338,7 +325,6 @@ export class DevMode {
     void this.loadStructures(); // reflect existing structure loot tables
     this.btn.style.background = "#3a7a40";
     this.btn.style.color = "#fff";
-    this.addBtn.style.display = "block";
     this.itemsBtn.style.display = "block";
     this.entitiesBtn.style.display = "block";
     this.gameplayBtn.style.display = "block";
@@ -360,7 +346,6 @@ export class DevMode {
     this.selection.clear();
     this.btn.style.background = "#2a3242";
     this.btn.style.color = "#9fe0a0";
-    this.addBtn.style.display = "none";
     this.itemsBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
     this.gameplayBtn.style.display = "none";
