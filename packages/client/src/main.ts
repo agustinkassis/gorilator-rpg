@@ -79,6 +79,7 @@ interface WorktreeMeta {
   branches: string[];
   isMain: boolean;
   isLinked: boolean;
+  hasTargetUpdates: boolean;
   pendingCommits: WorktreeCommit[];
   incomingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
@@ -440,6 +441,8 @@ function renderWorktreePanel() {
   const pendingBase = worktreeMeta.pendingBase || targetBranch;
   const branches = Array.from(new Set(["main", targetBranch, ...(worktreeMeta.branches ?? [])])).filter(Boolean);
   const canMergeTarget = Boolean(worktreeMeta.branch) && branch !== targetBranch;
+  const hasTargetUpdates = worktreeMeta.hasTargetUpdates ?? incomingCommits.length > 0;
+  const canUpdateFromTarget = canMergeTarget && hasTargetUpdates;
   if (!label) {
     worktreePanelEl.hidden = true;
     return;
@@ -495,16 +498,23 @@ function renderWorktreePanel() {
   targetWrap.append(targetLabel, targetSelect);
   const bringTargetWrap = createWorktreeNode("div", "wtBringTargetWrap");
   const bringTargetLabel = createWorktreeNode("span", "wtBranchLabel", "Update");
-  const bringTargetBtn = createWorktreeNode("button", "wtBringTargetBtn", worktreeMergeBusy ? "Working" : "Merge In");
+  const bringTargetBtn = createWorktreeNode(
+    "button",
+    "wtBringTargetBtn",
+    worktreeMergeBusy ? "Working" : canUpdateFromTarget ? "Update" : "Up to date",
+  );
   bringTargetBtn.type = "button";
-  bringTargetBtn.disabled = worktreeMergeBusy || !canMergeTarget;
-  bringTargetBtn.title = canMergeTarget
+  bringTargetBtn.disabled = worktreeMergeBusy || !canUpdateFromTarget;
+  bringTargetBtn.title = canUpdateFromTarget
     ? `Merge ${targetBranch} into ${branch}`
     : branch === targetBranch
       ? "Current branch already matches target"
-      : "No current branch to update";
+      : !hasTargetUpdates
+        ? `${branch} already includes ${targetBranch}`
+        : "No current branch to update";
   bringTargetBtn.addEventListener("click", (ev) => {
     ev.stopPropagation();
+    if (!canUpdateFromTarget) return;
     worktreeMergeBusy = true;
     worktreeMergeMessage = `Merging ${targetBranch} into ${branch}...`;
     renderWorktreePanel();

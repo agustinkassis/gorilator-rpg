@@ -66,6 +66,7 @@ interface WorktreeInfo {
   branches: string[];
   isMain: boolean;
   isLinked: boolean;
+  hasTargetUpdates: boolean;
   pendingCommits: WorktreeCommit[];
   incomingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
@@ -91,6 +92,7 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   branches: [],
   isMain: false,
   isLinked: false,
+  hasTargetUpdates: false,
   pendingCommits: [],
   incomingCommits: [],
   commits: [],
@@ -541,6 +543,7 @@ function formatWorktreeInfo(
     branches: branchOptions(root),
     isMain,
     isLinked,
+    hasTargetUpdates: incomingGitCommitRefs(root, targetBranch, branch).length > 0,
     pendingCommits: pendingGitCommits(root, targetBranch, branch),
     incomingCommits: incomingGitCommits(root, targetBranch, branch),
     commits: recentGitCommits(root),
