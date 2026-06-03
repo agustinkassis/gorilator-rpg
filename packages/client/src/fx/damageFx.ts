@@ -1,6 +1,7 @@
 /**
  * Full-screen "you're getting hurt" feedback for the LOCAL player:
- *  - a transient red flash + camera shake on each hit (∝ damage taken), and
+ *  - a transient red flash + camera shake on each hit (∝ damage taken),
+ *  - a white alert flash for offscreen structure damage, and
  *  - a persistent low-HP vignette that desaturates the world to black-and-white,
  *    dims it and bleeds red — getting more aggressive the lower your HP, until at
  *    death everything is red.
@@ -16,6 +17,7 @@ const SHAKE_DECAY = 1 / 0.35; // shake settles over ~0.35s
 
 export class DamageFx {
   private overlay: HTMLDivElement;
+  private alert: HTMLDivElement;
   private canvas: HTMLElement;
   private low = 0; // smoothed 0..1 severity (1 = near death)
   private targetLow = 0;
@@ -32,6 +34,17 @@ export class DamageFx {
       "will-change:backdrop-filter,background;";
     document.body.appendChild(d);
     this.overlay = d;
+
+    injectAlertStyles();
+    const alert = document.createElement("div");
+    alert.className = "cryptaAlertFlash";
+    alert.style.display = "none";
+    alert.addEventListener("animationend", () => {
+      alert.classList.remove("show");
+      alert.style.display = "none";
+    });
+    document.body.appendChild(alert);
+    this.alert = alert;
   }
 
   /** A hit landed on the local player; `dmgFrac` = damage / maxHp. */
@@ -39,6 +52,19 @@ export class DamageFx {
     const k = Math.max(0.12, Math.min(0.85, dmgFrac * 2.2));
     this.flash = Math.min(1, this.flash + k);
     this.shake = Math.min(1, this.shake + k);
+  }
+
+  /** Screen shake without the local-player red hurt flash. */
+  shakeOnly(strength = 0.5) {
+    this.shake = Math.min(1, this.shake + Math.max(0.12, Math.min(0.9, strength)));
+  }
+
+  /** Aggressive double white flash used when La Crypta is damaged offscreen. */
+  whiteAlert() {
+    this.alert.style.display = "block";
+    this.alert.classList.remove("show");
+    void this.alert.offsetWidth;
+    this.alert.classList.add("show");
   }
 
   /** Local-player HP → drives the persistent low-HP effect (smoothed in update). */
@@ -77,4 +103,34 @@ export class DamageFx {
       this.canvas.style.transform = "";
     }
   }
+}
+
+let alertStylesInjected = false;
+function injectAlertStyles() {
+  if (alertStylesInjected) return;
+  alertStylesInjected = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    .cryptaAlertFlash {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      pointer-events: none;
+      background: transparent;
+      opacity: 0;
+      mix-blend-mode: screen;
+    }
+    .cryptaAlertFlash.show {
+      animation: cryptaDoubleFlash 250ms linear;
+    }
+    @keyframes cryptaDoubleFlash {
+      0%, 100% { opacity: 0; background: rgba(255, 255, 255, 0); }
+      8% { opacity: 0.98; background: rgba(255, 255, 255, 0.98); }
+      24% { opacity: 0; background: rgba(255, 255, 255, 0); }
+      48% { opacity: 0; background: rgba(255, 255, 255, 0); }
+      58% { opacity: 0.92; background: rgba(255, 255, 255, 0.95); }
+      78% { opacity: 0; background: rgba(255, 255, 255, 0); }
+    }
+  `;
+  document.head.appendChild(style);
 }

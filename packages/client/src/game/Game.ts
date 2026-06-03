@@ -5,6 +5,7 @@ import {
   TransformNode,
   AbstractMesh,
   Vector3,
+  Matrix,
   ParticleSystem,
   MeshBuilder,
   StandardMaterial,
@@ -154,6 +155,8 @@ interface CollectFx {
 const COLLECT_DUR = 0.42; // seconds the magnet-collect animation lasts
 const COLLECT_MAGNET_MAX_DIST = 6; // don't magnet to a player farther than this (safety)
 const COLLECT_AIM_Y = 1.1; // fly the item up to ~chest height as it reaches the player
+const CRYPTA_DAMAGE_FEEDBACK_STEP = 10;
+const CRYPTA_DAMAGE_FEEDBACK_COOLDOWN_MS = 4000;
 
 const DUMMY_TINT = new Color3(0.72, 0.3, 0.26);
 
@@ -190,6 +193,8 @@ export class Game {
   private deadElapsed: number | null = null; // seconds the local player has been dead
   private dropsEnabled = false; // gate the loot-pop so the initial world sync doesn't all pop at once
   private damageFx: DamageFx | null = null; // local-player hurt feedback (flash/shake/low-HP)
+  private cryptaDamageSinceFeedback = 0;
+  private cryptaFeedbackReadyAt = 0;
   private audio: AudioManager | null = null; // sound effects + music (set after construction)
   private focusOverride: { x: number; z: number } | null = null; // dev: hold camera off the player
   localId: string | null = null;
@@ -1049,8 +1054,32 @@ export class Game {
     const house = this.houses.get(ev.targetId);
     if (house) {
       this.hud.showDamage(house.anchor, ev.targetId, ev.amount, ev.crit);
+      if (ev.targetId === "house-0") this.onCryptaDamage(ev.amount, house.anchor);
       this.audio?.mine({ x: house.anchor.position.x, z: house.anchor.position.z });
     }
+  }
+
+  private onCryptaDamage(amount: number, anchor: TransformNode) {
+    this.cryptaDamageSinceFeedback += Math.max(0, amount);
+    if (this.cryptaDamageSinceFeedback < CRYPTA_DAMAGE_FEEDBACK_STEP) return;
+    const now = performance.now();
+    if (now < this.cryptaFeedbackReadyAt) return;
+    this.cryptaDamageSinceFeedback = 0;
+    this.cryptaFeedbackReadyAt = now + CRYPTA_DAMAGE_FEEDBACK_COOLDOWN_MS;
+    const visible = this.isWorldPointInGameView(new Vector3(anchor.position.x, 2, anchor.position.z));
+    this.damageFx?.shakeOnly(0.72);
+    if (!visible) this.damageFx?.whiteAlert();
+  }
+
+  private isWorldPointInGameView(point: Vector3): boolean {
+    const scene = this.camera.getScene();
+    const engine = scene.getEngine();
+    const rw = engine.getRenderWidth();
+    const rh = engine.getRenderHeight();
+    if (rw <= 0 || rh <= 0) return false;
+    const viewport = this.camera.viewport.toGlobal(rw, rh);
+    const screen = Vector3.Project(point, Matrix.IdentityReadOnly, scene.getTransformMatrix(), viewport);
+    return screen.z >= 0 && screen.z <= 1 && screen.x >= 0 && screen.x <= rw && screen.y >= 0 && screen.y <= rh;
   }
 
   onKill(ev: KillEvent) {
