@@ -51,10 +51,18 @@ the client read its own server-signed save off the relays to preview it on the s
 
 ---
 
-## 2. Progress saves — kind 30078, server-signed
+## 2. Progress saves + realm player updates — kind 30078, server-signed
 
 Player progress is **server-authoritative and server-owned**: the server signs each
 Nostr player's save with its own key, so one author holds every player's save.
+
+The server publishes two replaceable event addresses from the same player snapshot:
+
+1. **Latest player save** — one latest event per player, used for login recovery.
+2. **Realm-scoped player update** — one latest event per player per realm, used by
+   external apps to track that player's state during a specific realm.
+
+### Latest player save
 
 | | |
 | --- | --- |
@@ -62,13 +70,98 @@ Nostr player's save with its own key, so one author holds every player's save.
 | `pubkey` (author) | the **server's** pubkey |
 | `d` tag | `gorilator-save-v1:<player-pubkey>` (`saveDTag(playerPubkey)`) |
 | `p` tag | the player's pubkey (queryable) |
-| `content` | a `PlayerSave` JSON (`v, level, xp, hp, maxHp, stamina, …, inventory, ts`) |
+| `content` | a `PlayerSave` JSON (schema below) |
 
-- **Written** on level-up, death, and logout (coalesced; best-effort across relays
-  with a timeout).
+### Realm-scoped player update
+
+| | |
+| --- | --- |
+| `kind` | `30078` (`NOSTR_SAVE_KIND`) — parameterized-replaceable |
+| `pubkey` (author) | the **server's** pubkey |
+| `d` tag | `gorilator-player-realm-v1:<realm-id>:<player-pubkey>` (`playerRealmDTag(playerPubkey, realmId)`) |
+| `p` tag | the player's pubkey (queryable) |
+| `realm` tag | the current realm id |
+| `reason` tag | `level-up`, `death`, or `logout` |
+| `content` | the same `PlayerSave` JSON, plus `playerPubkey`, `realm: { id, startedAt, wave }`, `reason`, and `ts` |
+
+### `PlayerSave` content format
+
+The event `content` is a JSON object. Numeric gameplay fields are numbers; timestamps
+are Unix epoch milliseconds.
+
+```ts
+type SaveReason = "level-up" | "death" | "logout";
+type ItemType = "log" | "potion" | "stone" | "banana" | "berserker_potion";
+
+interface PlayerSave {
+  v: 1;
+  playerPubkey?: string;       // hex pubkey; present on newly published saves
+  realm?: {
+    id: string;                // current realm id
+    startedAt: number;         // epoch ms
+    wave: number;              // peak/current wave when saved
+  };
+  reason?: SaveReason;
+
+  level: number;
+  xp: number;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  x: number;
+  z: number;
+  rotY: number;
+  attack: number;
+  armor: number;
+  critChance: number;          // 0..1
+  moveSpeed: number;
+  throwPower: number;
+  hue: number;
+
+  inventory: InventorySlot[];  // exactly 50 slots: 10 columns x 5 rows
+  ts: number;                  // save time, epoch ms
+}
+
+interface InventorySlot {
+  type: ItemType | "";         // "" means empty slot
+  count: number;               // integer 0..99
+}
+```
+
+`inventory` is ordered by slot index in row-major order:
+
+- slot `0` is row 0, column 0; slot `9` is row 0, column 9; slot `10` starts row 1.
+- Empty slots are always `{ "type": "", "count": 0 }`.
+- Non-empty slots must have a valid `ItemType` and `count >= 1`.
+- The server sanitizes loaded saves to exactly 50 slots and clamps stack counts to
+  `MAX_STACK` (`99`).
+
+Example:
+
+```json
+{
+  "inventory": [
+    { "type": "log", "count": 12 },
+    { "type": "potion", "count": 2 },
+    { "type": "berserker_potion", "count": 1 },
+    { "type": "", "count": 0 }
+  ]
+}
+```
+
+The real save always contains 50 inventory entries; the example is shortened for
+readability.
+
+- **Written** on level-up, death, and logout (serialized per player; best-effort
+  across relays with a timeout).
 - **Read** on join: the server fetches the latest save for your pubkey and recovers
   your character — so your gorilla persists across sessions and even across servers
   that share the relays.
+- **Track outside the game:** discover the server's live realm from the
+  `gorilator-server` event or `/api/status`, then subscribe to player updates with
+  filters like `{ kinds: [30078], authors: [serverPubkey], "#realm": [realmId] }`
+  or for one player `{ "#p": [playerPubkey], "#realm": [realmId] }`.
 
 Relays: `relay.damus.io`, `nos.lol`, `relay.nostr.band`, `relay.primal.net`.
 
@@ -108,4 +201,5 @@ A **realm** = one game (first live defender → La Crypta falls / room empties).
 | `22242` | the player | NIP-42 client-auth (login challenge) |
 | `0` | the player | metadata (name/avatar/nip05), optional |
 | `30078` · d=`gorilator-save-v1:<pk>` | the server | per-player progress save |
+| `30078` · d=`gorilator-player-realm-v1:<realm-id>:<pk>` | the server | per-player update for one realm |
 | `30078` · d=`gorilator-server` | the server | server + realm discovery/status |

@@ -17,11 +17,18 @@ export const NOSTR_TAKEOVER_CODE = 4001;
  *  Recovered on login; re-published on level-up / death / logout. */
 export const NOSTR_SAVE_KIND = 30078;
 export const NOSTR_SAVE_D = "gorilator-save-v1";
+export const NOSTR_PLAYER_REALM_D = "gorilator-player-realm-v1";
 
 /** The `d` (identifier) tag for a player's save event: the base id plus the
  *  player's hex pubkey, so the server's single key stores one replaceable save
  *  per player. Client + server must agree, hence it lives in shared. */
 export const saveDTag = (pubkey: string): string => `${NOSTR_SAVE_D}:${pubkey}`;
+
+/** Realm-scoped player data event. This lets external Nostr consumers track the
+ *  latest server-authored state for one player inside one realm, without a later
+ *  realm overwriting that realm's final player snapshot. */
+export const playerRealmDTag = (playerPubkey: string, realmId: string): string =>
+  `${NOSTR_PLAYER_REALM_D}:${realmId}:${playerPubkey}`;
 
 // Movement
 export const MOVE_SPEED = 4.5; // world units / second
