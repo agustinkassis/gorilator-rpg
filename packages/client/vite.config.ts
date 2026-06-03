@@ -241,7 +241,7 @@ function incomingGitCommitRefs(root: string, targetBranch: string, current: stri
   if (current === targetBranch) return [];
   const base = pendingBaseRef(root, targetBranch);
   if (!base) return [];
-  const raw = captureGit(["log", "--cherry-pick", "--left-only", "--no-merges", "--pretty=format:%H", `${base}...HEAD`], root);
+  const raw = captureGit(["log", "--cherry-pick", "--left-only", "--reverse", "--pretty=format:%H", `${base}...HEAD`], root);
   if (!raw) return [];
   return raw.split("\n").filter(Boolean);
 }
@@ -268,14 +268,12 @@ function pendingGitCommits(root: string, targetBranch: string, current: string):
     .filter((commit) => commit.hash && commit.subject);
 }
 
-function mergeTreeConflictReason(root: string, commit: string): string {
-  const parent = captureGit(["rev-parse", `${commit}^`], root);
-  if (!parent) return "Merge commit";
+function mergeConflictReason(root: string, commit: string): string {
   try {
-    execFileSync("git", ["merge-tree", "--write-tree", "--merge-base", parent, "HEAD", commit], { cwd: root, encoding: "utf8" });
+    execFileSync("git", ["merge-tree", "--write-tree", "HEAD", commit], { cwd: root, encoding: "utf8" });
     return "";
   } catch (err) {
-    const out = String((err as { stdout?: unknown }).stdout ?? "");
+    const out = `${String((err as { stdout?: unknown }).stdout ?? "")}\n${String((err as { stderr?: unknown }).stderr ?? "")}`;
     const paths = Array.from(
       new Set(
         out
@@ -291,16 +289,17 @@ function mergeTreeConflictReason(root: string, commit: string): string {
 }
 
 function incomingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
-  const refs = incomingGitCommitRefs(root, targetBranch, current).slice(0, 20);
-  return refs
-    .map((ref) => {
-      const raw = captureGit(["show", "-s", "--pretty=format:%h%x1f%s%x1f%cr", ref], root);
-      if (!raw) return null;
-      const [hash = "", subject = "", age = ""] = raw.split("\x1f");
-      const conflictReason = mergeTreeConflictReason(root, ref);
-      return { hash, subject, age, conflict: Boolean(conflictReason), conflictReason };
-    })
-    .filter((commit): commit is WorktreeCommit => Boolean(commit?.hash && commit.subject));
+  const commits: WorktreeCommit[] = [];
+  for (const ref of incomingGitCommitRefs(root, targetBranch, current)) {
+    if (mergeConflictReason(root, ref)) continue;
+    const raw = captureGit(["show", "-s", "--pretty=format:%h%x1f%s%x1f%cr", ref], root);
+    if (!raw) continue;
+    const [hash = "", subject = "", age = ""] = raw.split("\x1f");
+    if (!hash || !subject) continue;
+    commits.push({ hash, subject, age });
+    if (commits.length >= 20) break;
+  }
+  return commits;
 }
 
 function gitStatusLabel(status: string): string {
@@ -420,6 +419,20 @@ function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown
   return resolved;
 }
 
+function targetIncomingCommitRef(root: string, targetBranch: string, current: string, rawCommit: unknown): string {
+  const commit = String(rawCommit ?? "").trim();
+  if (!commit) throw new Error("Missing target commit to merge");
+  if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new Error("Invalid target commit");
+  const resolved = gitCommitRef(root, commit);
+  if (!resolved) throw new Error(`Target commit ${commit} was not found`);
+  if (!incomingGitCommitRefs(root, targetBranch, current).includes(resolved)) {
+    throw new Error(`Target commit ${commit} is not pending for ${current}`);
+  }
+  const conflictReason = mergeConflictReason(root, resolved);
+  if (conflictReason) throw new Error(`Cannot merge target history through ${commit}: ${conflictReason}`);
+  return resolved;
+}
+
 function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): WorktreeInfo {
   const targetBranch = readTargetBranch(root);
   const current = currentBranch(root);
@@ -448,13 +461,18 @@ function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): Worktree
   return worktreeInfo();
 }
 
-function mergeTargetIntoCurrentBranch(root: string): WorktreeInfo {
+function mergeTargetIntoCurrentBranch(root: string, rawCommit?: unknown): WorktreeInfo {
   const targetBranch = readTargetBranch(root);
   const current = currentBranch(root);
   if (!current) throw new Error("Could not resolve current branch");
   if (current === targetBranch) return worktreeInfo();
   if (!gitCommitRef(root, current)) throw new Error(`Current branch ${current} was not found`);
   ensureLocalTargetBranch(root, targetBranch);
+  const hasCommit = rawCommit !== undefined && rawCommit !== null && String(rawCommit).trim() !== "";
+  const source = hasCommit ? targetIncomingCommitRef(root, targetBranch, current, rawCommit) : targetBranch;
+  const sourceLabel = hasCommit ? String(rawCommit).trim() : targetBranch;
+  const conflictReason = mergeConflictReason(root, source);
+  if (conflictReason) throw new Error(`Cannot merge ${sourceLabel} into ${current}: ${conflictReason}`);
 
   const attachedBranch = captureGit(["branch", "--show-current"], root);
   const before = captureGit(["rev-parse", "HEAD"], root);
@@ -470,7 +488,7 @@ function mergeTargetIntoCurrentBranch(root: string): WorktreeInfo {
   }
 
   try {
-    execFileSync("git", ["merge", "--no-edit", targetBranch], { cwd: root, encoding: "utf8" });
+    execFileSync("git", ["merge", "--no-edit", source], { cwd: root, encoding: "utf8" });
   } catch (err) {
     try {
       execFileSync("git", ["merge", "--abort"], { cwd: root, encoding: "utf8" });
@@ -1399,7 +1417,7 @@ function perfLogs(): Plugin {
  *   GET  /__worktree       → current label/name/path metadata
  *   POST /__worktree {name,targetBranch} → set name/target branch
  *   POST /__worktree/merge {commit} → cherry-pick one pending commit into targetBranch
- *   POST /__worktree/target-merge → merge targetBranch into the current branch
+ *   POST /__worktree/target-merge {commit?} → merge targetBranch or target history point into current branch
  */
 function worktreeTagger(): Plugin {
   return {
@@ -1443,18 +1461,21 @@ function worktreeTagger(): Plugin {
       });
 
       server.middlewares.use("/__worktree/bring", (_req, res) => {
-        fail(res, 410, "Per-commit cherry-pick is disabled. Use Bring Target to merge the target branch.");
+        fail(res, 410, "Per-commit cherry-pick is disabled. Use target merge to merge target history.");
       });
 
       server.middlewares.use("/__worktree/target-merge", (req, res) => {
         const info = worktreeInfo();
         if (!info.root) return fail(res, 404, "not a git worktree");
         if (req.method !== "POST") return fail(res, 405, "POST only");
-        try {
-          sendJson(res, { ok: true, ...mergeTargetIntoCurrentBranch(info.root) });
-        } catch (e) {
-          fail(res, 409, String(e));
-        }
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { commit?: unknown };
+            sendJson(res, { ok: true, ...mergeTargetIntoCurrentBranch(info.root, body.commit) });
+          } catch (e) {
+            fail(res, 409, String(e));
+          }
+        });
       });
 
       server.middlewares.use("/__worktree", (req, res) => {

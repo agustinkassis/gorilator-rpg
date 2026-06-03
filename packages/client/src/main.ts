@@ -93,6 +93,7 @@ let worktreeMeta: Partial<WorktreeMeta> = {};
 let worktreePanelOpen = false;
 let worktreeChangesOpen = false;
 let worktreeMergePreviewIndex: number | null = null;
+let worktreeIncomingMergePreviewIndex: number | null = null;
 let worktreeMergeBusy = false;
 let worktreeMergeMessage = "";
 let jsonEditorPath = "";
@@ -103,6 +104,9 @@ let jsonEditorRenderTimer: number | undefined;
 
 function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   if (!worktreeEl) return;
+  if (meta.incomingCommits && worktreeIncomingMergePreviewIndex !== null && worktreeIncomingMergePreviewIndex >= meta.incomingCommits.length) {
+    worktreeIncomingMergePreviewIndex = null;
+  }
   worktreeMeta = {
     ...worktreeMeta,
     ...meta,
@@ -191,8 +195,17 @@ async function mergeWorktreeIntoTarget(commit: string): Promise<WorktreeMeta> {
   return (await res.json()) as WorktreeMeta;
 }
 
-async function mergeTargetIntoWorktree(): Promise<WorktreeMeta> {
-  const res = await fetch("/__worktree/target-merge", { method: "POST" });
+async function mergeTargetIntoWorktree(commit?: string): Promise<WorktreeMeta> {
+  const res = await fetch(
+    "/__worktree/target-merge",
+    commit
+      ? {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ commit }),
+        }
+      : { method: "POST" },
+  );
   if (!res.ok) throw new Error(await res.text());
   return (await res.json()) as WorktreeMeta;
 }
@@ -232,6 +245,18 @@ function setWorktreeMergePreview(index: number | null) {
     const selected = index !== null && Number.isFinite(rowIndex) && rowIndex === index;
     row.classList.toggle("mergePreview", selected);
     row.classList.toggle("mergeHover", selected);
+  }
+}
+
+function setWorktreeIncomingMergePreview(index: number | null) {
+  worktreeIncomingMergePreviewIndex = index;
+  const rows = worktreePanelEl?.querySelectorAll<HTMLElement>(".wtIncomingRow") ?? [];
+  for (const row of rows) {
+    const rowIndex = Number(row.dataset.mergeIndex);
+    const selected = index !== null && Number.isFinite(rowIndex) && rowIndex <= index;
+    const hovered = selected && rowIndex === index;
+    row.classList.toggle("mergePreview", selected);
+    row.classList.toggle("mergeHover", hovered);
   }
 }
 
@@ -621,24 +646,61 @@ function renderWorktreePanel() {
   );
   incomingSection.append(
     incomingHead,
-    createWorktreeNode("div", "wtSectionMeta", `Target commits not yet in ${branch}`),
+    createWorktreeNode("div", "wtSectionMeta", `Merge target history into ${branch}; newer rows include older commits.`),
   );
   if (!incomingCommits.length) {
-    incomingSection.append(createWorktreeNode("div", "wtEmpty", `No target commits to bring from ${targetBranch}.`));
+    incomingSection.append(createWorktreeNode("div", "wtEmpty", `No conflict-free target commits to merge from ${targetBranch}.`));
   } else {
-    for (const commit of incomingCommits) {
-      const row = createWorktreeNode("div", commit.conflict ? "wtCommitRow wtIncomingRow conflict" : "wtCommitRow wtIncomingRow");
+    incomingCommits.forEach((commit, index) => {
+      const previewed = worktreeIncomingMergePreviewIndex !== null && index <= worktreeIncomingMergePreviewIndex;
+      const hovered = worktreeIncomingMergePreviewIndex === index;
+      const row = createWorktreeNode(
+        "div",
+        `${previewed ? "wtCommitRow wtIncomingRow mergePreview" : "wtCommitRow wtIncomingRow"}${hovered ? " mergeHover" : ""}`,
+      );
+      row.dataset.mergeIndex = String(index);
       row.append(
         createWorktreeNode("span", "wtCommitHash", commit.hash),
         createWorktreeNode("span", "wtCommitSubject", commit.subject),
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
 
-      const badge = createWorktreeNode("span", commit.conflict ? "wtIncomingBadge conflict" : "wtIncomingBadge", commit.conflict ? "Conflict" : "Clean");
-      badge.title = commit.conflict ? commit.conflictReason || "This commit has conflicts" : "Use Bring Target to merge target changes";
-      row.append(badge);
+      const mergeBtn = createWorktreeNode("button", "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
+      mergeBtn.type = "button";
+      mergeBtn.title = `Merge ${targetBranch} history through ${commit.hash} into ${branch}`;
+      mergeBtn.disabled = worktreeMergeBusy;
+      mergeBtn.addEventListener("mouseenter", () => {
+        setWorktreeIncomingMergePreview(index);
+      });
+      mergeBtn.addEventListener("mouseleave", () => {
+        setWorktreeIncomingMergePreview(null);
+      });
+      mergeBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        worktreeMergeBusy = true;
+        worktreeMergeMessage = `Merging ${targetBranch} through ${commit.hash} into ${branch}...`;
+        renderWorktreePanel();
+        void mergeTargetIntoWorktree(commit.hash)
+          .then((meta) => {
+            worktreeIncomingMergePreviewIndex = null;
+            worktreeMergeMessage = `Merged ${meta.targetBranch || targetBranch} through ${commit.hash} into ${meta.branch || branch}`;
+            setWorktreeMeta(meta);
+          })
+          .catch((err) => {
+            worktreeMergeMessage = err instanceof Error ? err.message : "Target merge failed";
+            renderWorktreePanel();
+          })
+          .finally(() => {
+            worktreeMergeBusy = false;
+            renderWorktreePanel();
+          });
+      });
+      const mergeLabel = createWorktreeNode("span", "wtMergeLabel", "Merge");
+      const action = createWorktreeNode("span", "wtMergeAction wtIncomingAction");
+      action.append(mergeBtn, mergeLabel);
+      row.append(action);
       incomingSection.append(row);
-    }
+    });
   }
 
   const commitsSection = createWorktreeNode("div", "wtCommits");
