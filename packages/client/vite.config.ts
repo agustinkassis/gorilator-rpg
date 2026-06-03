@@ -40,6 +40,8 @@ interface WorktreeCommit {
   hash: string;
   subject: string;
   age: string;
+  conflict?: boolean;
+  conflictReason?: string;
 }
 
 interface WorktreeChange {
@@ -65,6 +67,7 @@ interface WorktreeInfo {
   isMain: boolean;
   isLinked: boolean;
   pendingCommits: WorktreeCommit[];
+  incomingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
   changes: WorktreeChange[];
 }
@@ -89,6 +92,7 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   isMain: false,
   isLinked: false,
   pendingCommits: [],
+  incomingCommits: [],
   commits: [],
   changes: [],
 });
@@ -233,6 +237,15 @@ function pendingGitCommitRefs(root: string, targetBranch: string): string[] {
   return raw.split("\n").filter(Boolean);
 }
 
+function incomingGitCommitRefs(root: string, targetBranch: string, current: string): string[] {
+  if (current === targetBranch) return [];
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) return [];
+  const raw = captureGit(["log", "--cherry-pick", "--left-only", "--no-merges", "--pretty=format:%H", `${base}...HEAD`], root);
+  if (!raw) return [];
+  return raw.split("\n").filter(Boolean);
+}
+
 function pendingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
   if (current === targetBranch) return [];
   const base = pendingBaseRef(root, targetBranch);
@@ -253,6 +266,41 @@ function pendingGitCommits(root: string, targetBranch: string, current: string):
       return { hash, subject, age };
     })
     .filter((commit) => commit.hash && commit.subject);
+}
+
+function mergeTreeConflictReason(root: string, commit: string): string {
+  const parent = captureGit(["rev-parse", `${commit}^`], root);
+  if (!parent) return "Merge commit";
+  try {
+    execFileSync("git", ["merge-tree", "--write-tree", "--merge-base", parent, "HEAD", commit], { cwd: root, encoding: "utf8" });
+    return "";
+  } catch (err) {
+    const out = String((err as { stdout?: unknown }).stdout ?? "");
+    const paths = Array.from(
+      new Set(
+        out
+          .split("\n")
+          .map((line) => line.match(/^[0-9]{6} [0-9a-f]{40} [123]\t(.+)$/)?.[1])
+          .filter((path): path is string => Boolean(path)),
+      ),
+    );
+    if (!paths.length) return "Conflict";
+    const shown = paths.slice(0, 3).join(", ");
+    return paths.length > 3 ? `Conflicts: ${shown}, ...` : `Conflicts: ${shown}`;
+  }
+}
+
+function incomingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
+  const refs = incomingGitCommitRefs(root, targetBranch, current).slice(0, 20);
+  return refs
+    .map((ref) => {
+      const raw = captureGit(["show", "-s", "--pretty=format:%h%x1f%s%x1f%cr", ref], root);
+      if (!raw) return null;
+      const [hash = "", subject = "", age = ""] = raw.split("\x1f");
+      const conflictReason = mergeTreeConflictReason(root, ref);
+      return { hash, subject, age, conflict: Boolean(conflictReason), conflictReason };
+    })
+    .filter((commit): commit is WorktreeCommit => Boolean(commit?.hash && commit.subject));
 }
 
 function gitStatusLabel(status: string): string {
@@ -372,6 +420,21 @@ function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown
   return resolved;
 }
 
+function incomingTargetCommitRef(root: string, targetBranch: string, current: string, rawCommit: unknown): string {
+  const commit = String(rawCommit ?? "").trim();
+  if (!commit) throw new Error("Missing commit to bring");
+  if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new Error("Invalid commit");
+  const resolved = gitCommitRef(root, commit);
+  if (!resolved) throw new Error(`Commit ${commit} was not found`);
+  if (!pendingBaseRef(root, targetBranch)) throw new Error(`Target branch ${targetBranch} was not found`);
+  if (!incomingGitCommitRefs(root, targetBranch, current).includes(resolved)) {
+    throw new Error(`Commit ${commit} is not pending from ${targetBranch}`);
+  }
+  const conflictReason = mergeTreeConflictReason(root, resolved);
+  if (conflictReason) throw new Error(`Commit ${commit} has conflicts. ${conflictReason}`);
+  return resolved;
+}
+
 function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): WorktreeInfo {
   const targetBranch = readTargetBranch(root);
   const current = currentBranch(root);
@@ -397,6 +460,48 @@ function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): Worktree
       }
     }
   }
+  return worktreeInfo();
+}
+
+function bringTargetCommitIntoCurrentBranch(root: string, rawCommit: unknown): WorktreeInfo {
+  const targetBranch = readTargetBranch(root);
+  const current = currentBranch(root);
+  if (!current) throw new Error("Could not resolve current branch");
+  if (current === targetBranch) return worktreeInfo();
+  if (!gitCommitRef(root, current)) throw new Error(`Current branch ${current} was not found`);
+  ensureLocalTargetBranch(root, targetBranch);
+
+  const source = incomingTargetCommitRef(root, targetBranch, current, rawCommit);
+  const attachedBranch = captureGit(["branch", "--show-current"], root);
+  const before = captureGit(["rev-parse", "HEAD"], root);
+  if (!before) throw new Error("Could not resolve current HEAD");
+
+  if (!attachedBranch) {
+    const branchHead = gitCommitRef(root, current);
+    if (branchHead !== before) throw new Error(`Detached HEAD does not match ${current}; checkout the branch before merging`);
+    const activePath = worktreePathForBranch(root, current);
+    if (activePath && resolve(activePath) !== resolve(root)) {
+      throw new Error(`Current branch ${current} is checked out at ${activePath}`);
+    }
+  }
+
+  try {
+    execFileSync("git", ["cherry-pick", source], { cwd: root, encoding: "utf8" });
+  } catch (err) {
+    try {
+      execFileSync("git", ["cherry-pick", "--abort"], { cwd: root, encoding: "utf8" });
+    } catch {
+      // The pick may have failed before Git entered a cherry-pick state.
+    }
+    throw err;
+  }
+
+  if (!attachedBranch) {
+    const after = captureGit(["rev-parse", "HEAD"], root);
+    if (!after) throw new Error("Could not resolve merged HEAD");
+    if (after !== before) execFileSync("git", ["update-ref", `refs/heads/${current}`, after, before], { cwd: root, encoding: "utf8" });
+  }
+
   return worktreeInfo();
 }
 
@@ -476,6 +581,7 @@ function formatWorktreeInfo(
     isMain,
     isLinked,
     pendingCommits: pendingGitCommits(root, targetBranch, branch),
+    incomingCommits: incomingGitCommits(root, targetBranch, branch),
     commits: recentGitCommits(root),
     changes: currentGitChanges(root),
   };
@@ -1350,6 +1456,7 @@ function perfLogs(): Plugin {
  *   GET  /__worktree       → current label/name/path metadata
  *   POST /__worktree {name,targetBranch} → set name/target branch
  *   POST /__worktree/merge {commit} → cherry-pick one pending commit into targetBranch
+ *   POST /__worktree/bring {commit} → cherry-pick one targetBranch commit into the current branch
  *   POST /__worktree/target-merge → merge targetBranch into the current branch
  */
 function worktreeTagger(): Plugin {
@@ -1387,6 +1494,20 @@ function worktreeTagger(): Plugin {
           try {
             const body = JSON.parse(buf.toString("utf8") || "{}") as { commit?: unknown };
             sendJson(res, { ok: true, ...mergeCommitIntoTargetBranch(info.root, body.commit) });
+          } catch (e) {
+            fail(res, 409, String(e));
+          }
+        });
+      });
+
+      server.middlewares.use("/__worktree/bring", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { commit?: unknown };
+            sendJson(res, { ok: true, ...bringTargetCommitIntoCurrentBranch(info.root, body.commit) });
           } catch (e) {
             fail(res, 409, String(e));
           }

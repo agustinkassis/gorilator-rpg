@@ -55,6 +55,8 @@ interface WorktreeCommit {
   hash: string;
   subject: string;
   age: string;
+  conflict?: boolean;
+  conflictReason?: string;
 }
 interface WorktreeChange {
   status: string;
@@ -78,6 +80,7 @@ interface WorktreeMeta {
   isMain: boolean;
   isLinked: boolean;
   pendingCommits: WorktreeCommit[];
+  incomingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
   changes: WorktreeChange[];
 }
@@ -104,6 +107,7 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
     ...worktreeMeta,
     ...meta,
     pendingCommits: meta.pendingCommits ?? worktreeMeta.pendingCommits ?? [],
+    incomingCommits: meta.incomingCommits ?? worktreeMeta.incomingCommits ?? [],
     commits: meta.commits ?? worktreeMeta.commits ?? [],
     changes: meta.changes ?? worktreeMeta.changes ?? [],
     branches: meta.branches ?? worktreeMeta.branches ?? [],
@@ -189,6 +193,16 @@ async function mergeWorktreeIntoTarget(commit: string): Promise<WorktreeMeta> {
 
 async function mergeTargetIntoWorktree(): Promise<WorktreeMeta> {
   const res = await fetch("/__worktree/target-merge", { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeMeta;
+}
+
+async function bringTargetCommitIntoWorktree(commit: string): Promise<WorktreeMeta> {
+  const res = await fetch("/__worktree/bring", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commit }),
+  });
   if (!res.ok) throw new Error(await res.text());
   return (await res.json()) as WorktreeMeta;
 }
@@ -400,6 +414,7 @@ function renderWorktreePanel() {
   if (!worktreePanelEl || !worktreeEl) return;
   const label = worktreeMeta.label ?? "";
   const pendingCommits = worktreeMeta.pendingCommits ?? [];
+  const incomingCommits = worktreeMeta.incomingCommits ?? [];
   const commits = worktreeMeta.commits ?? [];
   const changes = worktreeMeta.changes ?? [];
   const branch = worktreeMeta.branch || "detached";
@@ -601,6 +616,64 @@ function renderWorktreePanel() {
     }
   }
 
+  const incomingSection = createWorktreeNode("div", "wtIncoming");
+  const incomingHead = createWorktreeNode("div", "wtSectionLine");
+  incomingHead.append(
+    createWorktreeNode("span", "wtSectionTitle", `From ${targetBranch}`),
+    createWorktreeNode(
+      "span",
+      incomingCommits.length ? "wtSectionPill dirty" : "wtSectionPill",
+      `${incomingCommits.length} commit${incomingCommits.length === 1 ? "" : "s"}`,
+    ),
+  );
+  incomingSection.append(
+    incomingHead,
+    createWorktreeNode("div", "wtSectionMeta", `Target commits not yet in ${branch}`),
+  );
+  if (!incomingCommits.length) {
+    incomingSection.append(createWorktreeNode("div", "wtEmpty", `No target commits to bring from ${targetBranch}.`));
+  } else {
+    for (const commit of incomingCommits) {
+      const row = createWorktreeNode("div", commit.conflict ? "wtCommitRow wtIncomingRow conflict" : "wtCommitRow wtIncomingRow");
+      row.append(
+        createWorktreeNode("span", "wtCommitHash", commit.hash),
+        createWorktreeNode("span", "wtCommitSubject", commit.subject),
+        createWorktreeNode("span", "wtCommitAge", commit.age),
+      );
+
+      const bringBtn = createWorktreeNode("button", "wtBringCommitBtn", commit.conflict ? "Conflict" : worktreeMergeBusy ? "Working" : "Bring");
+      bringBtn.type = "button";
+      bringBtn.disabled = worktreeMergeBusy || Boolean(commit.conflict);
+      bringBtn.title = commit.conflict
+        ? commit.conflictReason || "This commit has conflicts"
+        : `Bring ${commit.hash} from ${targetBranch} into ${branch}`;
+      bringBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (commit.conflict) return;
+        worktreeMergeBusy = true;
+        worktreeMergeMessage = `Bringing ${commit.hash} from ${targetBranch} into ${branch}...`;
+        renderWorktreePanel();
+        void bringTargetCommitIntoWorktree(commit.hash)
+          .then((meta) => {
+            worktreeMergeMessage = `Brought ${commit.hash} into ${meta.branch || branch}`;
+            setWorktreeMeta(meta);
+          })
+          .catch((err) => {
+            worktreeMergeMessage = err instanceof Error ? err.message : "Bring commit failed";
+            renderWorktreePanel();
+          })
+          .finally(() => {
+            worktreeMergeBusy = false;
+            renderWorktreePanel();
+          });
+      });
+      const action = createWorktreeNode("span", "wtBringCommitAction");
+      action.append(bringBtn);
+      row.append(action);
+      incomingSection.append(row);
+    }
+  }
+
   const commitsSection = createWorktreeNode("div", "wtCommits");
   commitsSection.append(createWorktreeNode("div", "wtSectionTitle", "Recent commits"));
   if (!commits.length) {
@@ -617,7 +690,7 @@ function renderWorktreePanel() {
     }
   }
 
-  worktreePanelEl.append(head, branchBar, pendingSection, changesBtn, changesList, commitsSection);
+  worktreePanelEl.append(head, branchBar, pendingSection, changesBtn, changesList, incomingSection, commitsSection);
   worktreePanelEl.hidden = !worktreePanelOpen;
 }
 

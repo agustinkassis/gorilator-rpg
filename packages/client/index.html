@@ -802,10 +802,12 @@
       }
       #worktreePanel .wtChangesList,
       #worktreePanel .wtPending,
+      #worktreePanel .wtIncoming,
       #worktreePanel .wtCommits {
         margin-top: 9px;
       }
-      #worktreePanel .wtPending {
+      #worktreePanel .wtPending,
+      #worktreePanel .wtIncoming {
         padding-top: 10px;
         border-top: 1px solid rgba(255, 212, 121, 0.16);
       }
@@ -839,8 +841,14 @@
       #worktreePanel .wtPendingRow {
         grid-template-columns: auto minmax(0, 1fr) auto auto;
       }
+      #worktreePanel .wtIncomingRow {
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
+      }
       #worktreePanel .wtPendingRow.mergePreview {
         background: rgba(255, 236, 190, 0.18);
+      }
+      #worktreePanel .wtIncomingRow.conflict {
+        opacity: 0.72;
       }
       #worktreePanel .wtChangeStatus,
       #worktreePanel .wtCommitHash {
@@ -897,6 +905,37 @@
       #worktreePanel .wtMergeBtn:disabled {
         opacity: 0.55;
         cursor: progress;
+      }
+      #worktreePanel .wtBringCommitAction {
+        width: 72px;
+        height: 23px;
+        display: grid;
+      }
+      #worktreePanel .wtBringCommitBtn {
+        box-sizing: border-box;
+        width: 72px;
+        height: 23px;
+        border: 1px solid rgba(139, 240, 170, 0.38);
+        border-radius: 5px;
+        background: rgba(84, 217, 140, 0.1);
+        color: #bff8ca;
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+      }
+      #worktreePanel .wtBringCommitBtn:hover,
+      #worktreePanel .wtBringCommitBtn:focus-visible {
+        border-color: rgba(139, 240, 170, 0.86);
+        background: rgba(84, 217, 140, 0.18);
+        outline: none;
+      }
+      #worktreePanel .wtBringCommitBtn:disabled {
+        opacity: 0.58;
+        cursor: not-allowed;
+      }
+      #worktreePanel .wtIncomingRow.conflict .wtBringCommitBtn {
+        border-color: rgba(255, 106, 77, 0.36);
+        background: rgba(255, 106, 77, 0.09);
+        color: #ffad7a;
       }
       #worktreePanel .wtMergeStatus {
         margin-top: 8px;
