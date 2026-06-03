@@ -3,14 +3,22 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { cloneOrUpdate, ensurePnpm, installAndBuild } from "../lib/build.js";
 import { startTunnelService, stopTunnelService } from "../lib/cloudflare.js";
 import { loadConfig } from "../lib/config.js";
+import type { RuntimeContext } from "../lib/context.js";
 import { generateNsec, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import { waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
+import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
+import { updateProjectDev } from "../lib/projectDev.js";
 import { isRoot, run } from "../lib/proc.js";
 import { startService, stopService } from "../lib/service.js";
 
-export async function update(): Promise<void> {
+export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void> {
+  if (ctx?.kind === "project") {
+    if (!opts) log.die("Internal error: project update requires resolved options.");
+    await updateProjectDev(ctx, opts);
+    return;
+  }
   const cfg = loadConfig();
   if (!cfg) log.die("No install record found — run 'gorilator install' first.");
   log.info(`Updating ${cfg.appDir} (${cfg.ref})…`);

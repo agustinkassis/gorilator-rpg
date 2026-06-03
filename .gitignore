@@ -25,3 +25,6 @@ packages/client/public/models/characters/
 
 # Local agent/tooling state (not for the public repo)
 .claude/
+
+# Local Gorilator CLI project settings, process state, and logs
+.gorilator/

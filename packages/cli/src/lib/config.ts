@@ -23,8 +23,8 @@ export interface InstallConfig {
   serverHost?: string;
 }
 
-export function loadConfig(): InstallConfig | null {
-  const candidates = [configPath(), join(homedir(), ".gorilator", "config.json")];
+export function loadConfig(path?: string): InstallConfig | null {
+  const candidates = path ? [path] : [configPath(), join(homedir(), ".gorilator", "config.json")];
   for (const p of candidates) {
     if (!existsSync(p)) continue;
     try {
@@ -36,15 +36,18 @@ export function loadConfig(): InstallConfig | null {
   return null;
 }
 
-export function saveConfig(cfg: InstallConfig): void {
-  writeFileMaybeSudo(configPath(), JSON.stringify(cfg, null, 2) + "\n", 0o644);
+export function saveConfig(cfg: InstallConfig, path = configPath()): void {
+  writeFileMaybeSudo(path, JSON.stringify(cfg, null, 2) + "\n", 0o644);
 }
 
 /** Merge a patch into the existing install record (or create it). */
-export function updateConfig(patch: Partial<InstallConfig>): InstallConfig | null {
-  const cur = loadConfig();
+export function updateConfig(
+  patch: Partial<InstallConfig>,
+  path?: string,
+): InstallConfig | null {
+  const cur = loadConfig(path);
   if (!cur) return null;
   const next = { ...cur, ...patch };
-  saveConfig(next);
+  saveConfig(next, path);
   return next;
 }

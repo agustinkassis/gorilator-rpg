@@ -1,8 +1,17 @@
 // `gorilator start|stop|restart|status|logs` — drive the OS service.
 import { loadConfig } from "../lib/config.js";
+import type { RuntimeContext } from "../lib/context.js";
 import { probeHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
+import type { Options } from "../lib/options.js";
 import { defaultAppDir } from "../lib/paths.js";
+import {
+  logsProjectDev,
+  printProjectStatus,
+  restartProjectDev,
+  startProjectDev,
+  stopProjectDev,
+} from "../lib/projectDev.js";
 import {
   logsService,
   manager,
@@ -13,15 +22,11 @@ import {
 } from "../lib/service.js";
 import { printPackageVersions, printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
 
-export interface LogsFlags {
-  lines?: string;
-  follow?: boolean;
-  "no-follow"?: boolean;
-  filter?: string;
-  since?: string;
-}
-
-export function startCmd(): void {
+export async function startCmd(ctx?: RuntimeContext, opts?: Options): Promise<void> {
+  if (ctx?.kind === "project") {
+    await startProjectDev(ctx, requireOptions(opts));
+    return;
+  }
   startService();
   log.ok("Started.");
   // Show where it now listens so the user knows what to point a tunnel/browser at.
@@ -32,17 +37,37 @@ export function startCmd(): void {
   printPublic(info);
 }
 
-export function stopCmd(): void {
+export async function stopCmd(ctx?: RuntimeContext): Promise<void> {
+  if (ctx?.kind === "project") {
+    await stopProjectDev(ctx);
+    return;
+  }
   stopService();
   log.ok("Stopped.");
 }
 
-export function restartCmd(): void {
+export async function restartCmd(ctx?: RuntimeContext, opts?: Options): Promise<void> {
+  if (ctx?.kind === "project") {
+    await restartProjectDev(ctx, requireOptions(opts));
+    return;
+  }
   restartService();
   log.ok("Restarted.");
 }
 
-export function logsCmd(flags: LogsFlags = {}): void {
+export interface LogsFlags {
+  lines?: string;
+  follow?: boolean;
+  "no-follow"?: boolean;
+  filter?: string;
+  since?: string;
+}
+
+export function logsCmd(ctx?: RuntimeContext, flags: LogsFlags = {}): void {
+  if (ctx?.kind === "project") {
+    logsProjectDev(ctx);
+    return;
+  }
   const cfg = loadConfig();
   const lines = parseLines(flags.lines);
   const follow = Boolean(flags.follow) && !flags["no-follow"];
@@ -65,7 +90,11 @@ function parseLines(raw: string | undefined): number {
 }
 
 /** `gorilator status` (alias `info`) — service state + health + ports + URLs. */
-export async function statusCmd(): Promise<void> {
+export async function statusCmd(ctx?: RuntimeContext, opts?: Options): Promise<void> {
+  if (ctx?.kind === "project") {
+    await printProjectStatus(ctx, requireOptions(opts));
+    return;
+  }
   const cfg = loadConfig();
   const s = statusService();
   const state = s.active ? log.green("active") : log.yellow("inactive");
@@ -82,4 +111,9 @@ export async function statusCmd(): Promise<void> {
     log.warn("No install record found — run 'gorilator install' first.");
   }
   if (s.raw) process.stdout.write(`\n${log.dim(s.raw)}\n`);
+}
+
+function requireOptions(opts: Options | undefined): Options {
+  if (!opts) log.die("Internal error: project commands require resolved options.");
+  return opts;
 }

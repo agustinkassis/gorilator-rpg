@@ -19,8 +19,11 @@ import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/se
 import { runSetup, tunnelCmd } from "./commands/setup.js";
 import { uninstall } from "./commands/uninstall.js";
 import { update } from "./commands/update.js";
+import { resolveRuntimeContext, type RuntimeContext } from "./lib/context.js";
 import * as log from "./lib/log.js";
+import { selectMenu } from "./lib/menu.js";
 import { resolveOptions, type RawFlags } from "./lib/options.js";
+import { ask, canPrompt } from "./lib/proc.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VERSION = (() => {
@@ -51,6 +54,10 @@ Usage: gorilator <command> [options]
   serve              Run the server in the foreground (used by the service)
   version            Print the version
   help <command>     Show detailed help for one command
+
+Run without a command in an interactive terminal to open the menu. Inside a
+Gorilator repo or fork, start/stop/restart/status/logs/setup/update target that
+checkout's local dev server/client. Outside a repo, they use the system install.
 
 Options (install):
   --repo <url>       Game repository      (env GORILATOR_REPO)
@@ -319,35 +326,45 @@ async function main(): Promise<void> {
   }
 
   const opts = resolveOptions(values as RawFlags);
+  const ctx = resolveRuntimeContext(opts);
+
+  if (cmd === undefined) {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      await runMainMenu(ctx, opts);
+      return;
+    }
+    usage();
+    return;
+  }
 
   switch (cmd) {
     case "install":
       await install(opts, VERSION);
       break;
     case "setup":
-      await runSetup(opts);
+      await runSetup(opts, ctx);
       break;
     case "serve":
       serve(opts);
       break;
     case "start":
-      startCmd();
+      await startCmd(ctx, opts);
       break;
     case "stop":
-      stopCmd();
+      await stopCmd(ctx);
       break;
     case "restart":
-      restartCmd();
+      await restartCmd(ctx, opts);
       break;
     case "status":
     case "info":
-      await statusCmd();
+      await statusCmd(ctx, opts);
       break;
     case "logs":
-      logsCmd(values);
+      logsCmd(ctx, values);
       break;
     case "update":
-      await update();
+      await update(ctx, opts);
       break;
     case "tunnel":
       tunnelCmd(positionals[1]);
@@ -363,6 +380,130 @@ async function main(): Promise<void> {
       usage();
       process.exitCode = 1;
   }
+}
+
+async function runMainMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
+  if (ctx.kind === "project") {
+    await runProjectMenu(ctx, opts);
+    return;
+  }
+  await runSystemMenu(ctx, opts);
+}
+
+async function runProjectMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
+  for (;;) {
+    const choice = await selectMenu(`Gorilator project\n${ctx.appDir}`, [
+      { label: "Status" },
+      { label: "Start" },
+      { label: "Stop" },
+      { label: "Restart" },
+      { label: "Logs" },
+      { label: "Settings" },
+      { label: "Update" },
+      { label: "Help" },
+      { label: "Exit" },
+    ]);
+
+    if (choice === 0) {
+      await statusCmd(ctx, opts);
+      pause();
+    } else if (choice === 1) {
+      await startCmd(ctx, opts);
+      pause();
+    } else if (choice === 2) {
+      await stopCmd(ctx);
+      pause();
+    } else if (choice === 3) {
+      await restartCmd(ctx, opts);
+      pause();
+    } else if (choice === 4) {
+      logsCmd(ctx);
+    } else if (choice === 5) {
+      await runSetup(opts, ctx);
+    } else if (choice === 6) {
+      await update(ctx, opts);
+      pause();
+    } else if (choice === 7) {
+      usage();
+      pause();
+    } else return;
+  }
+}
+
+async function runSystemMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
+  for (;;) {
+    const choice = await selectMenu("Gorilator system install", [
+      { label: "Status" },
+      { label: "Start" },
+      { label: "Stop" },
+      { label: "Restart" },
+      { label: "Logs" },
+      { label: "Setup" },
+      { label: "Install" },
+      { label: "Update" },
+      { label: "Tunnel" },
+      { label: "Uninstall" },
+      { label: "Help" },
+      { label: "Exit" },
+    ]);
+
+    if (choice === 0) {
+      await statusCmd(ctx, opts);
+      pause();
+    } else if (choice === 1) {
+      await startCmd(ctx, opts);
+      pause();
+    } else if (choice === 2) {
+      await stopCmd(ctx);
+      pause();
+    } else if (choice === 3) {
+      await restartCmd(ctx, opts);
+      pause();
+    } else if (choice === 4) {
+      logsCmd(ctx);
+    } else if (choice === 5) {
+      await runSetup(opts, ctx);
+    } else if (choice === 6) {
+      await install(opts, VERSION);
+      pause();
+    } else if (choice === 7) {
+      await update(ctx, opts);
+      pause();
+    } else if (choice === 8) {
+      await runTunnelMenu();
+    } else if (choice === 9) {
+      uninstall(opts);
+      pause();
+    } else if (choice === 10) {
+      usage();
+      pause();
+    } else return;
+  }
+}
+
+async function runTunnelMenu(): Promise<void> {
+  for (;;) {
+    const choice = await selectMenu("Gorilator tunnel", [
+      { label: "Status" },
+      { label: "Login" },
+      { label: "Restart" },
+      { label: "Back" },
+    ]);
+    if (choice === 0) {
+      tunnelCmd("status");
+      pause();
+    } else if (choice === 1) {
+      tunnelCmd("login");
+      pause();
+    } else if (choice === 2) {
+      tunnelCmd("restart");
+      pause();
+    } else return;
+  }
+}
+
+function pause(): void {
+  if (canPrompt()) ask("\nPress Enter to continue...");
 }
 
 main().catch((e) => {

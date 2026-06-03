@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,6 +83,16 @@ const devEnv = {
   GAME_SERVER_PORT: String(serverPort),
   VITE_SERVER_PORT: String(serverPort),
 };
+
+writeGorilatorState({
+  root,
+  pid: process.pid,
+  serverPort,
+  clientPort,
+  requestedServerPort,
+  requestedClientPort,
+  startedAt: new Date().toISOString(),
+});
 
 console.log("[dev] building shared package");
 const build = runPnpm(["--filter", "@rpg/shared", "build"], { env: devEnv });
@@ -199,3 +209,14 @@ try {
 }
 start("server", colors.blue, ["--filter", "@rpg/server", "dev"]);
 start("client", colors.green, ["--filter", "@rpg/client", "dev"]);
+
+function writeGorilatorState(state) {
+  const file = process.env.GORILATOR_STATE_FILE;
+  if (!file) return;
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`);
+  } catch (err) {
+    console.error(`[dev] could not write Gorilator state: ${err instanceof Error ? err.message : err}`);
+  }
+}

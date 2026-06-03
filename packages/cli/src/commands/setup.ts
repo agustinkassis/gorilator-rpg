@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { buildClient } from "../lib/build.js";
 import { logsCmd } from "./service.js";
 import { loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
+import type { RuntimeContext } from "../lib/context.js";
 import {
   createTunnel,
   ensureCloudflared,
@@ -29,6 +30,7 @@ import { envFile } from "../lib/paths.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
 import { restartService } from "../lib/service.js";
 import { printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
+import { runProjectSetup } from "./projectSetup.js";
 
 type EnvMap = Record<string, string>;
 
@@ -47,7 +49,11 @@ const CLOUDFLARE_ENV_KEYS = [
   "GORILATOR_DOMAIN",
 ];
 
-export async function runSetup(opts: Options): Promise<void> {
+export async function runSetup(opts: Options, ctx?: RuntimeContext): Promise<void> {
+  if (ctx?.kind === "project") {
+    await runProjectSetup(opts, ctx);
+    return;
+  }
   const envDriven = CLOUDFLARE_ENV_KEYS.some((k) => Boolean(process.env[k]));
   if (canPrompt() && !opts.yes && !envDriven) {
     await runSetupMenu(opts);
@@ -123,24 +129,24 @@ async function logsMenu(): Promise<void> {
     ]);
 
     if (choice === 0) {
-      logsCmd({ lines: "100" });
+      logsCmd(undefined, { lines: "100" });
       pause();
     } else if (choice === 1) {
-      logsCmd({ lines: "250" });
+      logsCmd(undefined, { lines: "250" });
       pause();
     } else if (choice === 2) {
-      logsCmd({ lines: "", follow: true });
+      logsCmd(undefined, { lines: "", follow: true });
       return;
     } else if (choice === 3) {
       const filter = ask("Filter text: ").trim();
-      if (filter) logsCmd({ lines: "200", filter });
+      if (filter) logsCmd(undefined, { lines: "200", filter });
       pause();
     } else if (choice === 4) {
       const lines = ask("Lines to show [100]: ").trim() || "100";
       const follow = /^y/i.test(ask("Follow realtime? [y/N] "));
       const filter = ask("Filter text [blank for none]: ").trim() || undefined;
       const since = ask('Since [Linux journalctl, e.g. "1 hour ago", blank for none]: ').trim() || undefined;
-      logsCmd({ lines, follow, filter, since });
+      logsCmd(undefined, { lines, follow, filter, since });
       if (follow) return;
       pause();
     } else {
