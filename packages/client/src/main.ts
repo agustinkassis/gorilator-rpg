@@ -151,6 +151,7 @@ const splash = new SplashScreen(engine);
 // homeMaxHp is kept so the home bar can still read "fallen" after the house is
 // removed from state on collapse.
 let homeMaxHp = 0;
+let lastAnnouncedWave: number | null = null;
 
 interface AssetTask {
   label: string;
@@ -251,6 +252,7 @@ async function start() {
     onConnected: (id) => {
       game.setLocalId(id);
       statusEl.textContent = "connected";
+      lastAnnouncedWave = null;
     },
     onPlayerAdd: (p, id) => {
       game.addPlayer(p, id);
@@ -474,7 +476,16 @@ engine.runRenderLoop(() => {
     } else if (homeMaxHp > 0) {
       homeBar.setHouse(0, homeMaxHp, false);
     }
-    homeBar.setWave(st.waveNumber, st.waveTimerMs);
+    const wave = st.waveNumber;
+    homeBar.setWave(wave, st.waveTimerMs);
+    if (lastAnnouncedWave === null) {
+      lastAnnouncedWave = wave;
+    } else if (wave > lastAnnouncedWave) {
+      homeBar.flashWave(wave);
+      lastAnnouncedWave = wave;
+    } else if (wave < lastAnnouncedWave) {
+      lastAnnouncedWave = wave;
+    }
   }
 
   // Realm-over intermission (La Crypta fell): the whole-screen "next realm in N"

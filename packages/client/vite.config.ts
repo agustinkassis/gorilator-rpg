@@ -200,12 +200,10 @@ interface SpawnerBehavior {
 }
 interface Spawner {
   id: string; // unique spawn rule id
-  ownerId?: string; // selected object's id
+  ownerId: string; // selected structure/object id; the spawn point is derived from it
   type?: string; // goblin | dummy | npc | tree | ...
   modelId?: string;
   label?: string;
-  x: number;
-  z: number;
   intervalMs: number;
   cap: number; // max live goblins from this spawner
   behavior?: SpawnerBehavior;
@@ -227,6 +225,40 @@ interface FeatureDrop {
   quantity: number;
   probability: number;
   trigger: "kill" | "damage";
+}
+
+function normalizeSpawnerEntry(raw: Record<string, unknown>): Spawner | null {
+  const id = String(raw.id || "");
+  const ownerId = String(raw.ownerId || "");
+  if (!id || !ownerId) return null;
+  const behavior = raw.behavior && typeof raw.behavior === "object"
+    ? raw.behavior as SpawnerBehavior
+    : {};
+  const modelId = raw.modelId ? String(raw.modelId) : behavior.modelId;
+  const label = raw.label ? String(raw.label) : behavior.label;
+  return {
+    id,
+    ownerId,
+    type: String(raw.type || (modelId ? "npc" : "goblin")),
+    ...(modelId ? { modelId } : {}),
+    ...(label ? { label } : {}),
+    intervalMs: Math.max(200, Number(raw.intervalMs) || 4000),
+    cap: Math.max(0, Math.min(50, Number(raw.cap) || 3)),
+    behavior,
+  };
+}
+
+function readSpawners(root: string): Spawner[] {
+  return readJsonArray<Record<string, unknown>>(spawnersPathFor(root))
+    .map((s) => normalizeSpawnerEntry(s))
+    .filter((s): s is Spawner => Boolean(s));
+}
+
+function deleteSpawnersForOwners(root: string, ownerIds: string[]): void {
+  const owners = new Set(ownerIds.filter(Boolean));
+  if (!owners.size) return;
+  const list = readSpawners(root);
+  writeJsonArray(spawnersPathFor(root), list.filter((s) => !owners.has(s.ownerId)));
 }
 interface EntityFeatureConfig {
   hp?: number;
@@ -379,6 +411,7 @@ function modelImporter(): Plugin {
                 }
               }
             }
+            deleteSpawnersForOwners(root, [key, e.id, e.model]);
             sendJson(res, { ok: true });
           } catch (e) {
             fail(res, 500, String(e));
@@ -690,32 +723,21 @@ function modelImporter(): Plugin {
       // ======== Spawner endpoints (objects that spawn goblins) ========
       server.middlewares.use("/__spawners/list", (req, res) => {
         if (req.method !== "GET") return fail(res, 405, "GET only");
-        sendJson(res, readJsonArray<Spawner>(spawnersPathFor(root)));
+        sendJson(res, readSpawners(root));
       });
       server.middlewares.use("/__spawners/save", (req, res) => {
         if (req.method !== "POST") return fail(res, 405, "POST only");
         void collectBody(req).then((buf) => {
           try {
-            const s = JSON.parse(buf.toString("utf8") || "{}") as Spawner;
-            if (!s.id) return fail(res, 400, "missing id");
-            const list = readJsonArray<Spawner>(spawnersPathFor(root));
-            const entry: Spawner = {
-              id: s.id,
-              ownerId: s.ownerId || s.id,
-              type: s.type || "goblin",
-              ...(s.modelId ? { modelId: s.modelId } : {}),
-              ...(s.label ? { label: s.label } : {}),
-              x: Number(s.x) || 0,
-              z: Number(s.z) || 0,
-              intervalMs: Math.max(200, Number(s.intervalMs) || 4000),
-              cap: Math.max(0, Math.min(50, Number(s.cap) || 3)),
-              behavior: s.behavior || {},
-            };
-            const i = list.findIndex((x) => x.id === s.id);
+            const raw = JSON.parse(buf.toString("utf8") || "{}") as Record<string, unknown>;
+            const entry = normalizeSpawnerEntry(raw);
+            if (!entry) return fail(res, 400, "missing id or ownerId");
+            const list = readSpawners(root);
+            const i = list.findIndex((x) => x.id === entry.id);
             if (i >= 0) list[i] = entry;
             else list.push(entry);
             writeJsonArray(spawnersPathFor(root), list);
-            sendJson(res, { ok: true, id: s.id });
+            sendJson(res, { ok: true, id: entry.id });
           } catch (e) {
             fail(res, 500, String(e));
           }
@@ -726,8 +748,14 @@ function modelImporter(): Plugin {
         void collectBody(req).then((buf) => {
           try {
             const b = JSON.parse(buf.toString("utf8") || "{}");
-            const list = readJsonArray<Spawner>(spawnersPathFor(root));
-            writeJsonArray(spawnersPathFor(root), list.filter((x) => x.id !== String(b.id ?? "")));
+            const id = String(b.id ?? "");
+            const ownerId = String(b.ownerId ?? "");
+            if (!id && !ownerId) return fail(res, 400, "missing id or ownerId");
+            const list = readSpawners(root);
+            writeJsonArray(
+              spawnersPathFor(root),
+              list.filter((x) => x.id !== id && x.ownerId !== ownerId),
+            );
             sendJson(res, { ok: true });
           } catch (e) {
             fail(res, 500, String(e));
