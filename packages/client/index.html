@@ -775,15 +775,80 @@
         opacity: 0.52;
         cursor: not-allowed;
       }
+      #worktreePanel .wtChangesHead {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: stretch;
+        margin-top: 10px;
+      }
       #worktreePanel .wtChangesToggle {
         width: 100%;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        margin-top: 10px;
         padding: 9px 10px;
         text-align: left;
+      }
+      #worktreePanel .wtPackageToggle {
+        position: relative;
+        min-width: 126px;
+        display: grid;
+        grid-template-columns: 34px auto;
+        gap: 8px;
+        align-items: center;
+        box-sizing: border-box;
+        padding: 8px 9px;
+        border: 1px solid rgba(255, 212, 121, 0.28);
+        border-radius: 6px;
+        background: rgba(255, 212, 121, 0.055);
+        color: rgba(255, 230, 168, 0.7);
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-transform: uppercase;
+        cursor: pointer;
+        user-select: none;
+      }
+      #worktreePanel .wtPackageToggle:hover {
+        border-color: rgba(255, 212, 121, 0.62);
+        background: rgba(255, 212, 121, 0.1);
+      }
+      #worktreePanel .wtPackageToggle input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      #worktreePanel .wtPackageToggleTrack {
+        position: relative;
+        width: 32px;
+        height: 17px;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 212, 121, 0.26);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.055);
+      }
+      #worktreePanel .wtPackageToggleTrack::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 3px;
+        width: 11px;
+        height: 11px;
+        border-radius: 999px;
+        background: rgba(255, 230, 168, 0.72);
+        transition: transform 120ms ease, background 120ms ease;
+      }
+      #worktreePanel .wtPackageToggle input:checked + .wtPackageToggleTrack {
+        border-color: rgba(139, 240, 170, 0.5);
+        background: rgba(84, 217, 140, 0.15);
+      }
+      #worktreePanel .wtPackageToggle input:checked + .wtPackageToggleTrack::after {
+        transform: translateX(14px);
+        background: #8bf0aa;
+      }
+      #worktreePanel .wtPackageToggle input:focus-visible + .wtPackageToggleTrack {
+        outline: 1px solid rgba(255, 212, 121, 0.88);
+        outline-offset: 2px;
       }
       #worktreePanel .wtSectionTitle {
         color: #ffe0a8;
@@ -825,6 +890,34 @@
         margin-top: 3px;
         color: rgba(255, 230, 168, 0.5);
         overflow-wrap: anywhere;
+      }
+      #worktreePanel .wtChangeGroup {
+        margin-top: 8px;
+        border: 1px solid rgba(255, 212, 121, 0.13);
+        border-radius: 6px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.024);
+      }
+      #worktreePanel .wtChangeGroup:first-child {
+        margin-top: 0;
+      }
+      #worktreePanel .wtChangeGroupHead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 8px;
+        border-bottom: 1px solid rgba(255, 212, 121, 0.11);
+        background: rgba(255, 212, 121, 0.05);
+      }
+      #worktreePanel .wtChangeGroupName {
+        color: #ffd479;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+      #worktreePanel .wtChangeGroupCount {
+        color: rgba(255, 230, 168, 0.54);
+        white-space: nowrap;
       }
       #worktreePanel .wtChangeRow,
       #worktreePanel .wtCommitRow {
@@ -962,12 +1055,21 @@
       #worktreePanel .wtChangeRow.file:hover {
         background: rgba(255, 212, 121, 0.08);
       }
+      #worktreePanel .wtChangeGroup .wtChangeRow {
+        padding-inline: 8px;
+      }
+      #worktreePanel .wtChangeGroup .wtChangeRow:last-child {
+        border-bottom: 0;
+      }
       #worktreePanel .wtEmpty {
         padding: 8px 0 2px;
         color: rgba(255, 230, 168, 0.56);
       }
       @media (max-width: 560px) {
         #worktreePanel .wtBranchBar {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        #worktreePanel .wtChangesHead {
           grid-template-columns: minmax(0, 1fr);
         }
       }

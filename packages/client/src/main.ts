@@ -99,6 +99,7 @@ interface WorktreeFilePayload {
 let worktreeMeta: Partial<WorktreeMeta> = {};
 let worktreePanelOpen = false;
 let worktreeChangesOpen = false;
+let worktreeGroupChangesByPackage = readWorktreeGroupChangesPreference();
 let worktreeMergePreviewIndex: number | null = null;
 let worktreeIncomingMergePreviewIndex: number | null = null;
 let worktreeMergeBusy = false;
@@ -247,6 +248,66 @@ function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
   if (className) el.className = className;
   if (text !== undefined) el.textContent = text;
   return el;
+}
+
+function readWorktreeGroupChangesPreference(): boolean {
+  try {
+    return window.localStorage.getItem("gorilator.worktreeLog.groupChangesByPackage") !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function saveWorktreeGroupChangesPreference(enabled: boolean) {
+  try {
+    window.localStorage.setItem("gorilator.worktreeLog.groupChangesByPackage", enabled ? "1" : "0");
+  } catch {
+    // Storage can be unavailable in private contexts; the in-memory toggle still works.
+  }
+}
+
+function worktreePackageCategory(path: string): string {
+  const parts = path.split("/");
+  if (parts[0] === "packages" && parts[1]) return parts[1];
+  if (parts[0] === "apps" && parts[1]) return parts[1];
+  return parts[0] || "root";
+}
+
+function packageSortRank(name: string): number {
+  const order = ["server", "client", "cli", "landing", "shared"];
+  const index = order.indexOf(name);
+  return index === -1 ? order.length : index;
+}
+
+function groupedWorktreeChanges(changes: WorktreeChange[]): Array<{ category: string; changes: WorktreeChange[] }> {
+  const groups = new Map<string, WorktreeChange[]>();
+  for (const change of changes) {
+    const category = worktreePackageCategory(change.path);
+    const group = groups.get(category);
+    if (group) group.push(change);
+    else groups.set(category, [change]);
+  }
+  return Array.from(groups.entries())
+    .map(([category, groupedChanges]) => ({ category, changes: groupedChanges }))
+    .sort((a, b) => {
+      const rank = packageSortRank(a.category) - packageSortRank(b.category);
+      return rank || a.category.localeCompare(b.category);
+    });
+}
+
+function renderWorktreeChangeRow(change: WorktreeChange): HTMLDivElement {
+  const row = createWorktreeNode("div", "wtChangeRow file");
+  row.append(
+    createWorktreeNode("span", "wtChangeStatus", change.status.trim() || "M"),
+    createWorktreeNode("span", "wtChangePath", change.path),
+    createWorktreeNode("span", "wtChangeLabel", change.label),
+  );
+  row.title = "Open file explorer";
+  row.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    openFileExplorer(change.path);
+  });
+  return row;
 }
 
 function setWorktreeMergePreview(index: number | null) {
@@ -760,6 +821,7 @@ function renderWorktreePanel() {
   }
   if (worktreeMergeMessage) pendingSection.append(createWorktreeNode("div", "wtMergeStatus", worktreeMergeMessage));
 
+  const changesHead = createWorktreeNode("div", "wtChangesHead");
   const changesBtn = createWorktreeNode("button", "wtChangesToggle");
   changesBtn.type = "button";
   changesBtn.setAttribute("aria-expanded", String(worktreeChangesOpen));
@@ -777,25 +839,44 @@ function renderWorktreePanel() {
     worktreeChangesOpen = !worktreeChangesOpen;
     renderWorktreePanel();
   });
+  const packageToggle = createWorktreeNode("label", "wtPackageToggle");
+  packageToggle.title = "Group current changes by package";
+  const packageToggleInput = createWorktreeNode("input") as HTMLInputElement;
+  packageToggleInput.type = "checkbox";
+  packageToggleInput.checked = worktreeGroupChangesByPackage;
+  packageToggleInput.addEventListener("click", (ev) => ev.stopPropagation());
+  packageToggleInput.addEventListener("change", (ev) => {
+    ev.stopPropagation();
+    worktreeGroupChangesByPackage = packageToggleInput.checked;
+    saveWorktreeGroupChangesPreference(worktreeGroupChangesByPackage);
+    renderWorktreePanel();
+  });
+  packageToggle.append(
+    packageToggleInput,
+    createWorktreeNode("span", "wtPackageToggleTrack"),
+    createWorktreeNode("span", "wtPackageToggleText", "Packages"),
+  );
+  changesHead.append(changesBtn, packageToggle);
 
   const changesList = createWorktreeNode("div", "wtChangesList");
   changesList.hidden = !worktreeChangesOpen;
   if (!changes.length) {
     changesList.append(createWorktreeNode("div", "wtEmpty", "No unstaged or uncommitted files."));
+  } else if (worktreeGroupChangesByPackage) {
+    for (const group of groupedWorktreeChanges(changes)) {
+      const groupEl = createWorktreeNode("div", "wtChangeGroup");
+      const groupHead = createWorktreeNode("div", "wtChangeGroupHead");
+      groupHead.append(
+        createWorktreeNode("span", "wtChangeGroupName", group.category),
+        createWorktreeNode("span", "wtChangeGroupCount", `${group.changes.length} file${group.changes.length === 1 ? "" : "s"}`),
+      );
+      groupEl.append(groupHead);
+      for (const change of group.changes) groupEl.append(renderWorktreeChangeRow(change));
+      changesList.append(groupEl);
+    }
   } else {
     for (const change of changes) {
-      const row = createWorktreeNode("div", "wtChangeRow file");
-      row.append(
-        createWorktreeNode("span", "wtChangeStatus", change.status.trim() || "M"),
-        createWorktreeNode("span", "wtChangePath", change.path),
-        createWorktreeNode("span", "wtChangeLabel", change.label),
-      );
-      row.title = "Open file explorer";
-      row.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        openFileExplorer(change.path);
-      });
-      changesList.append(row);
+      changesList.append(renderWorktreeChangeRow(change));
     }
   }
 
@@ -884,7 +965,7 @@ function renderWorktreePanel() {
     }
   }
 
-  worktreePanelEl.append(head, branchBar, pendingSection, changesBtn, changesList, incomingSection, commitsSection);
+  worktreePanelEl.append(head, branchBar, pendingSection, changesHead, changesList, incomingSection, commitsSection);
   worktreePanelEl.hidden = !worktreePanelOpen;
 }
 
