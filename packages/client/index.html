@@ -819,10 +819,7 @@
         grid-template-columns: auto minmax(0, 1fr) auto auto;
       }
       #worktreePanel .wtPendingRow.mergePreview {
-        background: linear-gradient(90deg, rgba(255, 236, 190, 0.24), rgba(255, 212, 121, 0.13));
-        box-shadow:
-          inset 4px 0 0 rgba(255, 212, 121, 0.94),
-          inset 0 0 0 1px rgba(255, 236, 190, 0.18);
+        background: rgba(255, 236, 190, 0.18);
       }
       #worktreePanel .wtChangeStatus,
       #worktreePanel .wtCommitHash {
@@ -840,14 +837,22 @@
         color: rgba(255, 230, 168, 0.58);
         white-space: nowrap;
       }
-      #worktreePanel .wtMergeBtn {
-        min-width: 58px;
+      #worktreePanel .wtMergeBtn,
+      #worktreePanel .wtMergePassive {
+        box-sizing: border-box;
+        width: 58px;
+        height: 23px;
         border: 1px solid rgba(139, 240, 170, 0.38);
         border-radius: 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding: 0 7px;
+      }
+      #worktreePanel .wtMergeBtn {
         background: rgba(84, 217, 140, 0.1);
         color: #bff8ca;
-        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-        padding: 5px 7px;
         cursor: pointer;
       }
       #worktreePanel .wtMergeBtn.preview {
@@ -856,12 +861,9 @@
         background: rgba(84, 217, 140, 0.18);
       }
       #worktreePanel .wtMergePassive {
-        min-width: 58px;
-        box-sizing: border-box;
-        padding: 5px 7px;
+        border-color: transparent;
+        background: transparent;
         color: #8bf0aa;
-        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-        text-align: center;
         text-transform: uppercase;
       }
       #worktreePanel .wtMergeBtn:hover,
