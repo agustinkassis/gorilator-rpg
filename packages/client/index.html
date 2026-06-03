@@ -906,33 +906,20 @@
         opacity: 0.55;
         cursor: progress;
       }
-      #worktreePanel .wtBringCommitAction {
-        width: 72px;
-        height: 23px;
-        display: grid;
-      }
-      #worktreePanel .wtBringCommitBtn {
+      #worktreePanel .wtIncomingBadge {
         box-sizing: border-box;
-        width: 72px;
+        min-width: 72px;
         height: 23px;
         border: 1px solid rgba(139, 240, 170, 0.38);
         border-radius: 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         background: rgba(84, 217, 140, 0.1);
         color: #bff8ca;
         font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-        cursor: pointer;
       }
-      #worktreePanel .wtBringCommitBtn:hover,
-      #worktreePanel .wtBringCommitBtn:focus-visible {
-        border-color: rgba(139, 240, 170, 0.86);
-        background: rgba(84, 217, 140, 0.18);
-        outline: none;
-      }
-      #worktreePanel .wtBringCommitBtn:disabled {
-        opacity: 0.58;
-        cursor: not-allowed;
-      }
-      #worktreePanel .wtIncomingRow.conflict .wtBringCommitBtn {
+      #worktreePanel .wtIncomingBadge.conflict {
         border-color: rgba(255, 106, 77, 0.36);
         background: rgba(255, 106, 77, 0.09);
         color: #ffad7a;

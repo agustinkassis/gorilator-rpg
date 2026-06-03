@@ -197,16 +197,6 @@ async function mergeTargetIntoWorktree(): Promise<WorktreeMeta> {
   return (await res.json()) as WorktreeMeta;
 }
 
-async function bringTargetCommitIntoWorktree(commit: string): Promise<WorktreeMeta> {
-  const res = await fetch("/__worktree/bring", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ commit }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as WorktreeMeta;
-}
-
 async function loadWorktreeJsonFile(path: string): Promise<WorktreeFilePayload> {
   const res = await fetch(`/__worktree/file?path=${encodeURIComponent(path)}`);
   if (!res.ok) throw new Error(await res.text());
@@ -644,35 +634,9 @@ function renderWorktreePanel() {
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
 
-      const bringBtn = createWorktreeNode("button", "wtBringCommitBtn", commit.conflict ? "Conflict" : worktreeMergeBusy ? "Working" : "Bring");
-      bringBtn.type = "button";
-      bringBtn.disabled = worktreeMergeBusy || Boolean(commit.conflict);
-      bringBtn.title = commit.conflict
-        ? commit.conflictReason || "This commit has conflicts"
-        : `Bring ${commit.hash} from ${targetBranch} into ${branch}`;
-      bringBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        if (commit.conflict) return;
-        worktreeMergeBusy = true;
-        worktreeMergeMessage = `Bringing ${commit.hash} from ${targetBranch} into ${branch}...`;
-        renderWorktreePanel();
-        void bringTargetCommitIntoWorktree(commit.hash)
-          .then((meta) => {
-            worktreeMergeMessage = `Brought ${commit.hash} into ${meta.branch || branch}`;
-            setWorktreeMeta(meta);
-          })
-          .catch((err) => {
-            worktreeMergeMessage = err instanceof Error ? err.message : "Bring commit failed";
-            renderWorktreePanel();
-          })
-          .finally(() => {
-            worktreeMergeBusy = false;
-            renderWorktreePanel();
-          });
-      });
-      const action = createWorktreeNode("span", "wtBringCommitAction");
-      action.append(bringBtn);
-      row.append(action);
+      const badge = createWorktreeNode("span", commit.conflict ? "wtIncomingBadge conflict" : "wtIncomingBadge", commit.conflict ? "Conflict" : "Clean");
+      badge.title = commit.conflict ? commit.conflictReason || "This commit has conflicts" : "Use Bring Target to merge target changes";
+      row.append(badge);
       incomingSection.append(row);
     }
   }
