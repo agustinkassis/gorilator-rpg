@@ -50,6 +50,20 @@ const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivEle
 const versionEl = document.getElementById("versionTag");
 if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
 const worktreeEl = document.getElementById("worktreeTag");
+const worktreePanelEl = document.getElementById("worktreePanel") as HTMLDivElement | null;
+interface WorktreeCommit {
+  hash: string;
+  subject: string;
+  age: string;
+}
+interface WorktreeChange {
+  status: string;
+  path: string;
+  label: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+}
 interface WorktreeMeta {
   root: string;
   id: string;
@@ -57,10 +71,43 @@ interface WorktreeMeta {
   defaultLabel: string;
   label: string;
   fullLabel: string;
+  branch: string;
+  targetBranch: string;
+  pendingBase: string;
+  branches: string[];
+  isMain: boolean;
+  isLinked: boolean;
+  pendingCommits: WorktreeCommit[];
+  commits: WorktreeCommit[];
+  changes: WorktreeChange[];
 }
+interface WorktreeFilePayload {
+  path: string;
+  content: string;
+  baseContent: string;
+}
+let worktreeMeta: Partial<WorktreeMeta> = {};
+let worktreePanelOpen = false;
+let worktreeChangesOpen = false;
+let worktreeMergePreviewIndex: number | null = null;
+let worktreeMergeBusy = false;
+let worktreeMergeMessage = "";
+let jsonEditorPath = "";
+let jsonEditorBase = "";
+let jsonEditorContent = "";
+let jsonEditorSelection: [number, number] | null = null;
+let jsonEditorRenderTimer: number | undefined;
 
 function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   if (!worktreeEl) return;
+  worktreeMeta = {
+    ...worktreeMeta,
+    ...meta,
+    pendingCommits: meta.pendingCommits ?? worktreeMeta.pendingCommits ?? [],
+    commits: meta.commits ?? worktreeMeta.commits ?? [],
+    changes: meta.changes ?? worktreeMeta.changes ?? [],
+    branches: meta.branches ?? worktreeMeta.branches ?? [],
+  };
   const label = meta.label ?? "";
   const fullLabel = meta.fullLabel ?? label;
   worktreeEl.textContent = label;
@@ -68,11 +115,15 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   worktreeEl.dataset.fullLabel = fullLabel;
   worktreeEl.dataset.name = meta.name ?? "";
   worktreeEl.dataset.root = meta.root ?? "";
+  worktreeEl.dataset.branch = meta.branch ?? "";
+  worktreeEl.dataset.targetBranch = meta.targetBranch ?? "";
+  worktreeEl.classList.toggle("dirty", (meta.changes?.length ?? 0) > 0);
   worktreeEl.hidden = label === "";
+  renderWorktreePanel();
 }
 
 function maybePromptForWorktreeName(meta: Partial<WorktreeMeta>) {
-  if (!worktreeEl || !meta.root || meta.name) return;
+  if (!worktreeEl || !meta.root || meta.name || meta.isMain) return;
   const key = `gorilator.worktreeTag.prompted:${meta.root}`;
   try {
     if (window.sessionStorage.getItem(key)) return;
@@ -95,6 +146,16 @@ async function saveWorktreeName(name: string): Promise<WorktreeMeta> {
   return (await res.json()) as WorktreeMeta;
 }
 
+async function saveWorktreeTargetBranch(targetBranch: string): Promise<WorktreeMeta> {
+  const res = await fetch("/__worktree", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ targetBranch }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeMeta;
+}
+
 async function editWorktreeName() {
   if (!worktreeEl) return;
   const current = worktreeEl.dataset.name ?? "";
@@ -108,26 +169,459 @@ async function editWorktreeName() {
   }
 }
 
+async function loadWorktreeMeta() {
+  const res = await fetch("/__worktree");
+  if (!res.ok) return undefined;
+  const meta = (await res.json()) as WorktreeMeta;
+  setWorktreeMeta(meta);
+  return meta;
+}
+
+async function mergeWorktreeIntoTarget(commit: string): Promise<WorktreeMeta> {
+  const res = await fetch("/__worktree/merge", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commit }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeMeta;
+}
+
+async function loadWorktreeJsonFile(path: string): Promise<WorktreeFilePayload> {
+  const res = await fetch(`/__worktree/file?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeFilePayload;
+}
+
+async function saveWorktreeJsonFile(path: string, content: string): Promise<WorktreeFilePayload> {
+  const res = await fetch("/__worktree/file", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeFilePayload;
+}
+
+function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function setWorktreeMergePreview(index: number | null) {
+  worktreeMergePreviewIndex = index;
+  const rows = worktreePanelEl?.querySelectorAll<HTMLElement>(".wtPendingRow") ?? [];
+  for (const row of rows) {
+    const rowIndex = Number(row.dataset.mergeIndex);
+    const selected = index !== null && Number.isFinite(rowIndex) && rowIndex === index;
+    row.classList.toggle("mergePreview", selected);
+    row.classList.toggle("mergeHover", selected);
+  }
+}
+
+type DiffRow = { type: "same" | "add" | "remove"; text: string; oldLine: number | null; newLine: number | null };
+
+function splitEditorLines(text: string): string[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function buildJsonDiffRows(base: string, next: string): DiffRow[] {
+  const oldLines = splitEditorLines(base);
+  const newLines = splitEditorLines(next);
+  if (oldLines.length * newLines.length > 120000) {
+    return [
+      { type: "remove", text: `${oldLines.length} base lines`, oldLine: 1, newLine: null },
+      { type: "add", text: `${newLines.length} edited lines`, oldLine: null, newLine: 1 },
+    ];
+  }
+  const dp = Array.from({ length: oldLines.length + 1 }, () => new Array<number>(newLines.length + 1).fill(0));
+  for (let i = oldLines.length - 1; i >= 0; i--) {
+    for (let j = newLines.length - 1; j >= 0; j--) {
+      dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const rows: DiffRow[] = [];
+  let i = 0;
+  let j = 0;
+  let oldNo = 1;
+  let newNo = 1;
+  while (i < oldLines.length || j < newLines.length) {
+    if (i < oldLines.length && j < newLines.length && oldLines[i] === newLines[j]) {
+      rows.push({ type: "same", text: oldLines[i], oldLine: oldNo++, newLine: newNo++ });
+      i++;
+      j++;
+    } else if (j < newLines.length && (i === oldLines.length || dp[i][j + 1] >= dp[i + 1][j])) {
+      rows.push({ type: "add", text: newLines[j], oldLine: null, newLine: newNo++ });
+      j++;
+    } else if (i < oldLines.length) {
+      rows.push({ type: "remove", text: oldLines[i], oldLine: oldNo++, newLine: null });
+      i++;
+    }
+  }
+  return rows;
+}
+
+function formatJsonEditorText(text: string): string {
+  return JSON.stringify(JSON.parse(text), null, 2);
+}
+
+function closeJsonEditor() {
+  const modal = document.getElementById("jsonEditorModal");
+  if (modal) modal.hidden = true;
+  jsonEditorPath = "";
+  jsonEditorBase = "";
+  jsonEditorContent = "";
+  jsonEditorSelection = null;
+  window.clearTimeout(jsonEditorRenderTimer);
+}
+
+function renderJsonEditor(status = "") {
+  const modal = document.getElementById("jsonEditorModal") as HTMLDivElement | null;
+  if (!modal || !jsonEditorPath) return;
+  modal.replaceChildren();
+  modal.hidden = false;
+
+  let valid = true;
+  let validation = status;
+  try {
+    JSON.parse(jsonEditorContent);
+    if (!validation) validation = "Valid JSON";
+  } catch (err) {
+    valid = false;
+    validation = err instanceof Error ? err.message : "Invalid JSON";
+  }
+
+  const shell = createWorktreeNode("div", "jsonEditorShell");
+  const head = createWorktreeNode("div", "jsonEditorHead");
+  const titleWrap = createWorktreeNode("div", "jsonEditorTitleWrap");
+  titleWrap.append(
+    createWorktreeNode("div", "jsonEditorTitle", jsonEditorPath),
+    createWorktreeNode("div", valid ? "jsonEditorStatus ok" : "jsonEditorStatus bad", validation),
+  );
+
+  const actions = createWorktreeNode("div", "jsonEditorActions");
+  const formatBtn = createWorktreeNode("button", "jsonEditorBtn", "Format");
+  formatBtn.type = "button";
+  formatBtn.disabled = !valid;
+  formatBtn.addEventListener("click", () => {
+    try {
+      jsonEditorContent = formatJsonEditorText(jsonEditorContent);
+      renderJsonEditor("Formatted");
+    } catch {
+      renderJsonEditor();
+    }
+  });
+  const saveBtn = createWorktreeNode("button", "jsonEditorBtn primary", "Save");
+  saveBtn.type = "button";
+  saveBtn.disabled = !valid;
+  saveBtn.addEventListener("click", () => {
+    saveBtn.disabled = true;
+    void saveWorktreeJsonFile(jsonEditorPath, jsonEditorContent)
+      .then((file) => {
+        jsonEditorContent = file.content;
+        jsonEditorBase = file.baseContent;
+        void loadWorktreeMeta();
+        renderJsonEditor("Saved");
+      })
+      .catch((err) => renderJsonEditor(err instanceof Error ? err.message : "Could not save JSON"));
+  });
+  const closeBtn = createWorktreeNode("button", "jsonEditorBtn", "Close");
+  closeBtn.type = "button";
+  closeBtn.addEventListener("click", closeJsonEditor);
+  actions.append(formatBtn, saveBtn, closeBtn);
+  head.append(titleWrap, actions);
+
+  const body = createWorktreeNode("div", "jsonEditorBody");
+  const editorPane = createWorktreeNode("div", "jsonEditorPane");
+  editorPane.append(createWorktreeNode("div", "jsonEditorPaneTitle", "Editor"));
+  const textarea = createWorktreeNode("textarea", "jsonEditorText") as HTMLTextAreaElement;
+  textarea.spellcheck = false;
+  textarea.value = jsonEditorContent;
+  textarea.addEventListener("input", () => {
+    jsonEditorContent = textarea.value;
+    jsonEditorSelection = [textarea.selectionStart ?? jsonEditorContent.length, textarea.selectionEnd ?? jsonEditorContent.length];
+    window.clearTimeout(jsonEditorRenderTimer);
+    jsonEditorRenderTimer = window.setTimeout(() => renderJsonEditor(), 120);
+  });
+  editorPane.append(textarea);
+
+  const diffPane = createWorktreeNode("div", "jsonEditorPane");
+  diffPane.append(createWorktreeNode("div", "jsonEditorPaneTitle", "Diff"));
+  const diff = createWorktreeNode("div", "jsonDiff");
+  const rows = buildJsonDiffRows(jsonEditorBase, jsonEditorContent);
+  for (const row of rows.slice(0, 1200)) {
+    const line = createWorktreeNode("div", `jsonDiffLine ${row.type}`);
+    line.append(
+      createWorktreeNode("span", "jsonDiffNum", row.oldLine === null ? "" : String(row.oldLine)),
+      createWorktreeNode("span", "jsonDiffNum", row.newLine === null ? "" : String(row.newLine)),
+      createWorktreeNode("span", "jsonDiffMark", row.type === "add" ? "+" : row.type === "remove" ? "-" : " "),
+      createWorktreeNode("span", "jsonDiffText", row.text || " "),
+    );
+    diff.append(line);
+  }
+  if (rows.length > 1200) diff.append(createWorktreeNode("div", "jsonDiffMore", `${rows.length - 1200} more diff lines hidden`));
+  diffPane.append(diff);
+  body.append(editorPane, diffPane);
+  shell.append(head, body);
+  modal.append(shell);
+  textarea.focus();
+  if (jsonEditorSelection) {
+    const [start, end] = jsonEditorSelection;
+    textarea.setSelectionRange(Math.min(start, textarea.value.length), Math.min(end, textarea.value.length));
+  }
+}
+
+function openJsonEditor(path: string) {
+  void loadWorktreeJsonFile(path)
+    .then((file) => {
+      jsonEditorPath = file.path;
+      jsonEditorBase = file.baseContent;
+      jsonEditorContent = file.content;
+      renderJsonEditor();
+    })
+    .catch((err) => window.alert(err instanceof Error ? err.message : "Could not open JSON file"));
+}
+
+function renderWorktreePanel() {
+  if (!worktreePanelEl || !worktreeEl) return;
+  const label = worktreeMeta.label ?? "";
+  const pendingCommits = worktreeMeta.pendingCommits ?? [];
+  const commits = worktreeMeta.commits ?? [];
+  const changes = worktreeMeta.changes ?? [];
+  const branch = worktreeMeta.branch || "detached";
+  const targetBranch = worktreeMeta.targetBranch || "main";
+  const pendingBase = worktreeMeta.pendingBase || targetBranch;
+  const branches = Array.from(new Set(["main", targetBranch, ...(worktreeMeta.branches ?? [])])).filter(Boolean);
+  if (!label) {
+    worktreePanelEl.hidden = true;
+    return;
+  }
+
+  worktreePanelEl.replaceChildren();
+  const head = createWorktreeNode("div", "wtPanelHead");
+  const titleWrap = createWorktreeNode("div", "wtPanelTitleWrap");
+  titleWrap.append(
+    createWorktreeNode("div", "wtPanelTitle", label),
+    createWorktreeNode("div", "wtPanelMeta", worktreeMeta.fullLabel ?? label),
+  );
+  const editBtn = createWorktreeNode("button", "wtPanelEdit", "Name");
+  editBtn.type = "button";
+  editBtn.hidden = Boolean(worktreeMeta.isMain);
+  editBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    void editWorktreeName();
+  });
+  head.append(titleWrap, editBtn);
+
+  const branchBar = createWorktreeNode("div", "wtBranchBar");
+  const currentBranchEl = createWorktreeNode("div", "wtBranchCurrent");
+  currentBranchEl.append(
+    createWorktreeNode("span", "wtBranchLabel", "Current"),
+    createWorktreeNode("span", "wtBranchValue", branch),
+  );
+  const targetWrap = createWorktreeNode("label", "wtTargetWrap");
+  const targetLabel = createWorktreeNode("span", "wtBranchLabel", "Target");
+  const targetSelect = createWorktreeNode("select", "wtTargetSelect");
+  targetSelect.setAttribute("aria-label", "Target branch");
+  for (const optionBranch of branches) {
+    const option = createWorktreeNode("option", "", optionBranch);
+    option.value = optionBranch;
+    option.selected = optionBranch === targetBranch;
+    targetSelect.append(option);
+  }
+  targetSelect.addEventListener("change", (ev) => {
+    ev.stopPropagation();
+    const next = targetSelect.value || "main";
+    targetSelect.disabled = true;
+    void saveWorktreeTargetBranch(next)
+      .then((meta) => setWorktreeMeta(meta))
+      .catch((err) => {
+        console.warn("Could not save target branch", err);
+        window.alert("Could not save target branch.");
+      })
+      .finally(() => {
+        targetSelect.disabled = false;
+      });
+  });
+  targetWrap.append(targetLabel, targetSelect);
+  branchBar.append(currentBranchEl, targetWrap);
+
+  const pendingSection = createWorktreeNode("div", "wtPending");
+  const pendingHead = createWorktreeNode("div", "wtSectionLine");
+  pendingHead.append(
+    createWorktreeNode("span", "wtSectionTitle", `Pending into ${targetBranch}`),
+    createWorktreeNode(
+      "span",
+      pendingCommits.length ? "wtSectionPill dirty" : "wtSectionPill",
+      `${pendingCommits.length} commit${pendingCommits.length === 1 ? "" : "s"}`,
+    ),
+  );
+  pendingSection.append(
+    pendingHead,
+    createWorktreeNode("div", "wtSectionMeta", pendingBase ? `Compared with ${pendingBase}` : "Target branch not found locally"),
+  );
+  if (!pendingCommits.length) {
+    pendingSection.append(createWorktreeNode("div", "wtEmpty", `No pending commits into ${targetBranch}.`));
+  } else {
+    pendingCommits.forEach((commit, index) => {
+      const previewed = worktreeMergePreviewIndex === index;
+      const hovered = worktreeMergePreviewIndex === index;
+      const row = createWorktreeNode("div", previewed ? "wtCommitRow wtPendingRow mergePreview" : "wtCommitRow wtPendingRow");
+      row.dataset.mergeIndex = String(index);
+      row.classList.toggle("mergeHover", hovered);
+      row.append(
+        createWorktreeNode("span", "wtCommitHash", commit.hash),
+        createWorktreeNode("span", "wtCommitSubject", commit.subject),
+        createWorktreeNode("span", "wtCommitAge", commit.age),
+      );
+
+      const mergeBtn = createWorktreeNode("button", hovered ? "wtMergeBtn preview" : "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
+      mergeBtn.type = "button";
+      mergeBtn.title = `Merge ${commit.hash} into ${targetBranch}`;
+      mergeBtn.disabled = worktreeMergeBusy;
+      mergeBtn.addEventListener("mouseenter", () => {
+        setWorktreeMergePreview(index);
+      });
+      mergeBtn.addEventListener("mouseleave", () => {
+        setWorktreeMergePreview(null);
+      });
+      mergeBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        worktreeMergeBusy = true;
+        worktreeMergeMessage = `Merging ${commit.hash} into ${targetBranch}...`;
+        renderWorktreePanel();
+        void mergeWorktreeIntoTarget(commit.hash)
+          .then((meta) => {
+            worktreeMergePreviewIndex = null;
+            worktreeMergeMessage = `Merged ${commit.hash} into ${meta.targetBranch || targetBranch}`;
+            setWorktreeMeta(meta);
+          })
+          .catch((err) => {
+            worktreeMergeMessage = err instanceof Error ? err.message : "Merge failed";
+            renderWorktreePanel();
+          })
+          .finally(() => {
+            worktreeMergeBusy = false;
+            renderWorktreePanel();
+          });
+      });
+      const action = createWorktreeNode("span", "wtMergeAction");
+      action.append(mergeBtn);
+      row.append(action);
+      pendingSection.append(row);
+    });
+  }
+  if (worktreeMergeMessage) pendingSection.append(createWorktreeNode("div", "wtMergeStatus", worktreeMergeMessage));
+
+  const changesBtn = createWorktreeNode("button", "wtChangesToggle");
+  changesBtn.type = "button";
+  changesBtn.setAttribute("aria-expanded", String(worktreeChangesOpen));
+  const changeCount = changes.length;
+  changesBtn.append(
+    createWorktreeNode("span", "wtSectionTitle", "Current changes"),
+    createWorktreeNode(
+      "span",
+      changeCount ? "wtSectionPill dirty" : "wtSectionPill",
+      changeCount === 0 ? "clean" : `${changeCount} file${changeCount === 1 ? "" : "s"}`,
+    ),
+  );
+  changesBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    worktreeChangesOpen = !worktreeChangesOpen;
+    renderWorktreePanel();
+  });
+
+  const changesList = createWorktreeNode("div", "wtChangesList");
+  changesList.hidden = !worktreeChangesOpen;
+  if (!changes.length) {
+    changesList.append(createWorktreeNode("div", "wtEmpty", "No unstaged or uncommitted files."));
+  } else {
+    for (const change of changes) {
+      const isJson = change.path.toLowerCase().endsWith(".json");
+      const row = createWorktreeNode("div", isJson ? "wtChangeRow json" : "wtChangeRow");
+      row.append(
+        createWorktreeNode("span", "wtChangeStatus", change.status.trim() || "M"),
+        createWorktreeNode("span", "wtChangePath", change.path),
+        createWorktreeNode("span", "wtChangeLabel", change.label),
+      );
+      if (isJson) {
+        row.title = "Open JSON editor";
+        row.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openJsonEditor(change.path);
+        });
+      }
+      changesList.append(row);
+    }
+  }
+
+  const commitsSection = createWorktreeNode("div", "wtCommits");
+  commitsSection.append(createWorktreeNode("div", "wtSectionTitle", "Recent commits"));
+  if (!commits.length) {
+    commitsSection.append(createWorktreeNode("div", "wtEmpty", "No commits found."));
+  } else {
+    for (const commit of commits) {
+      const row = createWorktreeNode("div", "wtCommitRow");
+      row.append(
+        createWorktreeNode("span", "wtCommitHash", commit.hash),
+        createWorktreeNode("span", "wtCommitSubject", commit.subject),
+        createWorktreeNode("span", "wtCommitAge", commit.age),
+      );
+      commitsSection.append(row);
+    }
+  }
+
+  worktreePanelEl.append(head, branchBar, pendingSection, changesBtn, changesList, commitsSection);
+  worktreePanelEl.hidden = !worktreePanelOpen;
+}
+
+function setWorktreePanelOpen(open: boolean) {
+  if (!worktreePanelEl || !worktreeEl) return;
+  worktreePanelOpen = open;
+  worktreePanelEl.hidden = !open;
+  worktreeEl.classList.toggle("open", open);
+  worktreeEl.setAttribute("aria-expanded", String(open));
+  if (open) void loadWorktreeMeta().catch((err) => console.warn("Could not refresh worktree log", err));
+}
+
 if (worktreeEl) {
   setWorktreeMeta({ label: __WORKTREE_LABEL__, fullLabel: __WORKTREE_FULL_LABEL__ });
   if (import.meta.env.DEV && __WORKTREE_LABEL__) {
     worktreeEl.tabIndex = 0;
     worktreeEl.setAttribute("role", "button");
-    worktreeEl.setAttribute("aria-label", "Edit worktree name");
+    worktreeEl.setAttribute("aria-label", "Open worktree log");
+    worktreeEl.setAttribute("aria-expanded", "false");
     worktreeEl.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      void editWorktreeName();
+      setWorktreePanelOpen(!worktreePanelOpen);
     });
     worktreeEl.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
       ev.preventDefault();
-      void editWorktreeName();
+      setWorktreePanelOpen(!worktreePanelOpen);
     });
-    void fetch("/__worktree")
-      .then((res) => (res.ok ? res.json() : undefined))
+    worktreePanelEl?.addEventListener("click", (ev) => ev.stopPropagation());
+    document.addEventListener("click", () => setWorktreePanelOpen(false));
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        setWorktreePanelOpen(false);
+        closeJsonEditor();
+      }
+    });
+    document.getElementById("jsonEditorModal")?.addEventListener("click", (ev) => {
+      if (ev.target === ev.currentTarget) closeJsonEditor();
+    });
+    void loadWorktreeMeta()
       .then((meta: WorktreeMeta | undefined) => {
         if (!meta) return;
-        setWorktreeMeta(meta);
         maybePromptForWorktreeName(meta);
       })
       .catch((err) => console.warn("Could not load worktree name", err));
