@@ -395,6 +395,7 @@ if (import.meta.env.DEV) {
     clearClip: () => game.clearAnimationTestClip(),
   });
   devMode?.onVisibilityChange((on) => {
+    document.body.classList.toggle("devMode", on);
     characterImporter.setVisible(on);
     propImporter.setVisible(on);
     animationTester.setVisible(on);

@@ -249,7 +249,7 @@ export class DevMode {
     banner.id = "devModeBanner";
     banner.textContent = "DEV MODE — immortal · click to select";
     banner.style.cssText =
-      "position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:60; display:none;" +
+      "position:fixed; bottom:122px; left:50%; transform:translateX(-50%); z-index:60; display:none;" +
       "background:#2a7a32e0; color:#eafaea; border:1px solid #9fe0a0; border-radius:6px;" +
       "padding:4px 12px; font:bold 12px system-ui,sans-serif; letter-spacing:0.5px; pointer-events:none;";
     document.body.appendChild(banner);
@@ -341,7 +341,7 @@ export class DevMode {
     this.setVisibilityControls(true);
     this.banner.style.display = "block";
     this.timeBar.style.display = "flex";
-    this.reflectScale(this.net.room?.state.timeScale ?? 1); // show current speed, don't change it
+    this.setScale(0);
     this.inspector.show();
     this.selectNone();
   }
@@ -498,13 +498,22 @@ export class DevMode {
     const unit = document.createElement("span");
     unit.textContent = control.unit;
     unit.style.cssText = "color:#6f8192;";
-    input.oninput = () => {
-      const displayValue = Number(input.value);
+    const commit = () => {
+      const displayValue = input.valueAsNumber;
       if (!Number.isFinite(displayValue)) return;
       const clamped = Math.max(control.min, Math.min(control.max, displayValue));
       const raw = control.integer ? Math.round(clamped * control.scale) : clamped * control.scale;
+      input.value = formatTuning(raw / control.scale);
       this.tuningValues.set(control.key, raw);
       this.net.sendDevTune(control.key, raw);
+    };
+    input.onchange = commit;
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit();
+        input.blur();
+      }
     };
     row.appendChild(name);
     row.appendChild(input);

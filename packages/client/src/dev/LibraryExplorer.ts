@@ -88,8 +88,10 @@ interface PlacementLite {
 
 const MODES = ["existing", "new"] as const;
 type Mode = (typeof MODES)[number];
-const CATEGORIES = ["all", "characters", "players", "resources", "structures", "objects", "items"] as const;
-type ExistingCategory = (typeof CATEGORIES)[number];
+const ENTRY_CATEGORIES = ["characters", "players", "resources", "structures", "objects", "items"] as const;
+type ExistingCategory = (typeof ENTRY_CATEGORIES)[number];
+const LIBRARY_TABS = ["items", "npc", "structures", "resources"] as const;
+type LibraryTab = (typeof LIBRARY_TABS)[number];
 const BUILTIN_NEW_ENTITIES: TemplateEntry[] = [
   { label: "Goblin", kind: "goblin", meta: "Enemy", category: "characters", thumb: { type: "model", model: "/models/goblin.glb", token: "runtime" } },
   { label: "Dummy", kind: "dummy", meta: "Training enemy", category: "characters", thumb: { type: "builtin", id: "dummy" } },
@@ -108,17 +110,16 @@ export class LibraryExplorer {
   private titleEl: HTMLElement;
   private summaryEl: HTMLElement;
   private searchEl: HTMLInputElement;
-  private filterEl: HTMLSelectElement;
   private gridEl: HTMLElement;
   private statusEl: HTMLElement;
   private modeBtns = new Map<Mode, HTMLButtonElement>();
+  private categoryBtns = new Map<LibraryTab, HTMLButtonElement>();
   private compactBtn: HTMLButtonElement;
   private uploadEl: HTMLInputElement;
   private open = false;
   private compact = false;
   private mode: Mode = "new";
-  private category: ExistingCategory = "all";
-  private newCategory: ExistingCategory = "all";
+  private activeTab: LibraryTab = "items";
   private previewDisposers: Array<() => void> = [];
 
   constructor(private deps: LibraryExplorerDeps) {
@@ -176,7 +177,7 @@ export class LibraryExplorer {
 
     const toolbar = document.createElement("div");
     toolbar.style.cssText =
-      "display:grid; grid-template-columns:minmax(180px, 1fr) 180px auto; gap:8px; align-items:center;" +
+      "display:grid; grid-template-columns:minmax(180px, 1fr) auto; gap:8px; align-items:center;" +
       "padding:10px 14px; background:#111720; border-bottom:1px solid #263245;";
     this.searchEl = document.createElement("input");
     this.searchEl.type = "search";
@@ -185,14 +186,6 @@ export class LibraryExplorer {
       "min-width:0; height:32px; border:1px solid #35445e; border-radius:6px; background:#0b0f16;" +
       "color:#eef4fb; padding:0 10px; outline:none;";
     this.searchEl.oninput = () => void this.render();
-    this.filterEl = document.createElement("select");
-    this.filterEl.style.cssText =
-      "height:32px; border:1px solid #35445e; border-radius:6px; background:#0b0f16; color:#eef4fb; padding:0 8px;";
-    this.filterEl.onchange = () => {
-      if (this.mode === "existing") this.category = this.filterEl.value as ExistingCategory;
-      else this.newCategory = this.filterEl.value as ExistingCategory;
-      void this.render();
-    };
     const uploadWrap = document.createElement("label");
     uploadWrap.textContent = "Import GLB";
     uploadWrap.style.cssText = smallButtonCss("#26362c", "#dff5df") + "display:inline-flex; align-items:center;";
@@ -209,7 +202,22 @@ export class LibraryExplorer {
       (e.target as HTMLInputElement).value = "";
     };
     uploadWrap.appendChild(this.uploadEl);
-    toolbar.append(this.searchEl, this.filterEl, uploadWrap);
+    toolbar.append(this.searchEl, uploadWrap);
+
+    const categoryTabs = document.createElement("div");
+    categoryTabs.style.cssText =
+      "display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; padding:0 14px 10px;" +
+      "background:#111720; border-bottom:1px solid #263245;";
+    categoryTabs.setAttribute("role", "tablist");
+    for (const tab of LIBRARY_TABS) {
+      const b = document.createElement("button");
+      b.textContent = tabLabel(tab);
+      b.setAttribute("role", "tab");
+      b.style.cssText = categoryTabCss(false);
+      b.onclick = () => this.setActiveTab(tab);
+      this.categoryBtns.set(tab, b);
+      categoryTabs.appendChild(b);
+    }
 
     this.gridEl = document.createElement("div");
     this.gridEl.style.cssText =
@@ -218,7 +226,7 @@ export class LibraryExplorer {
     this.statusEl.style.cssText =
       "padding:8px 14px; min-height:16px; border-top:1px solid #263245; color:#9fb0c0; background:#0d1118; font-size:11px;";
 
-    this.panel.append(head, toolbar, this.gridEl, this.statusEl);
+    this.panel.append(head, toolbar, categoryTabs, this.gridEl, this.statusEl);
     document.body.appendChild(this.panel);
     this.refreshChrome();
   }
@@ -274,20 +282,18 @@ export class LibraryExplorer {
     this.gridEl.style.gridTemplateColumns = this.compact ? "1fr" : "repeat(auto-fill, minmax(178px, 1fr))";
     this.gridEl.style.gap = this.compact ? "7px" : "12px";
     for (const [mode, btn] of this.modeBtns) btn.style.cssText = tabButtonCss(mode === this.mode);
-    this.renderFilterOptions();
+    for (const [tab, btn] of this.categoryBtns) {
+      const on = tab === this.activeTab;
+      btn.style.cssText = categoryTabCss(on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    }
+    this.uploadEl.parentElement!.style.display = this.mode === "new" && this.activeTab === "structures" ? "inline-flex" : "none";
   }
 
-  private renderFilterOptions() {
-    const opts = CATEGORIES.map((c) => [c, c === "all" ? "All types" : cap(c)] as const);
-    this.filterEl.innerHTML = "";
-    for (const [value, label] of opts) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      this.filterEl.appendChild(option);
-    }
-    this.filterEl.value = this.mode === "existing" ? this.category : this.newCategory;
-    this.uploadEl.parentElement!.style.display = this.mode === "new" ? "inline-flex" : "none";
+  private setActiveTab(tab: LibraryTab) {
+    this.activeTab = tab;
+    this.refreshChrome();
+    void this.render();
   }
 
   private async render() {
@@ -302,12 +308,13 @@ export class LibraryExplorer {
     const entries = await this.existingEntries();
     if (!this.open || this.mode !== "existing") return;
     const total = entries.reduce((sum, e) => sum + countNumber(e.badge), 0);
-    this.summaryEl.textContent = `${total} total entities in world`;
+    const tabTotal = entries.filter((e) => this.matchesActiveTab(e.category)).reduce((sum, e) => sum + countNumber(e.badge), 0);
+    this.summaryEl.textContent = `${tabLabel(this.activeTab)} · ${tabTotal} of ${total} world entities`;
     this.titleEl.textContent = "Entity Library";
     const q = normalized(this.searchEl.value);
     const filtered = entries.filter((e) => {
       const matchesSearch = !q || normalized(`${e.label} ${e.meta ?? ""} ${e.category}`).includes(q);
-      const matchesCategory = this.category === "all" || e.category === this.category;
+      const matchesCategory = this.matchesActiveTab(e.category);
       return matchesSearch && matchesCategory;
     });
     this.gridEl.innerHTML = "";
@@ -330,16 +337,20 @@ export class LibraryExplorer {
     const placed = this.deps.propManager.all();
     this.titleEl.textContent = "Entity Library";
     const total = BUILTIN_NEW_ENTITIES.length + defs.length + models.length;
-    this.summaryEl.textContent = `${total} new entity templates`;
     const q = normalized(this.searchEl.value);
     const matches = (label: string, meta: string, category: ExistingCategory) => {
       const matchesSearch = !q || normalized(`${label} ${meta} ${category}`).includes(q);
-      const matchesCategory = this.newCategory === "all" || this.newCategory === category;
+      const matchesCategory = this.matchesActiveTab(category);
       return matchesSearch && matchesCategory;
     };
     const builtin = BUILTIN_NEW_ENTITIES.filter((e) => matches(e.label, e.meta, e.category));
     const filteredDefs = defs.filter((d) => matches(d.name || d.id, `Custom character ${d.baseModel}`, "characters"));
     const filteredModels = models.filter((m) => matches(m.name, `Placed object ${m.model}`, "objects"));
+    const tabTotal =
+      BUILTIN_NEW_ENTITIES.filter((e) => this.matchesActiveTab(e.category)).length +
+      defs.filter(() => this.matchesActiveTab("characters")).length +
+      models.filter(() => this.matchesActiveTab("objects")).length;
+    this.summaryEl.textContent = `${tabLabel(this.activeTab)} · ${tabTotal} of ${total} templates`;
     this.gridEl.innerHTML = "";
     if (!builtin.length && !filteredDefs.length && !filteredModels.length) {
       this.gridEl.textContent = "no entities match";
@@ -360,9 +371,16 @@ export class LibraryExplorer {
     this.setStatus("Click an entity to add it, then move the cursor over the ground and click to place.");
   }
 
+  private matchesActiveTab(category: ExistingCategory): boolean {
+    if (this.activeTab === "items") return category === "items";
+    if (this.activeTab === "npc") return category === "characters" || category === "players";
+    if (this.activeTab === "structures") return category === "structures" || category === "objects";
+    return category === "resources";
+  }
+
   private existingCard(e: Entry): HTMLElement {
     const b = document.createElement("button");
-    b.style.cssText = cardCss(this.compact, e.dim);
+    b.style.cssText = cardCss(this.compact, !!e.dim);
     b.innerHTML = `
       <div style="display:flex; justify-content:space-between; gap:10px; align-items:start;">
         <div style="min-width:0;">
@@ -490,7 +508,7 @@ export class LibraryExplorer {
     out.push({ label: "Rock", badge: count(rocks), meta: "Resource", category: "resources", dim: !rocks.length, onClick: this.cycleIds("rock", rocks) });
 
     const houses = idsOf(st?.houses);
-    const crates = CRATES.map((c) => ({ x: c.x, z: c.z }));
+    const crates = CRATES.map((c: { x: number; z: number }) => ({ x: c.x, z: c.z }));
     out.push({ label: "House", badge: count(houses), meta: "Structure", category: "structures", dim: !houses.length, onClick: this.cycleIds("house", houses) });
     out.push({ label: "Crate", badge: count(crates), meta: "Static structure", category: "structures", dim: !crates.length, onClick: this.cyclePos("crate", crates) });
 
@@ -871,10 +889,20 @@ const initials = (s: string) =>
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
+const tabLabel = (tab: LibraryTab) => {
+  if (tab === "npc") return "NPC";
+  return cap(tab);
+};
+
 const tabButtonCss = (on: boolean) =>
   `cursor:pointer; background:${on ? "#3a7a40" : "#222a38"}; color:${on ? "#fff" : "#bcd"}; border:1px solid ${
     on ? "#7dd986" : "#3a4658"
   }; border-radius:6px; padding:6px 9px; font:12px system-ui,sans-serif;`;
+
+const categoryTabCss = (on: boolean) =>
+  "cursor:pointer; min-width:0; height:30px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" +
+  `background:${on ? "#2f6d37" : "#182130"}; color:${on ? "#f3fff3" : "#b9c7d8"};` +
+  `border:1px solid ${on ? "#75d381" : "#334257"}; border-radius:6px; padding:0 8px; font:700 11px system-ui,sans-serif;`;
 
 const smallButtonCss = (bg: string, color: string) =>
   `cursor:pointer; background:${bg}; color:${color}; border:1px solid #4a5b72; border-radius:6px; padding:6px 9px; font:12px system-ui,sans-serif;`;
