@@ -313,15 +313,16 @@ function mergeConflictReason(root: string, commit: string): string {
 }
 
 function incomingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
+  const refs = incomingGitCommitRefs(root, targetBranch, current).slice(0, 20);
+  const conflictReasons = currentMergeConflictReasons(root, refs);
   const commits: WorktreeCommit[] = [];
-  for (const ref of incomingGitCommitRefs(root, targetBranch, current)) {
-    if (mergeConflictReason(root, ref)) continue;
+  for (const ref of refs) {
     const raw = captureGit(["show", "-s", "--pretty=format:%h%x1f%s%x1f%cr", ref], root);
     if (!raw) continue;
     const [hash = "", subject = "", age = ""] = raw.split("\x1f");
     if (!hash || !subject) continue;
-    commits.push({ hash, subject, age });
-    if (commits.length >= 20) break;
+    const conflictReason = conflictReasons.get(ref) ?? "";
+    commits.push({ hash, subject, age, conflict: Boolean(conflictReason), conflictReason });
   }
   return commits;
 }
@@ -552,9 +553,69 @@ function unmergedPaths(cwd: string): string[] {
   return raw ? raw.split("\n").map((line) => line.trim()).filter(Boolean) : [];
 }
 
-function unresolvedConflictReason(paths: string[]): string {
+function unresolvedConflictReason(paths: string[], label = "Target worktree"): string {
   const shown = paths.slice(0, 3).join(", ");
-  return paths.length > 3 ? `Target worktree has unresolved conflicts: ${shown}, ...` : `Target worktree has unresolved conflicts: ${shown}`;
+  return paths.length > 3 ? `${label} has unresolved conflicts: ${shown}, ...` : `${label} has unresolved conflicts: ${shown}`;
+}
+
+function currentMergeBlockReason(root: string): string {
+  const currentUnmergedPaths = unmergedPaths(root);
+  if (currentUnmergedPaths.length) return unresolvedConflictReason(currentUnmergedPaths, "Current worktree");
+  const status = captureGit(["status", "--porcelain=v1"], root, false)?.trim() ?? "";
+  return status ? "Current worktree has uncommitted changes; commit or stash them before merging in." : "";
+}
+
+function abortMerge(cwd: string) {
+  try {
+    execGit(["merge", "--abort"], cwd);
+  } catch {
+    // The merge may have failed before Git entered a merge state.
+  }
+}
+
+function mergeSource(cwd: string, source: string) {
+  try {
+    execGit(["merge", "--no-edit", source], cwd);
+  } catch (err) {
+    abortMerge(cwd);
+    throw err;
+  }
+}
+
+function currentMergeConflictReasons(root: string, sources: string[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  if (!sources.length) return reasons;
+  const blockReason = currentMergeBlockReason(root);
+  if (blockReason) {
+    for (const source of sources) reasons.set(source, blockReason);
+    return reasons;
+  }
+  const baseHead = gitCommitRef(root, "HEAD");
+  if (!baseHead) {
+    for (const source of sources) reasons.set(source, "Current HEAD was not found");
+    return reasons;
+  }
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-in-preflight-"));
+  try {
+    execGit(["worktree", "add", "--quiet", "--detach", tmp, baseHead], root);
+    for (const source of sources) {
+      try {
+        execGit(["reset", "--hard", baseHead], tmp);
+        execGit(["clean", "-fd"], tmp);
+        mergeSource(tmp, source);
+      } catch (err) {
+        reasons.set(source, conflictSummaryFromMessage(gitErrorMessage(err)));
+      }
+    }
+  } catch (err) {
+    const reason = conflictSummaryFromMessage(gitErrorMessage(err));
+    for (const source of sources) reasons.set(source, reason);
+  } finally {
+    removeTemporaryWorktree(root, tmp);
+  }
+  return reasons;
 }
 
 function pendingTargetConflictReasons(root: string, targetBranch: string, sources: string[]): Map<string, string> {
@@ -706,7 +767,7 @@ function targetIncomingCommitRef(root: string, targetBranch: string, current: st
   if (!incomingGitCommitRefs(root, targetBranch, current).includes(resolved)) {
     throw new Error(`Target commit ${commit} is not pending for ${current}`);
   }
-  const conflictReason = mergeConflictReason(root, resolved);
+  const conflictReason = currentMergeConflictReasons(root, [resolved]).get(resolved) ?? "";
   if (conflictReason) throw new Error(`Cannot merge target history through ${commit}: ${conflictReason}`);
   return resolved;
 }
@@ -716,6 +777,8 @@ function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): Worktree
   const current = currentBranch(root);
   if (current === targetBranch) return worktreeInfo();
   const source = pendingCommitRef(root, targetBranch, rawCommit);
+  const conflictReason = pendingTargetConflictReasons(root, targetBranch, [source]).get(source) ?? "";
+  if (conflictReason) throw new Error(`Cannot merge ${String(rawCommit).trim()} into ${targetBranch}: ${conflictReason}`);
   ensureLocalTargetBranch(root, targetBranch);
   const target = targetMergeWorktree(root, targetBranch);
   try {
@@ -737,7 +800,7 @@ function mergeTargetIntoCurrentBranch(root: string, rawCommit?: unknown): Worktr
   const hasCommit = rawCommit !== undefined && rawCommit !== null && String(rawCommit).trim() !== "";
   const source = hasCommit ? targetIncomingCommitRef(root, targetBranch, current, rawCommit) : targetBranch;
   const sourceLabel = hasCommit ? String(rawCommit).trim() : targetBranch;
-  const conflictReason = mergeConflictReason(root, source);
+  const conflictReason = currentMergeConflictReasons(root, [source]).get(source) ?? "";
   if (conflictReason) throw new Error(`Cannot merge ${sourceLabel} into ${current}: ${conflictReason}`);
 
   const attachedBranch = captureGit(["branch", "--show-current"], root);
@@ -753,16 +816,7 @@ function mergeTargetIntoCurrentBranch(root: string, rawCommit?: unknown): Worktr
     }
   }
 
-  try {
-    execFileSync("git", ["merge", "--no-edit", source], { cwd: root, encoding: "utf8" });
-  } catch (err) {
-    try {
-      execFileSync("git", ["merge", "--abort"], { cwd: root, encoding: "utf8" });
-    } catch {
-      // The merge may have failed before Git entered a merge state.
-    }
-    throw err;
-  }
+  mergeSource(root, source);
 
   if (!attachedBranch) {
     const after = captureGit(["rev-parse", "HEAD"], root);
