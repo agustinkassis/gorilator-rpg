@@ -8,20 +8,31 @@ import {
   Github,
   Hammer,
   Loader2,
+  Monitor,
   Play,
+  Server,
   Shield,
   Swords,
   Trophy,
   Users,
   Zap,
 } from "lucide-react";
+import {
+  siBabylondotjs,
+  siExpress,
+  siNodedotjs,
+  siTypescript,
+  siVite,
+} from "simple-icons";
 import { useReveal, useScrollY, usePointerParallax } from "./hooks";
 import {
   connectNostr,
   fetchNostrProfile,
+  fetchPlayerSave,
   hasNostrExtension,
   shortNpub,
   type NostrIdentity,
+  type PlayerStatus,
 } from "./nostr";
 import "./styles.css";
 
@@ -35,6 +46,47 @@ const features = [
   { icon: Hammer, title: "Crafting" },
   { icon: Zap, title: "Resource Pickups" },
   { icon: Trophy, title: "Nostr Identity" },
+];
+
+/** A brand logo from simple-icons, in its official color (overridable for dark bg). */
+function BrandIcon({ icon, color }: { icon: { path: string; hex: string }; color?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill={color ?? `#${icon.hex}`} aria-hidden>
+      <path d={icon.path} />
+    </svg>
+  );
+}
+
+const colyseusLogo = () => <img src="/logos/colyseus.png" alt="" loading="lazy" />;
+const nostrLogo = () => (
+  <span className="techNostr">
+    <Ostrich />
+  </span>
+);
+
+const stack = [
+  {
+    side: "Client",
+    icon: Monitor,
+    items: [
+      { name: "Babylon.js", url: "https://www.babylonjs.com", logo: <BrandIcon icon={siBabylondotjs} /> },
+      { name: "Colyseus.js", url: "https://colyseus.io", logo: colyseusLogo() },
+      { name: "Vite", url: "https://vite.dev", logo: <BrandIcon icon={siVite} /> },
+      { name: "TypeScript", url: "https://www.typescriptlang.org", logo: <BrandIcon icon={siTypescript} /> },
+      { name: "Nostr", url: "https://nostr.com", logo: nostrLogo() },
+    ],
+  },
+  {
+    side: "Server",
+    icon: Server,
+    items: [
+      { name: "Colyseus", url: "https://colyseus.io", logo: colyseusLogo() },
+      { name: "Node.js", url: "https://nodejs.org", logo: <BrandIcon icon={siNodedotjs} /> },
+      { name: "Express", url: "https://expressjs.com", logo: <BrandIcon icon={siExpress} color="#e8d4ac" /> },
+      { name: "TypeScript", url: "https://www.typescriptlang.org", logo: <BrandIcon icon={siTypescript} /> },
+      { name: "Nostr", url: "https://nostr.com", logo: nostrLogo() },
+    ],
+  },
 ];
 
 /** A tiny ostrich — the "ostr" in Nostr. Sits in the connect button's glyph. */
@@ -102,6 +154,7 @@ function NostrButton() {
   const [identity, setIdentity] = useState<NostrIdentity | null>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "error">("idle");
   const [error, setError] = useState("");
+  const [save, setSave] = useState<PlayerStatus | null>(null);
 
   const onConnect = useCallback(async () => {
     setStatus("connecting");
@@ -120,6 +173,10 @@ function NostrButton() {
           setIdentity((cur) => (cur && cur.pubkey === id.pubkey ? { ...cur, ...profile } : cur));
         }
       });
+      // and their last realm status from their server-signed save
+      void fetchPlayerSave(id.pubkey).then((s) => {
+        if (s) setSave(s);
+      });
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Could not connect.");
@@ -128,19 +185,27 @@ function NostrButton() {
 
   if (identity) {
     return (
-      <a className="nostrChip connected" href={gameUrl} title={identity.npub}>
-        {identity.picture ? (
-          <img
-            src={identity.picture}
-            alt=""
-            onError={() => setIdentity((cur) => (cur ? { ...cur, picture: undefined } : cur))}
-          />
-        ) : (
-          <span className="nostrDot" />
+      <div className="nostrWrap">
+        <a className="nostrChip connected" href={gameUrl} target="_blank" rel="noreferrer" title={identity.npub}>
+          {identity.picture ? (
+            <img
+              src={identity.picture}
+              alt=""
+              onError={() => setIdentity((cur) => (cur ? { ...cur, picture: undefined } : cur))}
+            />
+          ) : (
+            <span className="nostrDot" />
+          )}
+          <span className="nostrName">{identity.name || shortNpub(identity.npub)}</span>
+          <span className="nostrGo">Enter →</span>
+        </a>
+        {save && (
+          <span className="nostrRealm">
+            Lv {save.level}
+            {save.realmWave != null ? ` · last realm wave ${save.realmWave}` : ""}
+          </span>
         )}
-        <span className="nostrName">{identity.name || shortNpub(identity.npub)}</span>
-        <span className="nostrGo">Enter →</span>
-      </a>
+      </div>
     );
   }
 
@@ -191,10 +256,10 @@ function Hero() {
           <a className="iconLink" href="/stats.html" aria-label="Live Servers">
             <Activity size={19} />
           </a>
-          <a className="iconLink" href={repoUrl} aria-label="GitHub repository">
+          <a className="iconLink" href={repoUrl} target="_blank" rel="noreferrer" aria-label="GitHub repository">
             <Github size={19} />
           </a>
-          <a className="playSmall" href={gameUrl} aria-label="Play Gorilator">
+          <a className="playSmall" href={gameUrl} target="_blank" rel="noreferrer" aria-label="Play Gorilator">
             <Play size={15} fill="currentColor" />
             <span>Play</span>
           </a>
@@ -202,7 +267,7 @@ function Hero() {
       </nav>
 
       <div className="heroInner" style={contentStyle}>
-        <a className="osBadge" href={repoUrl}>
+        <a className="osBadge" href={repoUrl} target="_blank" rel="noreferrer">
           <span className="eyebrowDot" />
           100% Open Source
         </a>
@@ -212,14 +277,14 @@ function Hero() {
         <p className="tagline">Defend La Crypta.</p>
 
         <div className="heroActions">
-          <a className="startBtn" href={gameUrl} aria-label="Start playing Gorilator">
+          <a className="startBtn" href={gameUrl} target="_blank" rel="noreferrer" aria-label="Start playing Gorilator">
             <span className="startGlow" aria-hidden />
             <Play size={26} fill="currentColor" />
             <span className="startLabel">START</span>
           </a>
           <div className="altActions">
             <NostrButton />
-            <a className="ghostBtn" href={repoUrl}>
+            <a className="ghostBtn" href={repoUrl} target="_blank" rel="noreferrer">
               <Github size={17} />
               <span>GitHub</span>
               <ArrowUpRight size={15} />
@@ -311,6 +376,7 @@ function InstallBox() {
 
 function App() {
   const featuresReveal = useReveal();
+  const stackReveal = useReveal();
   const ctaReveal = useReveal();
 
   return (
@@ -331,6 +397,41 @@ function App() {
       </section>
 
       <section
+        className={`band stack ${stackReveal.shown ? "in" : ""}`}
+        ref={stackReveal.ref as React.Ref<HTMLDivElement>}
+        aria-label="Tech stack"
+      >
+        <div className="sectionHead">
+          <h2 className={`sectionTitle ${stackReveal.shown ? "in" : ""}`}>Built with</h2>
+        </div>
+        <div className="stackGrid">
+          {stack.map((group) => {
+            const Icon = group.icon;
+            return (
+              <article className="stackCard" key={group.side}>
+                <div className="stackHead">
+                  <span className="featureIcon">
+                    <Icon size={24} />
+                  </span>
+                  <h3>{group.side}</h3>
+                </div>
+                <ul className="stackList">
+                  {group.items.map((item) => (
+                    <li key={item.name}>
+                      <a className="techItem" href={item.url} target="_blank" rel="noreferrer">
+                        {item.logo}
+                        <span>{item.name}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section
         className={`finalCta ${ctaReveal.shown ? "in" : ""}`}
         ref={ctaReveal.ref as React.Ref<HTMLDivElement>}
         aria-label="Start your own server"
@@ -339,7 +440,7 @@ function App() {
         <h2>Start your own server</h2>
         <p>Host your own Gorilator realm — installs natively, no Docker.</p>
         <InstallBox />
-        <a className="finalOs" href={repoUrl}>
+        <a className="finalOs" href={repoUrl} target="_blank" rel="noreferrer">
           <Github size={15} /> 100% Open Source · MIT
         </a>
       </section>
@@ -350,10 +451,10 @@ function App() {
           <a href="/stats.html">
             <Activity size={16} /> Live Servers
           </a>
-          <a href={repoUrl}>
+          <a href={repoUrl} target="_blank" rel="noreferrer">
             <Github size={16} /> Source
           </a>
-          <a href={gameUrl}>
+          <a href={gameUrl} target="_blank" rel="noreferrer">
             <Play size={14} fill="currentColor" /> Play
           </a>
         </div>

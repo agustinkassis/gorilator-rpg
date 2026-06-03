@@ -323,7 +323,7 @@ function Stats() {
           GORILATOR
         </a>
         <div className="footerLinks">
-          <a href={repoUrl}>
+          <a href={repoUrl} target="_blank" rel="noreferrer">
             <Github size={16} /> Source
           </a>
           <a href="/">

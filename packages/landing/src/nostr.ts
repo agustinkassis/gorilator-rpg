@@ -104,3 +104,66 @@ export function fetchNostrProfile(pubkey: string, timeoutMs = 8000): Promise<Nos
     );
   });
 }
+
+/** A returning player's last-known status, summarized from their server-signed save. */
+export interface PlayerStatus {
+  level: number;
+  realmWave?: number; // the wave of the realm they were last in, if any
+  reason?: string; // why the save was written (death / logout / home-fell …)
+  ts?: number; // save time (ms)
+}
+
+/**
+ * Read a player's last realm status from their server-signed save event
+ * (kind 30078, d = `gorilator-save-v1:<pubkey>`, authored by the game server). The
+ * save is parameterized-replaceable per (server, player), so several servers may
+ * each hold one — we keep the newest by save timestamp. Resolves null if none.
+ */
+export function fetchPlayerSave(pubkey: string, timeoutMs = 8000): Promise<PlayerStatus | null> {
+  return new Promise((resolve) => {
+    const pool = new SimplePool();
+    let best: PlayerStatus | null = null;
+    let settled = false;
+    let sub: { close: () => void } | null = null;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        sub?.close();
+      } catch {
+        /* ignore */
+      }
+      pool.close(RELAYS);
+      resolve(best);
+    };
+    timer = setTimeout(finish, timeoutMs);
+    sub = pool.subscribeMany(
+      RELAYS,
+      { kinds: [30078], "#d": [`gorilator-save-v1:${pubkey}`] },
+      {
+        onevent(ev) {
+          let save: { level?: number; reason?: string; ts?: number; realm?: { wave?: number } };
+          try {
+            save = JSON.parse(ev.content);
+          } catch {
+            return;
+          }
+          const ts = typeof save.ts === "number" ? save.ts : ev.created_at * 1000;
+          if (best && (best.ts ?? 0) >= ts) return; // keep the newest save
+          best = {
+            level: Number(save.level) || 1,
+            realmWave:
+              save.realm && typeof save.realm.wave === "number" ? save.realm.wave : undefined,
+            reason: typeof save.reason === "string" ? save.reason : undefined,
+            ts,
+          };
+        },
+        oneose() {
+          finish();
+        },
+      },
+    );
+  });
+}
