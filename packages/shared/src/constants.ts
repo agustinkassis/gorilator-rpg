@@ -73,6 +73,14 @@ export const CRIT_PER_LEVEL = 0.02; // +2% critical chance per level...
 export const CRIT_CHANCE_MAX = 0.6; // ...capped here so it never trivialises combat
 export const SPEED_PER_LEVEL = 0.207; // run speed (units/sec) gained per level (+15%, was 0.18)
 export const THROW_POWER_PER_LEVEL = 0.07; // +7% banana reach & damage per level
+// Player-only gains are punchier than generic character scaling so level-ups feel
+// substantial without making higher-level spawned enemies inherit the same bump.
+export const PLAYER_HP_PER_LEVEL = 37.5;
+export const PLAYER_ATTACK_PER_LEVEL = 7.5;
+export const PLAYER_ARMOR_PER_LEVEL = 3.75;
+export const PLAYER_CRIT_PER_LEVEL = 0.04375;
+export const PLAYER_SPEED_PER_LEVEL = 0.4;
+export const PLAYER_THROW_POWER_PER_LEVEL = 0.15;
 export const DUMMY_XP_REWARD = 12; // XP for killing a training dummy
 export const GOBLIN_XP_REWARD = 60; // XP for killing a goblin (+70%, was 35)
 export const PLAYER_KILL_XP = 60; // XP for killing another player
@@ -261,8 +269,8 @@ export const INV_ROWS = 5;
 export const INV_SLOTS = INV_COLS * INV_ROWS;
 export const MAX_STACK = 99;
 
-// Berserker Potion: a 1-minute power surge granted once per player per realm.
-export const BERSERKER_DURATION_MS = 60_000;   // 60-second buff
+// Berserker Potion: a 30-second power surge granted once per player per realm.
+export const BERSERKER_DURATION_MS = 30_000;   // 30-second buff
 export const BERSERKER_SPEED_MULT = 1.5;        // +50% move speed
 export const BERSERKER_ATTACK_MULT = 3.0;       // +200% attack (3×)
 export const BERSERKER_CRIT_CHANCE_ADD = 0.30;  // +30% crit chance (additive)

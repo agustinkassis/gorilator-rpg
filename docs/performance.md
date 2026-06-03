@@ -11,6 +11,10 @@ change helped instead of guessing.
 > benchmark. Run `pnpm perf perf-logs/<file>` to read it, or
 > `pnpm perf <baseline> <candidate>` to diff two runs.
 
+> This page documents **how the tooling works**. For the ongoing **benchmarking
+> process, scenarios, findings, and the optimization backlog**, see the living
+> [performance-research.md](performance-research.md).
+
 ---
 
 ## 1. The shape of the system
@@ -432,3 +436,14 @@ pnpm perf perf-logs/<file>              # summarize one run
 pnpm perf <baseline> <candidate>        # diff two runs (✓/✗)
 pnpm perf perf-logs/<file> --csv        # CSV for a spreadsheet
 ```
+
+---
+
+## 11. Continuous research
+
+Performance is an ongoing effort, not a one-off. The repeatable **process**, the
+**scenarios** we benchmark, the dated **findings**, and the prioritized
+**optimization backlog** live in [performance-research.md](performance-research.md)
+— the living journal. Profile, then log it there so the next change starts from
+evidence. (Current headline from the latest baseline: the **shadow pass** dominates
+the frame, rooted in a ~1.66 M-triangle house mesh — see the backlog.)

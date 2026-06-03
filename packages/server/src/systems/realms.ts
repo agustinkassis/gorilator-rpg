@@ -28,12 +28,30 @@ const APP_TAG = "gorilator"; // ["t","gorilator"] → apps can find every Gorila
 const PUBLISH_INTERVAL_MS = 30 * 60 * 1000; // republish the status every 30 minutes
 const CONTENT_VERSION = 1;
 
+/** One connected Nostr player in a snapshot (for the leaderboard). */
+export interface RealmPlayer {
+  pubkey: string; // hex nostr public key
+  name: string; // display name from the profile
+  level: number; // current level this realm
+  alive: boolean; // hp > 0 and not DEAD — i.e. has "survived" to the current wave
+}
+
 /** Live inputs the room hands the tracker each update. */
 export interface RealmSnapshot {
   connected: number; // players currently in the room
   live: number; // players currently alive (hp > 0, not DEAD)
   wave: number; // the room's current wave number
   npubs: string[]; // hex pubkeys of currently-connected Nostr players
+  players: RealmPlayer[]; // per-player stats for the leaderboard (Nostr players only)
+}
+
+/** A leaderboard entry: an npub's best run on this server. */
+interface LeaderEntry {
+  pubkey: string; // hex nostr public key
+  name: string; // most recent display name seen for this npub
+  level: number; // highest level ever reached
+  wave: number; // highest wave ever survived (reached while alive)
+  updatedAt: number; // epoch ms of the last improvement (tiebreaker: earlier wins)
 }
 
 /** A single game ("realm"): from first live defender to La Crypta falling (or the
@@ -74,6 +92,7 @@ class RealmTracker {
     process.env.SERVER_STATS_FILE?.trim() || join(process.cwd(), ".server-realms.json");
 
   private stats: PersistStats = { totalRealms: 0, maxRounds: 0 };
+  private leaders = new Map<string, LeaderEntry>(); // npub → best run (the leaderboard)
   private current: ActiveRealm | null = null;
   private last: EndedRealm | null = null; // the most recently ended realm (for the API)
   private seq = 0;
@@ -103,6 +122,7 @@ class RealmTracker {
     if (!this.current) return;
 
     for (const n of s.npubs) this.current.npubs.add(n);
+    for (const p of s.players) this.recordLeader(p, s.wave);
     if (s.wave > this.current.wave) this.current.wave = s.wave;
     if (s.connected > this.current.peakPlayers) this.current.peakPlayers = s.connected;
     if (this.current.wave > this.stats.maxRounds) {
@@ -124,6 +144,28 @@ class RealmTracker {
   /** Note a Nostr identity joining the live realm (snappier than the next snapshot). */
   noteNpub(pubkey: string): void {
     if (pubkey && this.current) this.current.npubs.add(pubkey);
+  }
+
+  /** Fold one player's current run into their all-time-best leaderboard entry.
+   *  "Wave survived" only counts while alive — a dead player hasn't survived the
+   *  wave they died on. Tracks the highest level + highest wave seen per npub. */
+  private recordLeader(p: RealmPlayer, wave: number): void {
+    if (!p.pubkey) return;
+    const prev = this.leaders.get(p.pubkey);
+    const level = Math.max(prev?.level ?? 0, p.level);
+    const bestWave = Math.max(prev?.wave ?? 0, p.alive ? wave : 0);
+    const name = p.name || prev?.name || "";
+    if (prev && level === prev.level && bestWave === prev.wave && name === prev.name) return;
+    this.leaders.set(p.pubkey, { pubkey: p.pubkey, name, level, wave: bestWave, updatedAt: Date.now() });
+    this.scheduleSave();
+  }
+
+  /** The leaderboard: best npubs ranked by level, then wave survived (earlier
+   *  achiever breaks ties). Capped at `limit`. */
+  private topPlayers(limit = 10): LeaderEntry[] {
+    return [...this.leaders.values()]
+      .sort((a, b) => b.level - a.level || b.wave - a.wave || a.updatedAt - b.updatedAt)
+      .slice(0, limit);
   }
 
   private startRealm(s: RealmSnapshot): void {
@@ -172,6 +214,7 @@ class RealmTracker {
       pubkey,
       totalRealms: this.stats.totalRealms,
       maxRounds: this.stats.maxRounds,
+      topPlayers: this.topPlayers(),
       currentRealm: this.current
         ? {
             id: this.current.id,
@@ -222,6 +265,18 @@ class RealmTracker {
         const raw = JSON.parse(readFileSync(this.statsFile, "utf8"));
         if (Number.isFinite(raw?.totalRealms)) this.stats.totalRealms = raw.totalRealms;
         if (Number.isFinite(raw?.maxRounds)) this.stats.maxRounds = raw.maxRounds;
+        if (Array.isArray(raw?.leaders)) {
+          for (const e of raw.leaders) {
+            if (typeof e?.pubkey !== "string" || !e.pubkey) continue;
+            this.leaders.set(e.pubkey, {
+              pubkey: e.pubkey,
+              name: typeof e.name === "string" ? e.name : "",
+              level: Number.isFinite(e.level) ? e.level : 0,
+              wave: Number.isFinite(e.wave) ? e.wave : 0,
+              updatedAt: Number.isFinite(e.updatedAt) ? e.updatedAt : 0,
+            });
+          }
+        }
       }
     } catch (err) {
       console.warn("[realm] could not read stats file", err);
@@ -233,7 +288,9 @@ class RealmTracker {
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       try {
-        writeFileSync(this.statsFile, JSON.stringify(this.stats));
+        // Persist only the top runs — the leaderboard, not every npub ever seen.
+        const payload = { ...this.stats, leaders: this.topPlayers(100) };
+        writeFileSync(this.statsFile, JSON.stringify(payload));
       } catch (err) {
         console.warn("[realm] could not write stats file", err);
       }

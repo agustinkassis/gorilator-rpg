@@ -29,7 +29,6 @@ import { entityDrops, entityFeature, entityHp } from "./entityFeatures";
 import { hasCustomItem, spawnCustomItem } from "./items";
 import type { DropRuleConfig } from "@rpg/shared";
 
-let dropSeq = 0; // id counter for misc drops (potions / future custom items)
 const STONE_GROUP_MIN = 2;
 const STONE_GROUP_MAX = 9;
 
@@ -53,7 +52,7 @@ export function dropItem(state: GameState, type: string, x: number, z: number): 
       break;
     case "potion": {
       const e = new Potion();
-      e.id = `potion-d${dropSeq++}`;
+      e.id = `potion-d${s.drop++}`;
       e.x = spot.x;
       e.z = spot.z;
       // default kind is "potion" (set by schema); no override needed
@@ -62,7 +61,7 @@ export function dropItem(state: GameState, type: string, x: number, z: number): 
     }
     case "berserker_potion": {
       const e = new Potion();
-      e.id = `bpot-d${dropSeq++}`;
+      e.id = `bpot-d${s.drop++}`;
       e.x = spot.x;
       e.z = spot.z;
       e.kind = "berserker_potion"; // signals the distinct green model + buff on collect
@@ -91,7 +90,16 @@ export function dropBerserkerPotion(state: GameState, x: number, z: number): voi
   dropItem(state, "berserker_potion", x, z);
 }
 
-const dropDamage = new WeakMap<object, Record<string, number>>();
+const dropDamage = new WeakMap<GameState, WeakMap<object, Record<string, number>>>();
+
+function damageMap(state: GameState): WeakMap<object, Record<string, number>> {
+  let map = dropDamage.get(state);
+  if (!map) {
+    map = new WeakMap<object, Record<string, number>>();
+    dropDamage.set(state, map);
+  }
+  return map;
+}
 
 function legacyResourceDrops(kind: "tree" | "rock"): DropRuleConfig[] {
   if (entityFeature(kind).drops !== undefined) return entityDrops(kind);
@@ -147,10 +155,11 @@ export function applyDamageDrops(
   if (totalHp <= 0 || amount <= 0) return;
   const rules = rulesFor(kind, id, modelId).filter((r) => r.trigger === "damage");
   if (!rules.length) return;
-  let rec = dropDamage.get(target);
+  const damage = damageMap(state);
+  let rec = damage.get(target);
   if (!rec) {
     rec = {};
-    dropDamage.set(target, rec);
+    damage.set(target, rec);
   }
   rules.forEach((rule, index) => {
     if (rule.quantity <= 0) return;
@@ -192,11 +201,11 @@ export function dropStructureLoot(state: GameState, kind: string, x: number, z: 
 }
 
 /** Per-room id counters for dropped pickups. */
-const seq = new WeakMap<GameState, { log: number; stone: number }>();
+const seq = new WeakMap<GameState, { log: number; stone: number; drop: number }>();
 function getSeq(state: GameState) {
   let s = seq.get(state);
   if (!s) {
-    s = { log: 0, stone: 0 };
+    s = { log: 0, stone: 0, drop: 0 };
     seq.set(state, s);
   }
   return s;
@@ -418,24 +427,20 @@ export function applyResourceConfig(state: GameState) {
   });
 }
 
-/** Round wipe → restart resources from scratch: restore every structure to pristine
- *  (all trees/rocks full + alive, timers cleared) and clear any loot dropped
- *  during the realm. Untouched structures encode no delta, so this is cheap. */
+/** Round wipe → restart resources from scratch: remove runtime-created resources,
+ *  rebuild the initial tree/rock maps, reset drop counters/accumulators, and clear
+ *  any loot dropped during the realm. */
 export function resetResources(state: GameState) {
-  state.trees.forEach((t) => {
-    t.alive = true;
-    t.hp = t.maxHp;
-    t.regrowTimer = 0;
-  });
-  state.rocks.forEach((r) => {
-    r.alive = true;
-    r.hp = r.maxHp;
-    r.regrowTimer = 0;
-    r.damageSinceStone = 0;
-  });
+  state.trees.clear();
+  state.rocks.clear();
   state.logs.clear();
   state.stones.clear();
   state.items.clear();
+  seq.set(state, { log: 0, stone: 0, drop: 0 });
+  dropDamage.set(state, new WeakMap<object, Record<string, number>>());
+  spawnTrees(state);
+  spawnRocks(state);
+  applyResourceConfig(state);
 }
 
 // ---- collection ----

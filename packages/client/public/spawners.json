@@ -1,11 +1,15 @@
 [
   {
     "id": "meshy_ai_timberstone_tow_1780338285634",
-    "x": 5.5,
-    "z": 22.8,
-    "intervalMs": 15000,
+    "ownerId": "meshy_ai_timberstone_tow_1780338285634",
+    "type": "goblin",
+    "x": 4.4,
+    "z": 23.5,
+    "intervalMs": 30000,
     "cap": 2,
-    "behavior": {}
+    "behavior": {
+      "stats": {}
+    }
   },
   {
     "id": "meshy_ai_timberstone_tow_1780338285634_1780491249381-spawn-mpy2iy86",
@@ -16,21 +20,27 @@
     "intervalMs": 33000,
     "cap": 3,
     "behavior": {
-      "brain": "attacks_home",
-      "stats": {}
+      "brain": "war_seeker",
+      "stats": {
+        "maxHp": 2000
+      },
+      "hp": 2000
     }
   },
   {
     "id": "meshy_ai_timberstone_tow_1780338285634_1780491200577-spawn-mpy2j7sp",
     "ownerId": "meshy_ai_timberstone_tow_1780338285634_1780491200577",
     "type": "goblin",
-    "x": 11.6,
-    "z": 144.6,
+    "x": 11.4,
+    "z": 144.7,
     "intervalMs": 26000,
     "cap": 3,
     "behavior": {
-      "brain": "attacks_home",
-      "stats": {}
+      "brain": "war_seeker",
+      "stats": {
+        "maxHp": 2000
+      },
+      "hp": 2000
     }
   },
   {
@@ -43,7 +53,10 @@
     "cap": 3,
     "behavior": {
       "brain": "attacks_home",
-      "stats": {}
+      "stats": {
+        "maxHp": 2000
+      },
+      "hp": 2000
     }
   },
   {
@@ -52,11 +65,14 @@
     "type": "goblin",
     "x": 27.2,
     "z": -5.9,
-    "intervalMs": 10000,
+    "intervalMs": 15000,
     "cap": 3,
     "behavior": {
-      "brain": "war_seeker",
-      "stats": {}
+      "brain": "attacks_home",
+      "stats": {
+        "maxHp": 2000
+      },
+      "hp": 2000
     }
   }
 ]

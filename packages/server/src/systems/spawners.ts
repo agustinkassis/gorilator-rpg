@@ -110,6 +110,13 @@ export function loadSpawners(): void {
   watchFile(path, { interval: 1500 }, () => applyFrom(path)); // fires even when the file first appears
 }
 
+/** Reset per-spawner countdowns and runtime ids to the same state as room start. */
+export function resetSpawners(): void {
+  timers.clear();
+  seq = 0;
+  for (const s of spawners) timers.set(s.id, 800);
+}
+
 /** Tick every spawner; spawn a goblin at its position when due + under its cap. */
 export function spawnerSystem(state: GameState, dt: number): void {
   if (!spawners.length || dt <= 0) return; // paused (dt 0) freezes spawning

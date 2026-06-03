@@ -10,15 +10,11 @@ import {
   KillEvent,
   HealEvent,
   ATTACK_RANGE,
-  ATTACK_COOLDOWN_MS,
-  ATTACK_WINDUP_MS,
   ATTACK_VARIANCE,
   ARMOR_K,
   CRIT_MULTIPLIER,
   CRIT_KNOCKBACK_DISTANCE,
-  DAMAGE_DIVISOR,
   HIT_STATE_MS,
-  PLAYER_RESPAWN_MS,
   DUMMY_RESPAWN_MS,
   GOBLIN_RESPAWN_MS,
   WORLD_SIZE,
@@ -40,6 +36,7 @@ import {
 } from "./resources";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
+import { devTuning } from "./devTuning";
 
 /** Anything that can be attacked or repaired by a player. */
 type Target = Player | Enemy | Tree | Rock | House;
@@ -73,7 +70,7 @@ function rollDamage(
     const critMult = attacker.critMultiplier > 0 ? attacker.critMultiplier : CRIT_MULTIPLIER;
     dmg *= critMult;
   }
-  return { amount: Math.max(1, Math.round(dmg / DAMAGE_DIVISOR)), crit };
+  return { amount: Math.max(1, Math.round(dmg / devTuning().damageDivisor)), crit };
 }
 
 
@@ -199,10 +196,11 @@ export function combatSystem(
       const dist = Math.hypot(dx, dz);
       if (dist <= attackReach(target)) {
         if (p.attackCooldown <= 0) {
+          const tuning = devTuning();
           p.rotY = Math.atan2(dx, dz);
           p.state = AnimState.ATTACK;
-          p.stateTimer = ATTACK_WINDUP_MS;
-          p.attackCooldown = ATTACK_COOLDOWN_MS;
+          p.stateTimer = tuning.playerAttackWindupMs;
+          p.attackCooldown = tuning.playerAttackCooldownMs;
           p.pendingHitId = p.attackTargetId;
         }
       } else if (p.path.length === 0) {
@@ -297,7 +295,7 @@ function connectHit(
   if (pe.hp <= 0) {
     pe.state = AnimState.DEAD;
     if (state.players.has(targetId)) {
-      pe.respawnTimer = PLAYER_RESPAWN_MS;
+      pe.respawnTimer = devTuning().playerRespawnMs;
       applyDeathXpPenalty(pe as Player); // dying costs 30% of XP (can de-level)
       emitKill({
         killerId: attacker.id,

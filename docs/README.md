@@ -30,6 +30,7 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [entities.md](entities.md) | Every world object + its synchronized fields + behaviour (player, goblin, dummy, La Crypta, tree, rock, stone, log, potion, banana) |
 | [configuration.md](configuration.md) | The `constants.ts` tuning reference, environment variables, and the runtime JSON config files (props, spawners, characters, audio, resources) |
 | [performance.md](performance.md) | The perf pipeline: the F3 overlay, tagging any work, recording benchmarks, the JSONL data format, and the `pnpm perf` analyzer (FPS / CPU / GPU / memory) |
+| [performance-research.md](performance-research.md) | The living benchmarking **process**, standard scenarios, dated **findings log**, and the prioritized **optimization backlog** (continuous perf research) |
 | [nostr.md](nostr.md) | All Nostr events: login challenge, server-signed player saves, and the server/realm **discovery** event (+ the public HTTP API) |
 
 Related top-level docs: [`../README.md`](../README.md) (quick start + stack),

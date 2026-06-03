@@ -60,10 +60,11 @@
     "id": "meshy_ai_timberstone_tow_1780338285634_1780491200577",
     "name": "meshy_ai_timberstone_tow_1780338285634",
     "model": "/models/meshy_ai_timberstone_tow_1780338285634.glb",
-    "x": 11.6,
-    "z": 144.6,
+    "x": 11.4,
+    "z": 144.7,
     "scale": 5,
-    "rotationY": 0
+    "rotationY": 0,
+    "collisionRadius": 2.5
   },
   {
     "id": "meshy_ai_timberstone_tow_1780338285634_1780491249381",
@@ -72,7 +73,8 @@
     "x": 17.1,
     "z": 145.2,
     "scale": 5,
-    "rotationY": 0
+    "rotationY": 0,
+    "collisionRadius": 2.5
   },
   {
     "id": "meshy_ai_timberstone_tow_1780338285634_1780491252333",
@@ -81,6 +83,7 @@
     "x": 4.9,
     "z": 147.9,
     "scale": 5,
-    "rotationY": 0
+    "rotationY": 0,
+    "collisionRadius": 2.5
   }
 ]

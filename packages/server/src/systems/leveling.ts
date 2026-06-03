@@ -3,14 +3,13 @@ import {
   Player,
   XpEvent,
   xpForLevel,
-  statsForLevel,
-  HP_PER_LEVEL,
-  ATTACK_PER_LEVEL,
-  ARMOR_PER_LEVEL,
-  CRIT_PER_LEVEL,
   CRIT_CHANCE_MAX,
-  SPEED_PER_LEVEL,
-  THROW_POWER_PER_LEVEL,
+  PLAYER_HP_PER_LEVEL,
+  PLAYER_ATTACK_PER_LEVEL,
+  PLAYER_ARMOR_PER_LEVEL,
+  PLAYER_CRIT_PER_LEVEL,
+  PLAYER_SPEED_PER_LEVEL,
+  PLAYER_THROW_POWER_PER_LEVEL,
   MOVE_SPEED,
   PLAYER_MAX_HP,
   PLAYER_ATTACK,
@@ -39,12 +38,12 @@ export function awardXp(p: Player, amount: number): number {
   while (p.xp >= xpForLevel(p.level)) {
     p.xp -= xpForLevel(p.level);
     p.level += 1;
-    p.maxHp += HP_PER_LEVEL;
-    p.attack += ATTACK_PER_LEVEL;
-    p.armor += ARMOR_PER_LEVEL;
-    p.critChance = Math.min(CRIT_CHANCE_MAX, p.critChance + CRIT_PER_LEVEL);
-    p.moveSpeed += SPEED_PER_LEVEL;
-    p.throwPower += THROW_POWER_PER_LEVEL;
+    p.maxHp += PLAYER_HP_PER_LEVEL;
+    p.attack += PLAYER_ATTACK_PER_LEVEL;
+    p.armor += PLAYER_ARMOR_PER_LEVEL;
+    p.critChance = Math.min(CRIT_CHANCE_MAX, p.critChance + PLAYER_CRIT_PER_LEVEL);
+    p.moveSpeed += PLAYER_SPEED_PER_LEVEL;
+    p.throwPower += PLAYER_THROW_POWER_PER_LEVEL;
     p.hp = p.maxHp; // a fresh level restores you to full
     gained += 1;
   }
@@ -72,16 +71,13 @@ function totalXp(level: number, xp: number): number {
 /** Recompute a player's stats from its (possibly reduced) level — base + per-level
  *  growth — so de-leveling sheds exactly the stats those levels had granted. */
 function applyLevelStats(p: Player): void {
-  const s = statsForLevel(
-    { maxHp: PLAYER_MAX_HP, attack: PLAYER_ATTACK, armor: PLAYER_ARMOR, critChance: PLAYER_CRIT_CHANCE },
-    p.level,
-  );
-  p.maxHp = s.maxHp;
-  p.attack = s.attack;
-  p.armor = s.armor;
-  p.critChance = s.critChance;
-  p.moveSpeed = MOVE_SPEED + (p.level - 1) * SPEED_PER_LEVEL;
-  p.throwPower = 1 + (p.level - 1) * THROW_POWER_PER_LEVEL;
+  const levels = Math.max(1, p.level) - 1;
+  p.maxHp = PLAYER_MAX_HP + levels * PLAYER_HP_PER_LEVEL;
+  p.attack = PLAYER_ATTACK + levels * PLAYER_ATTACK_PER_LEVEL;
+  p.armor = PLAYER_ARMOR + levels * PLAYER_ARMOR_PER_LEVEL;
+  p.critChance = Math.min(CRIT_CHANCE_MAX, PLAYER_CRIT_CHANCE + levels * PLAYER_CRIT_PER_LEVEL);
+  p.moveSpeed = MOVE_SPEED + levels * PLAYER_SPEED_PER_LEVEL;
+  p.throwPower = 1 + levels * PLAYER_THROW_POWER_PER_LEVEL;
 }
 
 /**

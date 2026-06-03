@@ -12,6 +12,30 @@ import type { CharacterManager } from "./CharacterManager";
 import type { CharacterDef } from "../entities/characterDef";
 import type { Game } from "../game/Game";
 import {
+  type DevActionId,
+  type DevTuningKey,
+  WAVE_FIRST_DELAY_MS,
+  WAVE_INTERVAL_BASE_MS,
+  WAVE_INTERVAL_STEP_MS,
+  WAVE_INTERVAL_MAX_MS,
+  WAVE_SPAWN_SPREAD_MS,
+  WAVE_SIZE_BASE,
+  WAVE_SIZE_PER_PLAYER,
+  WAVE_SIZE_PER_WAVE,
+  WAVE_SIZE_MAX,
+  GOBLIN_LIVE_CAP,
+  ATTACK_COOLDOWN_MS,
+  ATTACK_WINDUP_MS,
+  GOBLIN_ATTACK_COOLDOWN_MS,
+  GOBLIN_ATTACK_WINDUP_MS,
+  GOBLIN_ATTACK_RANGE,
+  GOBLIN_AGGRO_RADIUS,
+  GOBLIN_DEAGGRO_RADIUS,
+  GOBLIN_HOUSE_DAMAGE,
+  DAMAGE_DIVISOR,
+  PLAYER_RESPAWN_MS,
+} from "@rpg/shared";
+import {
   StructureMask,
   MaskPoint,
   cloneStructureMask,
@@ -43,6 +67,8 @@ export class DevMode {
   private addBtn: HTMLButtonElement;
   private itemsBtn: HTMLButtonElement;
   private entitiesBtn: HTMLButtonElement;
+  private gameplayBtn: HTMLButtonElement;
+  private gameplayPanel: HTMLElement;
   private banner: HTMLElement;
   private timeBar: HTMLElement;
   private timeButtons: { scale: number; el: HTMLButtonElement }[] = [];
@@ -55,6 +81,8 @@ export class DevMode {
   private maskMat: StandardMaterial | null = null;
   private maskSelectedMat: StandardMaterial | null = null;
   private characterDefs: CharacterDef[] = [];
+  private gameplayOpen = false;
+  private tuningValues = new Map<DevTuningKey, number>();
 
   /** Wire in placed-character management so they're selectable/draggable/deletable. */
   setCharacterManager(cm: CharacterManager) {
@@ -180,6 +208,27 @@ export class DevMode {
     document.body.appendChild(entitiesBtn);
     this.entitiesBtn = entitiesBtn;
 
+    const gameplayBtn = document.createElement("button");
+    gameplayBtn.id = "devGameplayBtn";
+    gameplayBtn.textContent = "⚙ Gameplay";
+    gameplayBtn.style.cssText =
+      "position:fixed; right:16px; bottom:384px; z-index:40; cursor:pointer; display:none;" +
+      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
+      "padding:6px 10px; font:12px system-ui,sans-serif;";
+    gameplayBtn.onclick = () => this.toggleGameplayPanel();
+    document.body.appendChild(gameplayBtn);
+    this.gameplayBtn = gameplayBtn;
+
+    const gameplayPanel = document.createElement("div");
+    gameplayPanel.id = "devGameplayPanel";
+    gameplayPanel.style.cssText =
+      "position:fixed; left:16px; top:76px; width:320px; max-height:calc(100vh - 96px); z-index:47; display:none;" +
+      "overflow-y:auto; overscroll-behavior:contain; background:#10131af2; color:#e8e8e8; border:2px solid #4a9a52;" +
+      "border-radius:10px; box-shadow:0 8px 30px #000a; font:12px/1.45 system-ui,sans-serif;";
+    document.body.appendChild(gameplayPanel);
+    this.gameplayPanel = gameplayPanel;
+    this.renderGameplayPanel();
+
     this.explorer = new LibraryExplorer({
       net: this.net,
       propManager: this.propManager,
@@ -288,6 +337,7 @@ export class DevMode {
     this.addBtn.style.display = "block";
     this.itemsBtn.style.display = "block";
     this.entitiesBtn.style.display = "block";
+    this.gameplayBtn.style.display = "block";
     this.setVisibilityControls(true);
     this.banner.style.display = "block";
     this.timeBar.style.display = "flex";
@@ -310,6 +360,9 @@ export class DevMode {
     this.addBtn.style.display = "none";
     this.itemsBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
+    this.gameplayBtn.style.display = "none";
+    this.gameplayPanel.style.display = "none";
+    this.gameplayOpen = false;
     this.setVisibilityControls(false);
     this.banner.style.display = "none";
     this.timeBar.style.display = "none";
@@ -346,6 +399,117 @@ export class DevMode {
     }
     this.banner.textContent =
       scale === 0 ? "DEV MODE — ⏸ PAUSED · click to select" : `DEV MODE — ${scale}× · immortal · click to select`;
+  }
+
+  private toggleGameplayPanel() {
+    this.gameplayOpen = !this.gameplayOpen;
+    this.gameplayPanel.style.display = this.gameplayOpen ? "block" : "none";
+    this.gameplayBtn.style.background = this.gameplayOpen ? "#3a7a40" : "#2a3242";
+    this.gameplayBtn.style.color = this.gameplayOpen ? "#fff" : "#9fe0a0";
+  }
+
+  private renderGameplayPanel() {
+    this.gameplayPanel.innerHTML = "";
+    const head = document.createElement("div");
+    head.style.cssText =
+      "position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between;" +
+      "padding:8px 10px; background:#1c2230; border-bottom:1px solid #4a9a52;";
+    const title = document.createElement("b");
+    title.textContent = "Gameplay";
+    title.style.color = "#9fe0a0";
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.title = "Close";
+    close.style.cssText =
+      "width:24px; height:24px; cursor:pointer; background:#2a3242; color:#cfe; border:1px solid #3a4658; border-radius:5px;";
+    close.onclick = () => this.toggleGameplayPanel();
+    head.appendChild(title);
+    head.appendChild(close);
+    this.gameplayPanel.appendChild(head);
+
+    const body = document.createElement("div");
+    body.style.cssText = "padding:10px; display:flex; flex-direction:column; gap:12px;";
+    this.gameplayPanel.appendChild(body);
+
+    const actions = this.gameplaySection("Actions");
+    const actionGrid = document.createElement("div");
+    actionGrid.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:6px;";
+    for (const action of DEV_GAMEPLAY_ACTIONS) {
+      const btn = document.createElement("button");
+      btn.textContent = action.label;
+      btn.style.cssText =
+        "cursor:pointer; min-height:32px; border-radius:6px; border:1px solid #3a4658; color:#fff; font:600 12px system-ui,sans-serif;" +
+        (action.danger ? "background:#5a3030;" : "background:#2d6840;");
+      btn.onclick = () => this.net.sendDevAction(action.id);
+      actionGrid.appendChild(btn);
+    }
+    actions.appendChild(actionGrid);
+    body.appendChild(actions);
+
+    let activeSection = "";
+    let section: HTMLElement | null = null;
+    for (const control of DEV_TUNING_CONTROLS) {
+      if (control.section !== activeSection) {
+        activeSection = control.section;
+        section = this.gameplaySection(activeSection);
+        body.appendChild(section);
+      }
+      section?.appendChild(this.tuningRow(control));
+    }
+
+    const defaults = document.createElement("button");
+    defaults.textContent = "Defaults";
+    defaults.style.cssText =
+      "cursor:pointer; border-radius:6px; border:1px solid #3a4658; background:#2a3242; color:#cfe; padding:8px; font:600 12px system-ui,sans-serif;";
+    defaults.onclick = () => {
+      this.tuningValues.clear();
+      for (const c of DEV_TUNING_CONTROLS) this.net.sendDevTune(c.key, c.defaultValue);
+      this.renderGameplayPanel();
+    };
+    body.appendChild(defaults);
+  }
+
+  private gameplaySection(title: string): HTMLElement {
+    const wrap = document.createElement("section");
+    wrap.style.cssText = "display:flex; flex-direction:column; gap:7px;";
+    const label = document.createElement("div");
+    label.textContent = title;
+    label.style.cssText = "color:#9fe0a0; font-weight:700; font-size:11px; text-transform:uppercase;";
+    wrap.appendChild(label);
+    return wrap;
+  }
+
+  private tuningRow(control: TuningControl): HTMLElement {
+    const row = document.createElement("label");
+    row.style.cssText = "display:grid; grid-template-columns:1fr 86px 44px; align-items:center; gap:7px;";
+    const name = document.createElement("span");
+    name.textContent = control.label;
+    name.style.cssText = "color:#9fb0c0;";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = String(control.min);
+    input.max = String(control.max);
+    input.step = String(control.step);
+    const rawValue = this.tuningValues.get(control.key) ?? control.defaultValue;
+    input.value = formatTuning(rawValue / control.scale);
+    input.style.cssText =
+      "width:86px; box-sizing:border-box; background:#0c1018; color:#e8e8e8; border:1px solid #3a4658;" +
+      "border-radius:5px; padding:4px 5px; text-align:right; font:12px system-ui,sans-serif;";
+    const unit = document.createElement("span");
+    unit.textContent = control.unit;
+    unit.style.cssText = "color:#6f8192;";
+    input.oninput = () => {
+      const displayValue = Number(input.value);
+      if (!Number.isFinite(displayValue)) return;
+      const clamped = Math.max(control.min, Math.min(control.max, displayValue));
+      const raw = control.integer ? Math.round(clamped * control.scale) : clamped * control.scale;
+      this.tuningValues.set(control.key, raw);
+      this.net.sendDevTune(control.key, raw);
+    };
+    row.appendChild(name);
+    row.appendChild(input);
+    row.appendChild(unit);
+    return row;
   }
 
   // ---- adding props (library + upload) ----
@@ -1726,6 +1890,274 @@ const BASE_SPAWN_TYPES = [
   { value: "tree", label: "Tree" },
   { value: "rock", label: "Rock" },
 ];
+
+interface GameplayAction {
+  id: DevActionId;
+  label: string;
+  danger?: boolean;
+}
+
+const DEV_GAMEPLAY_ACTIONS: GameplayAction[] = [
+  { id: "reset_realm", label: "Start over", danger: true },
+  { id: "force_next_wave", label: "Next wave" },
+  { id: "kill_all_enemies", label: "Kill enemies", danger: true },
+  { id: "level_up_player", label: "Level up" },
+];
+
+interface TuningControl {
+  key: DevTuningKey;
+  label: string;
+  section: string;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  scale: number;
+  integer?: boolean;
+}
+
+const sec = 1000;
+const DEV_TUNING_CONTROLS: TuningControl[] = [
+  {
+    key: "waveFirstDelayMs",
+    label: "First wave delay",
+    section: "Waves",
+    defaultValue: WAVE_FIRST_DELAY_MS,
+    min: 0,
+    max: 600,
+    step: 1,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "waveIntervalBaseMs",
+    label: "Rest base",
+    section: "Waves",
+    defaultValue: WAVE_INTERVAL_BASE_MS,
+    min: 0,
+    max: 900,
+    step: 1,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "waveIntervalStepMs",
+    label: "Rest per wave",
+    section: "Waves",
+    defaultValue: WAVE_INTERVAL_STEP_MS,
+    min: 0,
+    max: 300,
+    step: 1,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "waveIntervalMaxMs",
+    label: "Rest max",
+    section: "Waves",
+    defaultValue: WAVE_INTERVAL_MAX_MS,
+    min: 0,
+    max: 1800,
+    step: 1,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "waveSpawnSpreadMs",
+    label: "Spawn spread",
+    section: "Waves",
+    defaultValue: WAVE_SPAWN_SPREAD_MS,
+    min: 0,
+    max: 300,
+    step: 1,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "waveSizeBase",
+    label: "Size base",
+    section: "Wave size",
+    defaultValue: WAVE_SIZE_BASE,
+    min: 0,
+    max: 200,
+    step: 1,
+    unit: "",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "waveSizePerPlayer",
+    label: "Per player",
+    section: "Wave size",
+    defaultValue: WAVE_SIZE_PER_PLAYER,
+    min: 0,
+    max: 50,
+    step: 1,
+    unit: "",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "waveSizePerWave",
+    label: "Per wave",
+    section: "Wave size",
+    defaultValue: WAVE_SIZE_PER_WAVE,
+    min: 0,
+    max: 50,
+    step: 1,
+    unit: "",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "waveSizeMax",
+    label: "Size max",
+    section: "Wave size",
+    defaultValue: WAVE_SIZE_MAX,
+    min: 1,
+    max: 500,
+    step: 1,
+    unit: "",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "goblinLiveCap",
+    label: "Live cap",
+    section: "Wave size",
+    defaultValue: GOBLIN_LIVE_CAP,
+    min: 0,
+    max: 500,
+    step: 1,
+    unit: "",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "playerAttackCooldownMs",
+    label: "Player cooldown",
+    section: "Combat",
+    defaultValue: ATTACK_COOLDOWN_MS,
+    min: 0,
+    max: 10,
+    step: 0.05,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "playerAttackWindupMs",
+    label: "Player windup",
+    section: "Combat",
+    defaultValue: ATTACK_WINDUP_MS,
+    min: 0,
+    max: 5,
+    step: 0.05,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "enemyAttackCooldownMs",
+    label: "Enemy cooldown",
+    section: "Combat",
+    defaultValue: GOBLIN_ATTACK_COOLDOWN_MS,
+    min: 0,
+    max: 20,
+    step: 0.05,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "enemyAttackWindupMs",
+    label: "Enemy windup",
+    section: "Combat",
+    defaultValue: GOBLIN_ATTACK_WINDUP_MS,
+    min: 0,
+    max: 10,
+    step: 0.05,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+  {
+    key: "enemyAttackRange",
+    label: "Enemy range",
+    section: "Enemy brain",
+    defaultValue: GOBLIN_ATTACK_RANGE,
+    min: 0.2,
+    max: 20,
+    step: 0.1,
+    unit: "u",
+    scale: 1,
+  },
+  {
+    key: "enemyAggroRadius",
+    label: "Aggro radius",
+    section: "Enemy brain",
+    defaultValue: GOBLIN_AGGRO_RADIUS,
+    min: 0,
+    max: 80,
+    step: 0.5,
+    unit: "u",
+    scale: 1,
+  },
+  {
+    key: "enemyDeaggroRadius",
+    label: "Deaggro radius",
+    section: "Enemy brain",
+    defaultValue: GOBLIN_DEAGGRO_RADIUS,
+    min: 0,
+    max: 120,
+    step: 0.5,
+    unit: "u",
+    scale: 1,
+  },
+  {
+    key: "goblinHouseDamage",
+    label: "House damage",
+    section: "Enemy brain",
+    defaultValue: GOBLIN_HOUSE_DAMAGE,
+    min: 0,
+    max: 1000,
+    step: 1,
+    unit: "hp",
+    scale: 1,
+  },
+  {
+    key: "damageDivisor",
+    label: "Damage divisor",
+    section: "Damage",
+    defaultValue: DAMAGE_DIVISOR,
+    min: 0.1,
+    max: 100,
+    step: 0.1,
+    unit: "",
+    scale: 1,
+  },
+  {
+    key: "playerRespawnMs",
+    label: "Player respawn",
+    section: "Damage",
+    defaultValue: PLAYER_RESPAWN_MS,
+    min: 0,
+    max: 120,
+    step: 0.5,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+];
+
+const formatTuning = (v: number) =>
+  Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, "");
 
 /** Per-resource-kind drop config (mirrors the server/Vite DropCfg). */
 interface DropCfg {

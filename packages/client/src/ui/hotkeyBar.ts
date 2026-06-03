@@ -4,6 +4,10 @@ import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 const KEYS = ["Q", "W", "E", "R"];
 const THROWABLE: ReadonlySet<string> = new Set(["banana", "stone"]); // hold the key to charge + throw
 
+type HeldItem =
+  | { source: "inventory"; type: ItemType; inventorySlot: number }
+  | { source: "character"; type: ItemType; characterSlot: string };
+
 /**
  * LoL-style ability/item bar (Q W E R) sitting just above the XP bar. Drag an item
  * from the inventory onto a slot to bind that item type to the key. Pressing the
@@ -19,7 +23,7 @@ export class HotkeyBar {
   private autoFilled = new Set<string>(); // item types already auto-assigned a quick slot
   private dragSrc: number | null = null; // quick slot currently being dragged
   private dropHandled = false; // a drag that landed on a quick slot (so dragend won't clear it)
-  private heldInventoryType: ItemType | "" = "";
+  private heldItem: HeldItem | null = null;
 
   constructor(private useSlot: (index: number) => void) {
     const bar = document.createElement("div");
@@ -71,11 +75,14 @@ export class HotkeyBar {
       });
       slot.addEventListener("click", () => {
         if (document.body.classList.contains("preGame")) return;
-        const heldType = this.currentHeldInventoryType();
-        if (heldType) {
-          this.binds[i] = heldType;
+        const held = this.currentHeldItem();
+        if (held?.source === "inventory") {
+          this.binds[i] = held.type;
           this.render();
-          window.dispatchEvent(new Event("inventory:consumeHeld"));
+          window.dispatchEvent(new Event("itemHold:consume"));
+          return;
+        }
+        if (held?.source === "character") {
           return;
         }
         this.activate(i);
@@ -127,9 +134,8 @@ export class HotkeyBar {
       // throwables (banana/stone) are hold+release (owned by ClickToMove); others use here
       if (this.binds[i] && !THROWABLE.has(this.binds[i])) this.activate(i);
     });
-    window.addEventListener("inventory:heldChanged", (e) => {
-      const type = (e as CustomEvent<{ type?: ItemType | "" }>).detail?.type ?? "";
-      this.heldInventoryType = type || "";
+    window.addEventListener("itemHold:changed", (e) => {
+      this.heldItem = (e as CustomEvent<{ held: HeldItem | null }>).detail?.held ?? null;
     });
     window.addEventListener("items:changed", () => this.render());
     void loadItemDefs().then(() => this.render());
@@ -187,9 +193,20 @@ export class HotkeyBar {
     if (idx >= 0) this.useSlot(idx);
   }
 
-  private currentHeldInventoryType(): ItemType | "" {
-    const type = this.heldInventoryType || (document.body.dataset.invHeldType as ItemType | undefined) || "";
-    return type;
+  private currentHeldItem(): HeldItem | null {
+    if (this.heldItem) return this.heldItem;
+    const source = document.body.dataset.itemHoldSource;
+    const type = document.body.dataset.itemHoldType as ItemType | undefined;
+    if (!source || !type) return null;
+    if (source === "inventory") {
+      const inventorySlot = Number(document.body.dataset.itemHoldInventorySlot);
+      return Number.isFinite(inventorySlot) ? { source, type, inventorySlot } : null;
+    }
+    if (source === "character") {
+      const characterSlot = document.body.dataset.itemHoldCharacterSlot;
+      return characterSlot ? { source, type, characterSlot } : null;
+    }
+    return null;
   }
 
   private render() {

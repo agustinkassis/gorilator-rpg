@@ -38,6 +38,7 @@ function addPotion(state: GameState, m: PotionMeta) {
 }
 
 export function spawnInitialPotions(state: GameState) {
+  state.potions.clear();
   const m: PotionMeta = { seq: 0, respawnTimer: POTION_RESPAWN_MS };
   meta.set(state, m);
   for (let i = 0; i < POTION_COUNT; i++) addPotion(state, m);

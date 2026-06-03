@@ -22,6 +22,8 @@ import {
   ROOM_NAME,
   SERVER_PORT,
   NOSTR_TAKEOVER_CODE,
+  type DevActionId,
+  type DevTuningKey,
 } from "@rpg/shared";
 
 export interface NetHandlers {
@@ -390,5 +392,15 @@ export class NetworkClient {
   /** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */
   sendDevTime(scale: number) {
     this.room?.send("dev_time", { scale });
+  }
+
+  /** Trigger one high-level Dev Mode gameplay command. */
+  sendDevAction(action: DevActionId) {
+    this.room?.send("dev_action", { action });
+  }
+
+  /** Override one runtime gameplay tuning value for this server process. */
+  sendDevTune(key: DevTuningKey, value: number) {
+    this.room?.send("dev_tune", { key, value });
   }
 }

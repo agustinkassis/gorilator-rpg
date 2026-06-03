@@ -1,6 +1,11 @@
 import { InventorySlot, ItemType, INV_SLOTS, INV_COLS } from "@rpg/shared";
 import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
+type HeldItem =
+  | { source: "inventory"; type: ItemType; inventorySlot: number }
+  | { source: "character"; type: ItemType; characterSlot: string };
+type HeldStart = HeldItem & { x?: number; y?: number };
+
 /**
  * Diablo-style grid inventory (DOM). Toggle with the on-screen button or the E
  * key. Click an item to lift it onto the cursor, then click another slot to
@@ -16,7 +21,7 @@ export class InventoryUI {
     type: "",
     count: 0,
   }));
-  private held: number | null = null;
+  private held: HeldItem | null = null;
   private open = false;
   private totals: Partial<Record<ItemType, number>> = {}; // per-type totals, to detect pickups
   private primed = false; // first inventory is the baseline (no pop); later ones animate gains
@@ -37,7 +42,7 @@ export class InventoryUI {
     for (let i = 0; i < INV_SLOTS; i++) {
       const cell = document.createElement("div");
       cell.className = "invSlot";
-      cell.addEventListener("click", () => this.clickSlot(i));
+      cell.addEventListener("click", (e) => this.clickSlot(i, e));
       cell.addEventListener("dblclick", () => this.onUse(i)); // e.g. drink a potion
       // drag an item out to a Q/W/E/R hotkey slot to bind it there
       cell.draggable = true;
@@ -78,13 +83,19 @@ export class InventoryUI {
       else if (e.key === "Escape" && this.open) this.toggle();
     });
     window.addEventListener("mousemove", (e) => {
-      if (this.held !== null) {
+      if (this.held) {
         this.cursor.style.left = `${e.clientX}px`;
         this.cursor.style.top = `${e.clientY}px`;
       }
     });
-    window.addEventListener("inventory:consumeHeld", () => {
-      if (this.held === null) return;
+    window.addEventListener("itemHold:start", (e) => {
+      const held = (e as CustomEvent<HeldStart>).detail;
+      if (!held?.type || !held?.source) return;
+      this.startHold(held, held.x, held.y);
+      this.render();
+    });
+    window.addEventListener("itemHold:consume", () => {
+      if (!this.held) return;
       this.drop();
       this.render();
     });
@@ -167,20 +178,32 @@ export class InventoryUI {
     return n;
   }
 
-  private clickSlot(i: number) {
-    if (this.held === null) {
+  private clickSlot(i: number, e: MouseEvent) {
+    if (!this.held) {
       if (this.slots[i]?.type) {
-        this.held = i;
-        renderItemIcon(this.cursor, this.slots[i].type, 28);
-        this.cursor.style.display = "block";
-        this.emitHeld();
+        this.startHold({ source: "inventory", type: this.slots[i].type, inventorySlot: i }, e.clientX, e.clientY);
         this.render();
       }
     } else {
-      if (i !== this.held) this.onMove(this.held, i);
+      if (this.held.source === "inventory") {
+        if (i !== this.held.inventorySlot) this.onMove(this.held.inventorySlot, i);
+      } else {
+        window.dispatchEvent(new CustomEvent("characterSheet:unequip", { detail: { slotId: this.held.characterSlot } }));
+      }
       this.drop();
       this.render();
     }
+  }
+
+  private startHold(held: HeldItem, x?: number, y?: number) {
+    this.held = held;
+    renderItemIcon(this.cursor, held.type, 28);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      this.cursor.style.left = `${x}px`;
+      this.cursor.style.top = `${y}px`;
+    }
+    this.cursor.style.display = "block";
+    this.emitHeld();
   }
 
   private drop() {
@@ -190,17 +213,27 @@ export class InventoryUI {
   }
 
   private emitHeld() {
-    const type = this.held === null ? "" : (this.slots[this.held]?.type ?? "");
-    if (type) document.body.dataset.invHeldType = type;
-    else delete document.body.dataset.invHeldType;
-    window.dispatchEvent(new CustomEvent("inventory:heldChanged", { detail: { type } }));
+    delete document.body.dataset.itemHoldInventorySlot;
+    delete document.body.dataset.itemHoldCharacterSlot;
+    if (this.held) {
+      document.body.dataset.itemHoldSource = this.held.source;
+      document.body.dataset.itemHoldType = this.held.type;
+      if (this.held.source === "inventory") document.body.dataset.itemHoldInventorySlot = String(this.held.inventorySlot);
+      else document.body.dataset.itemHoldCharacterSlot = this.held.characterSlot;
+    } else {
+      delete document.body.dataset.itemHoldSource;
+      delete document.body.dataset.itemHoldType;
+      delete document.body.dataset.itemHoldInventorySlot;
+      delete document.body.dataset.itemHoldCharacterSlot;
+    }
+    window.dispatchEvent(new CustomEvent("itemHold:changed", { detail: { held: this.held } }));
   }
 
   private render() {
     for (let i = 0; i < INV_SLOTS; i++) {
       const slot = this.slots[i] ?? { type: "", count: 0 };
       const el = this.slotEls[i];
-      const lifted = i === this.held;
+      const lifted = this.held?.source === "inventory" && i === this.held.inventorySlot;
       el.classList.toggle("held", lifted);
 
       if (slot.type && !lifted) {

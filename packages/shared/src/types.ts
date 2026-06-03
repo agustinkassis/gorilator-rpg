@@ -145,6 +145,45 @@ export interface DevTimeMessage {
   scale: number;
 }
 
+export type DevActionId =
+  | "reset_realm"
+  | "force_next_wave"
+  | "kill_all_enemies"
+  | "level_up_player";
+
+/** Trigger one high-level dev-only gameplay action. */
+export interface DevActionMessage {
+  action: DevActionId;
+}
+
+export type DevTuningKey =
+  | "waveFirstDelayMs"
+  | "waveIntervalBaseMs"
+  | "waveIntervalStepMs"
+  | "waveIntervalMaxMs"
+  | "waveSpawnSpreadMs"
+  | "waveSizeBase"
+  | "waveSizePerPlayer"
+  | "waveSizePerWave"
+  | "waveSizeMax"
+  | "goblinLiveCap"
+  | "playerAttackCooldownMs"
+  | "playerAttackWindupMs"
+  | "enemyAttackCooldownMs"
+  | "enemyAttackWindupMs"
+  | "enemyAttackRange"
+  | "enemyAggroRadius"
+  | "enemyDeaggroRadius"
+  | "goblinHouseDamage"
+  | "damageDivisor"
+  | "playerRespawnMs";
+
+/** Runtime-only dev tuning override for gameplay constants. */
+export interface DevTuneMessage {
+  key: DevTuningKey;
+  value: number;
+}
+
 /** Hold-to-sprint intent: `on` while SPACE is held, `off` on release. The server
  *  owns the actual sprint (drains stamina, applies the speed boost). */
 export interface SprintMessage {
@@ -167,6 +206,8 @@ export type ClientMessages = {
   dev_set: DevSetMessage;
   dev_give_item: DevGiveItemMessage;
   dev_time: DevTimeMessage;
+  dev_action: DevActionMessage;
+  dev_tune: DevTuneMessage;
 };
 
 // Server -> client: emitted every time a hit lands, so clients can pop a

@@ -26,7 +26,6 @@ import {
   STONE_DAMAGE,
   STONE_MIN_DAMAGE,
   HIT_STATE_MS,
-  PLAYER_RESPAWN_MS,
   DUMMY_RESPAWN_MS,
   GOBLIN_RESPAWN_MS,
   WORLD_SIZE,
@@ -36,6 +35,7 @@ import { nearestFreeWorld, allObstacles } from "./pathfinding";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { applyDamageDrops, dropEntityLoot, dropStructureLoot } from "./resources";
 import type { EmitKill } from "./combat";
+import { devTuning } from "./devTuning";
 
 /** A banana mid-flight, resolved when its landing time arrives. */
 interface InFlight {
@@ -90,7 +90,8 @@ export function spawnBanana(state: GameState, x?: number, z?: number): Banana {
 }
 
 export function spawnInitialBananas(state: GameState) {
-  getMeta(state);
+  state.bananas.clear();
+  meta.set(state, { seq: 0, clock: 0, respawn: BANANA_RESPAWN_MS, inFlight: [] });
   for (let i = 0; i < BANANA_MAX; i++) spawnBanana(state);
 }
 
@@ -338,7 +339,7 @@ function landBanana(
     if (target.hp <= 0) {
       target.state = AnimState.DEAD;
       if (state.players.has(target.id)) {
-        target.respawnTimer = PLAYER_RESPAWN_MS;
+        target.respawnTimer = devTuning().playerRespawnMs;
         applyDeathXpPenalty(target as Player); // dying costs 30% of XP (can de-level)
         const thrower = state.players.get(f.ownerId);
         emitKill({

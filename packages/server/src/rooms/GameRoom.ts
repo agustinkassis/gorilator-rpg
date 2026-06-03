@@ -19,6 +19,8 @@ import {
   DevSetMessage,
   DevGiveItemMessage,
   DevTimeMessage,
+  DevActionMessage,
+  DevTuneMessage,
   CHAT_MAX_LEN,
   InventorySlot,
   ItemType,
@@ -31,13 +33,13 @@ import {
   THROW_RELEASE_FRACTION,
   BANANA_MAX_THROW,
   STARTING_BANANAS,
+  xpForLevel,
   PLAYER_MAX_HP,
   PLAYER_MAX_STAMINA,
   PLAYER_ATTACK,
   PLAYER_ARMOR,
   PLAYER_CRIT_CHANCE,
   MOVE_SPEED,
-  PLAYER_RESPAWN_MS,
   REALM_RESTART_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
@@ -74,20 +76,22 @@ import {
 } from "../systems/resources";
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
-import { goblinAiSystem, waveSystem, resetWaves } from "../systems/goblins";
+import { goblinAiSystem, waveSystem, resetWaves, forceNextWave } from "../systems/goblins";
 import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
 import { spawnHouse } from "../systems/houses";
 import { healingTowerPosition } from "../systems/healingTower";
 import { loadPropObstacles } from "../systems/props";
-import { loadSpawners, spawnerSystem } from "../systems/spawners";
+import { loadSpawners, resetSpawners, spawnerSystem } from "../systems/spawners";
 import { loadResourceDrops } from "../systems/resourceDrops";
 import { loadStructureLoot } from "../systems/structureDrops";
 import { loadEntityFeatures } from "../systems/entityFeatures";
 import { loadAuthoredNpcs, syncAuthoredNpcs } from "../systems/npcs";
 import { setRockObstacles } from "../systems/pathfinding";
 import { devSpawn, devMove, devDelete, devSet } from "../systems/devEdit";
+import { devTuning, setDevTuning } from "../systems/devTuning";
 import { perfTracker } from "../systems/perf";
+import { grantXp } from "../systems/leveling";
 import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
 import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrSave";
 
@@ -208,7 +212,7 @@ export class GameRoom extends Room<GameState> {
       p.godMode = false;
       p.hp = 0;
       p.state = AnimState.DEAD;
-      p.respawnTimer = PLAYER_RESPAWN_MS;
+      p.respawnTimer = devTuning().playerRespawnMs;
       p.attackTargetId = "";
       p.pendingHitId = "";
       p.pickupTargetId = "";
@@ -261,6 +265,16 @@ export class GameRoom extends Room<GameState> {
     this.onMessage("dev_time", (_client, msg: DevTimeMessage) => {
       const s = Number(msg?.scale);
       this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(8, s)) : 1;
+    });
+    this.onMessage("dev_tune", (_client, msg: DevTuneMessage) => {
+      if (!msg) return;
+      const applied = setDevTuning(msg.key, msg.value);
+      if (applied == null) return;
+      if (msg.key === "waveFirstDelayMs" && this.state.waveNumber === 0) resetWaves(this.state);
+    });
+    this.onMessage("dev_action", (client, msg: DevActionMessage) => {
+      if (!msg) return;
+      this.handleDevAction(client, msg.action);
     });
 
     this.onMessage("pickup", (client, msg: PickupMessage) => {
@@ -446,7 +460,7 @@ export class GameRoom extends Room<GameState> {
         if (dead && !p.prevDead) p.deaths++;
         p.prevDead = dead;
       });
-      // Berserker potion tick: count down the 60-second buff and restore base stats on expiry.
+      // Berserker potion tick: count down the timed buff and restore base stats on expiry.
       this.state.players.forEach((p, sid) => {
         if (p.berserkerMs <= 0) return;
         p.berserkerMs = Math.max(0, p.berserkerMs - scaledMs);
@@ -581,6 +595,26 @@ export class GameRoom extends Room<GameState> {
    * whole world regenerates, La Crypta is rebuilt and the wave clock restarts.
    */
   private startNewRealm() {
+    this.pendingThrows.clear();
+    this.berserkerBase.clear();
+    this.sacredHealCarry.clear();
+    this.state.timeScale = 1;
+
+    // Regenerate the whole world from scratch: clear runtime entities, rebuild
+    // first-realm resources/pickups, rebuild La Crypta, re-apply authored NPCs,
+    // and restart every wave/spawner interval.
+    this.state.enemies.clear();
+    this.state.houses.clear();
+    setRockObstacles([]); // match first-room resource placement before rocks exist
+    resetResources(this.state); // trees/rocks rebuilt; dropped logs/stones/items cleared
+    spawnInitialPotions(this.state);
+    spawnInitialBananas(this.state);
+    this.refreshRockObstacles(); // rocks are alive again → their collision is back
+    spawnHouse(this.state);
+    syncAuthoredNpcs(this.state);
+    resetWaves(this.state, true);
+    resetSpawners();
+
     this.state.players.forEach((p, sid) => {
       // back to a brand-new level-1 character (the schema defaults)
       p.level = 1;
@@ -593,9 +627,19 @@ export class GameRoom extends Room<GameState> {
       p.critChance = PLAYER_CRIT_CHANCE;
       p.moveSpeed = MOVE_SPEED;
       p.throwPower = 1;
+      p.godMode = false;
+      p.berserkerMs = 0;
+      p.critMultiplier = 0;
+      p.sprinting = false;
+      p.sprintHeld = false;
+      p.exhausted = false;
+      p.staminaRegen = 0;
       p.attackCooldown = 0;
       p.stateTimer = 0;
       p.respawnTimer = 0;
+      p.attackTargetId = "";
+      p.pendingHitId = "";
+      p.pickupTargetId = "";
       p.deaths = 0; // fresh realm → reset the death tally
       // Respawn ALIVE at a fresh spot. The DEAD→IDLE flip plays the lightning-
       // strike respawn on every client (placeAtFreeSpot sets x/z + targets + path).
@@ -616,28 +660,34 @@ export class GameRoom extends Room<GameState> {
       this.inventories.set(sid, inv);
       this.sendInventory(sid);
     });
-    // reset any in-flight berserker buffs (realm wipe → everyone is fresh)
-    this.berserkerBase.clear();
-    this.state.players.forEach((p) => { p.berserkerMs = 0; p.critMultiplier = 0; });
-
-    // Regenerate the whole world from scratch: clear any dropped items, restore all
-    // structures to pristine, re-scatter fresh potions/bananas, respawn the training
-    // dummies, rebuild La Crypta, and restart the waves.
-    this.state.enemies.clear();
-    this.state.potions.clear();
-    this.state.bananas.clear();
-    this.state.items.clear();
-    resetResources(this.state); // trees/rocks → full + alive; dropped logs/stones cleared
-    spawnInitialPotions(this.state);
-    spawnInitialBananas(this.state);
-    this.refreshRockObstacles(); // rocks are alive again → their collision is back
-    spawnHouse(this.state);
-    syncAuthoredNpcs(this.state);
-    resetWaves(this.state);
     this.homeStanding = true;
+    this.realmTick = 0;
     this.state.restartTimerMs = 0;
 
     console.log(`[room] new realm started — everyone respawned from scratch`);
+  }
+
+  private handleDevAction(client: Client, action: DevActionMessage["action"]) {
+    switch (action) {
+      case "reset_realm":
+        this.state.restartTimerMs = 0;
+        this.startNewRealm();
+        this.reportRealm();
+        break;
+      case "force_next_wave":
+        forceNextWave(this.state);
+        break;
+      case "kill_all_enemies":
+        this.state.enemies.clear();
+        break;
+      case "level_up_player": {
+        const p = this.state.players.get(client.sessionId);
+        if (!p) return;
+        const needed = Math.max(1, xpForLevel(p.level) - p.xp);
+        grantXp(p, needed, (ev) => this.broadcast("xp", ev));
+        break;
+      }
+    }
   }
 
   async onJoin(client: Client, options?: { name?: string; nostr?: NostrJoinPayload }) {

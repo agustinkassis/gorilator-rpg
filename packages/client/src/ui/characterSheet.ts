@@ -14,16 +14,21 @@ import {
 import "@babylonjs/loaders/glTF";
 import {
   xpForLevel,
-  HP_PER_LEVEL,
-  ATTACK_PER_LEVEL,
-  ARMOR_PER_LEVEL,
-  CRIT_PER_LEVEL,
-  SPEED_PER_LEVEL,
-  THROW_POWER_PER_LEVEL,
+  PLAYER_HP_PER_LEVEL,
+  PLAYER_ATTACK_PER_LEVEL,
+  PLAYER_ARMOR_PER_LEVEL,
+  PLAYER_CRIT_PER_LEVEL,
+  PLAYER_SPEED_PER_LEVEL,
+  PLAYER_THROW_POWER_PER_LEVEL,
+  type ItemType,
 } from "@rpg/shared";
 import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
 const MODEL_URL = "/models/knight.glb";
+
+type HeldItem =
+  | { source: "inventory"; type: ItemType; inventorySlot: number }
+  | { source: "character"; type: ItemType; characterSlot: string };
 
 /** The paper-doll equipment slots (purely client-side / cosmetic for now). */
 const SLOTS: { id: string; name: string }[] = [
@@ -72,7 +77,7 @@ export class CharacterSheet {
 
   // equipment (client-side)
   private equip: Record<string, string> = {};
-  private heldInventoryType = "";
+  private heldItem: HeldItem | null = null;
 
   constructor() {
     this.loadEquip();
@@ -115,8 +120,8 @@ export class CharacterSheet {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "c" || e.key === "C") this.toggle();
     });
-    window.addEventListener("inventory:heldChanged", (e) => {
-      this.heldInventoryType = (e as CustomEvent<{ type?: string }>).detail?.type ?? "";
+    window.addEventListener("itemHold:changed", (e) => {
+      this.heldItem = (e as CustomEvent<{ held: HeldItem | null }>).detail?.held ?? null;
     });
     window.addEventListener("characterSheet:unequip", (e) => {
       const slotId = (e as CustomEvent<{ slotId?: string }>).detail?.slotId;
@@ -165,27 +170,48 @@ export class CharacterSheet {
       slot.addEventListener("drop", (e) => {
         e.preventDefault();
         slot.style.borderColor = "#3a4456";
-        const type = e.dataTransfer?.getData("text/itemtype");
+        const type = e.dataTransfer?.getData("text/itemtype") as ItemType | "";
+        const sourceSlot = e.dataTransfer?.getData("text/charslot");
         if (type) {
+          if (sourceSlot && sourceSlot !== s.id) {
+            delete this.equip[sourceSlot];
+            this.renderSlot(sourceSlot);
+          }
           this.equip[s.id] = type;
           this.saveEquip();
           this.renderSlot(s.id);
         }
       });
-      const placeHeldInventoryItem = () => {
-        const type = this.currentHeldInventoryType();
-        if (!type) return false;
-        this.equip[s.id] = type;
+      let placedFromPointer = false;
+      const placeHeldItem = () => {
+        const held = this.currentHeldItem();
+        if (!held) return false;
+        if (held.source === "character" && held.characterSlot !== s.id) {
+          delete this.equip[held.characterSlot];
+          this.renderSlot(held.characterSlot);
+        }
+        this.equip[s.id] = held.type;
         this.saveEquip();
         this.renderSlot(s.id);
-        window.dispatchEvent(new Event("inventory:consumeHeld"));
+        window.dispatchEvent(new Event("itemHold:consume"));
         return true;
       };
       slot.addEventListener("pointerdown", (e) => {
-        if (placeHeldInventoryItem()) e.preventDefault();
+        if (this.currentHeldItem() && placeHeldItem()) {
+          placedFromPointer = true;
+          e.preventDefault();
+        }
       });
-      slot.addEventListener("click", () => {
-        placeHeldInventoryItem();
+      slot.addEventListener("click", (e) => {
+        if (placedFromPointer) {
+          placedFromPointer = false;
+          return;
+        }
+        if (placeHeldItem()) return;
+        const type = this.equip[s.id] as ItemType | "";
+        if (!type) return;
+        const held = { source: "character", type, characterSlot: s.id } satisfies HeldItem;
+        window.dispatchEvent(new CustomEvent("itemHold:start", { detail: { ...held, x: e.clientX, y: e.clientY } }));
       });
       slot.addEventListener("dragstart", (e) => {
         const type = this.equip[s.id];
@@ -221,8 +247,20 @@ export class CharacterSheet {
     el.draggable = Boolean(type);
   }
 
-  private currentHeldInventoryType() {
-    return this.heldInventoryType || document.body.dataset.invHeldType || "";
+  private currentHeldItem(): HeldItem | null {
+    if (this.heldItem) return this.heldItem;
+    const source = document.body.dataset.itemHoldSource;
+    const type = document.body.dataset.itemHoldType as ItemType | undefined;
+    if (!source || !type) return null;
+    if (source === "inventory") {
+      const inventorySlot = Number(document.body.dataset.itemHoldInventorySlot);
+      return Number.isFinite(inventorySlot) ? { source, type, inventorySlot } : null;
+    }
+    if (source === "character") {
+      const characterSlot = document.body.dataset.itemHoldCharacterSlot;
+      return characterSlot ? { source, type, characterSlot } : null;
+    }
+    return null;
   }
 
   private loadEquip() {
@@ -328,6 +366,10 @@ export class CharacterSheet {
     const xpPct = need > 0 ? Math.min(100, Math.round((s.xp / need) * 100)) : 0;
     const row = (label: string, value: string, color = "#e8e8e8") =>
       `<div style="display:flex; justify-content:space-between; padding:3px 0;"><span style="color:#9fb0c0;">${label}</span><span style="color:${color}; font-weight:600;">${value}</span></div>`;
+    const pct = (value: number) => {
+      const n = value * 100;
+      return `${Number.isInteger(n) ? n : n.toFixed(1)}%`;
+    };
 
     this.stats.innerHTML =
       `<div style="font-size:15px; font-weight:700; color:#fff;">${s.name}</div>` +
@@ -341,6 +383,6 @@ export class CharacterSheet {
       row("🏃 Run speed", `${s.moveSpeed.toFixed(1)}`, "#8fe6c0") +
       row("🍌 Throw power", `${Math.round(s.throwPower * 100)}%`, "#ffe08a") +
       `<hr style="border:none; border-top:1px solid #2a3242; margin:10px 0;">` +
-      `<div style="font-size:11px; color:#7f8a98;">Next level: +${HP_PER_LEVEL} HP · +${ATTACK_PER_LEVEL} atk · +${ARMOR_PER_LEVEL} armor · +${Math.round(CRIT_PER_LEVEL * 100)}% crit · +${SPEED_PER_LEVEL.toFixed(2)} speed · +${Math.round(THROW_POWER_PER_LEVEL * 100)}% throw</div>`;
+      `<div style="font-size:11px; color:#7f8a98;">Next level: +${PLAYER_HP_PER_LEVEL} HP · +${PLAYER_ATTACK_PER_LEVEL} atk · +${PLAYER_ARMOR_PER_LEVEL} armor · +${pct(PLAYER_CRIT_PER_LEVEL)} crit · +${PLAYER_SPEED_PER_LEVEL.toFixed(2)} speed · +${pct(PLAYER_THROW_POWER_PER_LEVEL)} throw</div>`;
   }
 }

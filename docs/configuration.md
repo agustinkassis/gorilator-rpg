@@ -15,7 +15,7 @@ the section comments in the file:
 | **Combat** | `ATTACK_RANGE`, `ATTACK_COOLDOWN_MS`, `ATTACK_WINDUP_MS`, `HIT_STATE_MS`, `THROW_STATE_MS`, `PLAYER_RESPAWN_MS`, `DUMMY_RESPAWN_MS`, `DAMAGE_DIVISOR` |
 | **Health** | `PLAYER_MAX_HP`, `DUMMY_MAX_HP` |
 | **Stamina** | sprint multiplier, drain/regen rates, "winded" re-engage threshold |
-| **Leveling** | `XP_BASE`, `XP_GROWTH`, `*_PER_LEVEL` (hp/attack/armor/crit/speed/throw), `CRIT_CHANCE_MAX`, XP rewards (`GOBLIN_XP_REWARD`, `PLAYER_KILL_XP`, `TREE/ROCK/DUMMY_XP_REWARD`), `xpForLevel()`, `statsForLevel()` |
+| **Leveling** | `XP_BASE`, `XP_GROWTH`, `*_PER_LEVEL` generic character scaling, `PLAYER_*_PER_LEVEL` player level-up gains, `CRIT_CHANCE_MAX`, XP rewards (`GOBLIN_XP_REWARD`, `PLAYER_KILL_XP`, `TREE/ROCK/DUMMY_XP_REWARD`), `xpForLevel()`, `statsForLevel()` |
 | **Damage formula** | `ATTACK_VARIANCE`, `ARMOR_K`, `CRIT_MULTIPLIER` |
 | **Default stats** | `PLAYER_ATTACK/ARMOR/CRIT_CHANCE`, `DUMMY_*` |
 | **Goblins** | `GOBLIN_MAX_HP`, `GOBLIN_ATTACK`, `GOBLIN_ARMOR`, `GOBLIN_CHASE_SPEED`, `GOBLIN_AGGRO_RADIUS`, `GOBLIN_DEAGGRO_RADIUS`, `GOBLIN_ATTACK_RANGE`, `GOBLIN_ATTACK_COOLDOWN_MS`, `GOBLIN_ATTACK_WINDUP_MS`, `GOBLIN_RESPAWN_MS` |

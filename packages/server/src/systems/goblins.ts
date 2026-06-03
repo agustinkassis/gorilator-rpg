@@ -12,31 +12,13 @@ import {
   GOBLIN_CRIT_CHANCE,
   GOBLIN_CHASE_SPEED,
   GOBLIN_PATROL_SPEED,
-  GOBLIN_AGGRO_RADIUS,
-  GOBLIN_DEAGGRO_RADIUS,
   GOBLIN_LEASH,
-  GOBLIN_ATTACK_RANGE,
-  GOBLIN_ATTACK_COOLDOWN_MS,
-  GOBLIN_ATTACK_WINDUP_MS,
-  GOBLIN_HOUSE_DAMAGE,
   HIT_STATE_MS,
   GOBLIN_SPAWN_RANGE,
-  WAVE_INTERVAL_BASE_MS,
-  WAVE_INTERVAL_STEP_MS,
-  WAVE_INTERVAL_MAX_MS,
-  WAVE_FIRST_DELAY_MS,
-  WAVE_SPAWN_SPREAD_MS,
   WAVE_SPAWN_DISTANCE,
   WAVE_SPAWN_ARC,
-  WAVE_SIZE_BASE,
-  WAVE_SIZE_PER_PLAYER,
-  WAVE_SIZE_PER_WAVE,
-  WAVE_SIZE_MAX,
-  GOBLIN_LIVE_CAP,
   ATTACK_VARIANCE,
   ARMOR_K,
-  DAMAGE_DIVISOR,
-  PLAYER_RESPAWN_MS,
   statsForLevel,
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
@@ -44,6 +26,7 @@ import { applyDeathXpPenalty } from "./leveling";
 import { dropEntityLoot, dropStructureLoot } from "./resources";
 import type { EmitKill } from "./combat";
 import { brainOf, configureEnemy } from "./enemyConfig";
+import { devTuning } from "./devTuning";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -101,14 +84,16 @@ interface ScheduledGoblin {
  *  all at once. The first goblin is immediate, the last is +40s, and the rest land
  *  randomly between those endpoints so the final experience stays predictable. */
 function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
+  const tuning = devTuning();
   const home = homeOf(state);
   const hx = home ? home.x : 0;
   const hz = home ? home.z : 0;
   const { avg, max, alive } = playerLevelStats(state);
   const size = Math.min(
-    WAVE_SIZE_MAX,
-    WAVE_SIZE_BASE + WAVE_SIZE_PER_PLAYER * Math.max(1, alive) + WAVE_SIZE_PER_WAVE * (waveNumber - 1),
+    tuning.waveSizeMax,
+    tuning.waveSizeBase + tuning.waveSizePerPlayer * Math.max(1, alive) + tuning.waveSizePerWave * (waveNumber - 1),
   );
+  if (size <= 0) return [];
   const baseAng = Math.random() * Math.PI * 2; // the horde approaches from ~one side
   const lo = Math.max(1, Math.round(avg));
   const hi = Math.max(lo, max) + Math.floor(waveNumber / 3); // escalate the level cap over time
@@ -117,8 +102,8 @@ function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
       ? [0]
       : [
           0,
-          WAVE_SPAWN_SPREAD_MS,
-          ...Array.from({ length: size - 2 }, () => Math.random() * WAVE_SPAWN_SPREAD_MS),
+          tuning.waveSpawnSpreadMs,
+          ...Array.from({ length: size - 2 }, () => Math.random() * tuning.waveSpawnSpreadMs),
         ].sort((a, b) => a - b);
   const wave: ScheduledGoblin[] = [];
   for (let i = 0; i < size; i++) {
@@ -145,9 +130,10 @@ const waveClocks = new WeakMap<GameState, WaveClock>();
 /** The rest after wave N — it grows so there's more time to rebuild as the siege
  *  escalates: 2.5 min, 3 min, 3.5 min … capped at WAVE_INTERVAL_MAX_MS. */
 function intervalAfterWave(n: number): number {
+  const tuning = devTuning();
   return Math.min(
-    WAVE_INTERVAL_MAX_MS,
-    WAVE_INTERVAL_BASE_MS + WAVE_INTERVAL_STEP_MS * Math.max(0, n - 1),
+    tuning.waveIntervalMaxMs,
+    tuning.waveIntervalBaseMs + tuning.waveIntervalStepMs * Math.max(0, n - 1),
   );
 }
 
@@ -159,9 +145,10 @@ function intervalAfterWave(n: number): number {
  * already at the cap.
  */
 export function waveSystem(state: GameState, dt: number) {
+  const tuning = devTuning();
   let clock = waveClocks.get(state);
   if (!clock) {
-    clock = { timer: WAVE_FIRST_DELAY_MS, number: 0, pending: [] };
+    clock = { timer: tuning.waveFirstDelayMs, number: 0, pending: [] };
     waveClocks.set(state, clock);
   }
 
@@ -187,7 +174,7 @@ export function waveSystem(state: GameState, dt: number) {
     state.enemies.forEach((e) => {
       if (e.kind === "goblin" && e.state !== AnimState.DEAD) living++;
     });
-    if (living < GOBLIN_LIVE_CAP && clock.pending.length === 0) {
+    if (living < tuning.goblinLiveCap && clock.pending.length === 0) {
       clock.number += 1;
       clock.pending = scheduleWave(state, clock.number);
     }
@@ -199,15 +186,33 @@ export function waveSystem(state: GameState, dt: number) {
 
 /** Restart the wave clock for a fresh round (called after a wipe): the next wave is
  *  wave 1 again, after the first-wave grace. */
-export function resetWaves(state: GameState) {
+export function resetWaves(state: GameState, resetSpawnIds = false) {
+  if (resetSpawnIds) seq = 0;
+  const firstDelay = devTuning().waveFirstDelayMs;
   const clock = waveClocks.get(state);
   if (clock) {
-    clock.timer = WAVE_FIRST_DELAY_MS;
+    clock.timer = firstDelay;
     clock.number = 0;
     clock.pending = [];
   }
   state.waveNumber = 0;
-  state.waveTimerMs = WAVE_FIRST_DELAY_MS;
+  state.waveTimerMs = firstDelay;
+}
+
+export function forceNextWave(state: GameState) {
+  let clock = waveClocks.get(state);
+  if (!clock) {
+    clock = { timer: devTuning().waveFirstDelayMs, number: 0, pending: [] };
+    waveClocks.set(state, clock);
+  }
+  clock.number += 1;
+  clock.pending = scheduleWave(state, clock.number);
+  const ready = clock.pending.filter((g) => g.delayMs <= 0);
+  clock.pending = clock.pending.filter((g) => g.delayMs > 0);
+  ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level));
+  clock.timer = intervalAfterWave(clock.number);
+  state.waveNumber = clock.number;
+  state.waveTimerMs = Math.max(0, clock.timer);
 }
 
 /** Steer the goblin toward (tx,tz); returns the distance it had to go. */
@@ -310,14 +315,15 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
       return;
     }
 
+    const tuning = devTuning();
     // ---- Priority 1: a defender to fight ----
     // Stay locked on a player while it's within the give-up range; otherwise a
     // player who steps inside the aggro radius pulls the goblin off the house.
     // Defenders who run too far from La Crypta stop being worth chasing.
     let engaging = false;
     const nearIsDefending = near && isDefendingHome(home, near.p);
-    if (g.aggro && nearIsDefending && near.d <= GOBLIN_DEAGGRO_RADIUS) engaging = true;
-    else if (nearIsDefending && near.d <= (g.aggroRadius || GOBLIN_AGGRO_RADIUS)) {
+    if (g.aggro && nearIsDefending && near.d <= tuning.enemyDeaggroRadius) engaging = true;
+    else if (nearIsDefending && near.d <= (g.aggroRadius || tuning.enemyAggroRadius)) {
       g.aggro = true;
       engaging = true;
     } else if (g.aggro) {
@@ -332,15 +338,15 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
 
     // ---- Priority 2: march on the home and attack it ----
     if (home) {
-      const reach = home.radius + GOBLIN_ATTACK_RANGE;
+      const reach = home.radius + tuning.enemyAttackRange;
       const d = Math.hypot(home.x - g.x, home.z - g.z);
       if (d <= reach) {
         g.rotY = Math.atan2(home.x - g.x, home.z - g.z);
         if (g.attackCooldown <= 0) {
           g.aiTargetId = home.id; // mark this swing as a house hit
           g.state = AnimState.ATTACK;
-          g.stateTimer = GOBLIN_ATTACK_WINDUP_MS;
-          g.attackCooldown = g.atkCooldownMs || GOBLIN_ATTACK_COOLDOWN_MS;
+          g.stateTimer = tuning.enemyAttackWindupMs;
+          g.attackCooldown = g.atkCooldownMs || tuning.enemyAttackCooldownMs;
         } else {
           g.state = AnimState.IDLE;
         }
@@ -370,13 +376,14 @@ function enemySpeed(g: Enemy, fallback: number): number {
 }
 
 function engagePlayer(g: Enemy, p: Player, d: number, dt: number) {
+  const tuning = devTuning();
   g.aiTargetId = p.id;
-  if (d <= GOBLIN_ATTACK_RANGE) {
+  if (d <= tuning.enemyAttackRange) {
     g.rotY = Math.atan2(p.x - g.x, p.z - g.z);
     if (g.attackCooldown <= 0) {
       g.state = AnimState.ATTACK;
-      g.stateTimer = GOBLIN_ATTACK_WINDUP_MS;
-      g.attackCooldown = g.atkCooldownMs || GOBLIN_ATTACK_COOLDOWN_MS;
+      g.stateTimer = tuning.enemyAttackWindupMs;
+      g.attackCooldown = g.atkCooldownMs || tuning.enemyAttackCooldownMs;
     } else {
       g.state = AnimState.IDLE;
     }
@@ -421,12 +428,13 @@ function connectEnemyAttack(state: GameState, g: Enemy, emitDamage: EmitDamage, 
 
 /** Resolve a goblin's swing at the house: chip its HP; collapse it at 0. */
 function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamage) {
+  const tuning = devTuning();
   const house = state.houses.get(g.aiTargetId);
   if (!house || !house.alive) return;
   if (house.maxHp <= 0) return; // dev-set HP 0 ⇒ indestructible: swing connects but deals no damage
   const d = Math.hypot(house.x - g.x, house.z - g.z);
-  if (d > house.radius + GOBLIN_ATTACK_RANGE * 1.4) return; // shoved out of reach
-  const dmg = g.houseDamage || GOBLIN_HOUSE_DAMAGE; // per-spawner override
+  if (d > house.radius + tuning.enemyAttackRange * 1.4) return; // shoved out of reach
+  const dmg = g.houseDamage || tuning.goblinHouseDamage; // per-spawner override
   house.hp = Math.max(0, house.hp - dmg);
   emitDamage({ targetId: house.id, amount: dmg, crit: false });
   if (house.hp <= 0) {
@@ -438,22 +446,23 @@ function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamag
 
 /** Resolve a goblin's swing at the chased player if still in reach. */
 function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage, emitKill: EmitKill) {
+  const tuning = devTuning();
   const target = state.players.get(g.aiTargetId);
   if (!target || target.hp <= 0 || target.state === AnimState.DEAD) return;
   if (target.godMode) return; // Dev Mode: immortal players take no goblin damage
   const d = Math.hypot(target.x - g.x, target.z - g.z);
-  if (d > GOBLIN_ATTACK_RANGE * 1.4) return; // player stepped out of reach (dodged)
+  if (d > tuning.enemyAttackRange * 1.4) return; // player stepped out of reach (dodged)
 
   const variance = 1 + (Math.random() * 2 - 1) * ATTACK_VARIANCE;
   const raw = g.attack * variance;
   const mitigation = target.armor / (target.armor + ARMOR_K);
-  const dmg = Math.max(1, Math.round((raw * (1 - mitigation)) / DAMAGE_DIVISOR));
+  const dmg = Math.max(1, Math.round((raw * (1 - mitigation)) / tuning.damageDivisor));
 
   target.hp = Math.max(0, target.hp - dmg);
   emitDamage({ targetId: target.id, amount: dmg, crit: false });
   if (target.hp <= 0) {
     target.state = AnimState.DEAD;
-    target.respawnTimer = PLAYER_RESPAWN_MS;
+    target.respawnTimer = tuning.playerRespawnMs;
     applyDeathXpPenalty(target); // dying costs 30% of XP (can de-level)
     dropEntityLoot(state, "player", target.id, undefined, target.x, target.z, 1.2);
     emitKill({
