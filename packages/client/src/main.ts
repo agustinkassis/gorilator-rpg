@@ -474,8 +474,7 @@ function renderWorktreePanel() {
         createWorktreeNode("span", "wtCommitSubject", commit.subject),
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
-      const label = createWorktreeNode("span", "wtMergeLabel", previewed ? "merge" : "");
-      const mergeBtn = createWorktreeNode("button", "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
+      const mergeBtn = createWorktreeNode("button", previewed ? "wtMergeBtn preview" : "wtMergeBtn", worktreeMergeBusy ? "Merging" : previewed ? "merge" : "Merge");
       mergeBtn.type = "button";
       mergeBtn.title = `Merge current branch into ${targetBranch}`;
       mergeBtn.disabled = worktreeMergeBusy;
@@ -509,7 +508,7 @@ function renderWorktreePanel() {
             renderWorktreePanel();
           });
       });
-      row.append(label, mergeBtn);
+      row.append(mergeBtn);
       pendingSection.append(row);
     });
   }

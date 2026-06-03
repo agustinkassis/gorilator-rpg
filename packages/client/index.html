@@ -816,7 +816,7 @@
         grid-template-columns: auto minmax(0, 1fr) auto;
       }
       #worktreePanel .wtPendingRow {
-        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
       }
       #worktreePanel .wtPendingRow.mergePreview {
         background: linear-gradient(90deg, rgba(255, 212, 121, 0.11), transparent);
@@ -837,13 +837,8 @@
         color: rgba(255, 230, 168, 0.58);
         white-space: nowrap;
       }
-      #worktreePanel .wtMergeLabel {
-        min-width: 42px;
-        color: #8bf0aa;
-        font-weight: 900;
-        text-transform: uppercase;
-      }
       #worktreePanel .wtMergeBtn {
+        min-width: 58px;
         border: 1px solid rgba(139, 240, 170, 0.38);
         border-radius: 5px;
         background: rgba(84, 217, 140, 0.1);
@@ -851,6 +846,11 @@
         font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         padding: 5px 7px;
         cursor: pointer;
+      }
+      #worktreePanel .wtMergeBtn.preview {
+        color: #8bf0aa;
+        text-transform: uppercase;
+        background: rgba(84, 217, 140, 0.18);
       }
       #worktreePanel .wtMergeBtn:hover,
       #worktreePanel .wtMergeBtn:focus-visible {
