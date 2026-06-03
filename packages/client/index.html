@@ -713,13 +713,14 @@
       }
       #worktreePanel .wtBranchBar {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+        grid-template-columns: minmax(0, 1fr) minmax(180px, auto) auto;
         gap: 10px;
         align-items: stretch;
         margin-top: 10px;
       }
       #worktreePanel .wtBranchCurrent,
-      #worktreePanel .wtTargetWrap {
+      #worktreePanel .wtTargetWrap,
+      #worktreePanel .wtBringTargetWrap {
         min-width: 0;
         display: grid;
         gap: 4px;
@@ -753,6 +754,26 @@
       }
       #worktreePanel .wtTargetSelect:focus-visible {
         outline-color: rgba(255, 212, 121, 0.86);
+      }
+      #worktreePanel .wtBringTargetBtn {
+        min-width: 112px;
+        height: 26px;
+        border: 1px solid rgba(139, 240, 170, 0.38);
+        border-radius: 5px;
+        background: rgba(84, 217, 140, 0.1);
+        color: #bff8ca;
+        font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+      }
+      #worktreePanel .wtBringTargetBtn:hover,
+      #worktreePanel .wtBringTargetBtn:focus-visible {
+        border-color: rgba(139, 240, 170, 0.86);
+        background: rgba(84, 217, 140, 0.18);
+        outline: none;
+      }
+      #worktreePanel .wtBringTargetBtn:disabled {
+        opacity: 0.52;
+        cursor: not-allowed;
       }
       #worktreePanel .wtChangesToggle {
         width: 100%;

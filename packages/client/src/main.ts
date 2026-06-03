@@ -187,6 +187,12 @@ async function mergeWorktreeIntoTarget(commit: string): Promise<WorktreeMeta> {
   return (await res.json()) as WorktreeMeta;
 }
 
+async function mergeTargetIntoWorktree(): Promise<WorktreeMeta> {
+  const res = await fetch("/__worktree/target-merge", { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeMeta;
+}
+
 async function loadWorktreeJsonFile(path: string): Promise<WorktreeFilePayload> {
   const res = await fetch(`/__worktree/file?path=${encodeURIComponent(path)}`);
   if (!res.ok) throw new Error(await res.text());
@@ -400,6 +406,7 @@ function renderWorktreePanel() {
   const targetBranch = worktreeMeta.targetBranch || "main";
   const pendingBase = worktreeMeta.pendingBase || targetBranch;
   const branches = Array.from(new Set(["main", targetBranch, ...(worktreeMeta.branches ?? [])])).filter(Boolean);
+  const canMergeTarget = Boolean(worktreeMeta.branch) && branch !== targetBranch;
   if (!label) {
     worktreePanelEl.hidden = true;
     return;
@@ -431,6 +438,7 @@ function renderWorktreePanel() {
   const targetLabel = createWorktreeNode("span", "wtBranchLabel", "Target");
   const targetSelect = createWorktreeNode("select", "wtTargetSelect");
   targetSelect.setAttribute("aria-label", "Target branch");
+  targetSelect.disabled = worktreeMergeBusy;
   for (const optionBranch of branches) {
     const option = createWorktreeNode("option", "", optionBranch);
     option.value = optionBranch;
@@ -452,7 +460,37 @@ function renderWorktreePanel() {
       });
   });
   targetWrap.append(targetLabel, targetSelect);
-  branchBar.append(currentBranchEl, targetWrap);
+  const bringTargetWrap = createWorktreeNode("div", "wtBringTargetWrap");
+  const bringTargetLabel = createWorktreeNode("span", "wtBranchLabel", "Update");
+  const bringTargetBtn = createWorktreeNode("button", "wtBringTargetBtn", worktreeMergeBusy ? "Working" : "Bring Target");
+  bringTargetBtn.type = "button";
+  bringTargetBtn.disabled = worktreeMergeBusy || !canMergeTarget;
+  bringTargetBtn.title = canMergeTarget
+    ? `Merge ${targetBranch} into ${branch}`
+    : branch === targetBranch
+      ? "Current branch already matches target"
+      : "No current branch to update";
+  bringTargetBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    worktreeMergeBusy = true;
+    worktreeMergeMessage = `Merging ${targetBranch} into ${branch}...`;
+    renderWorktreePanel();
+    void mergeTargetIntoWorktree()
+      .then((meta) => {
+        worktreeMergeMessage = `Merged ${meta.targetBranch || targetBranch} into ${meta.branch || branch}`;
+        setWorktreeMeta(meta);
+      })
+      .catch((err) => {
+        worktreeMergeMessage = err instanceof Error ? err.message : "Target merge failed";
+        renderWorktreePanel();
+      })
+      .finally(() => {
+        worktreeMergeBusy = false;
+        renderWorktreePanel();
+      });
+  });
+  bringTargetWrap.append(bringTargetLabel, bringTargetBtn);
+  branchBar.append(currentBranchEl, targetWrap, bringTargetWrap);
 
   const pendingSection = createWorktreeNode("div", "wtPending");
   const pendingHead = createWorktreeNode("div", "wtSectionLine");
