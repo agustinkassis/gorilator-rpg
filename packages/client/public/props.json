@@ -58,5 +58,14 @@
     "scale": 5,
     "rotationY": 0,
     "collisionRadius": 2.5
+  },
+  {
+    "id": "meshy_ai_timberstone_tow_1780332210503_1780521656446",
+    "name": "meshy_ai_timberstone_tow_1780332210503",
+    "model": "/models/meshy_ai_timberstone_tow_1780332210503.glb",
+    "x": 22.4,
+    "z": 22,
+    "scale": 5,
+    "rotationY": 0
   }
 ]

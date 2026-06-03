@@ -82,6 +82,7 @@ export class DevMode {
   private characterDefs: CharacterDef[] = [];
   private gameplayOpen = false;
   private tuningValues = new Map<DevTuningKey, number>();
+  private dirtyTuningKeys = new Set<DevTuningKey>();
 
   /** Wire in placed-character management so they're selectable/draggable/deletable. */
   setCharacterManager(cm: CharacterManager) {
@@ -349,8 +350,8 @@ export class DevMode {
     this.itemsBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
     this.gameplayBtn.style.display = "none";
-    this.gameplayPanel.style.display = "none";
-    this.gameplayOpen = false;
+    if (this.gameplayOpen) this.closeGameplayPanel();
+    else this.gameplayPanel.style.display = "none";
     this.setVisibilityControls(false);
     this.banner.style.display = "none";
     this.timeBar.style.display = "none";
@@ -390,12 +391,37 @@ export class DevMode {
   }
 
   private toggleGameplayPanel() {
-    this.gameplayOpen = !this.gameplayOpen;
+    if (this.gameplayOpen) this.closeGameplayPanel();
+    else this.openGameplayPanel();
+  }
+
+  private openGameplayPanel() {
+    this.gameplayOpen = true;
     this.gameplayPanel.style.display = this.gameplayOpen ? "block" : "none";
     this.gameplayBtn.style.background = this.gameplayOpen
       ? "linear-gradient(180deg,#4a8f4f,#2f6f37)"
       : "linear-gradient(180deg,#345044,#1f332c)";
     this.gameplayBtn.style.color = this.gameplayOpen ? "#fff" : "#d9ffd9";
+  }
+
+  private closeGameplayPanel() {
+    this.applyPendingGameplayTuning();
+    this.gameplayOpen = false;
+    this.gameplayPanel.style.display = "none";
+    this.gameplayBtn.style.background = "linear-gradient(180deg,#345044,#1f332c)";
+    this.gameplayBtn.style.color = "#d9ffd9";
+  }
+
+  private applyPendingGameplayTuning() {
+    if (!this.dirtyTuningKeys.size) return;
+    for (const key of this.dirtyTuningKeys) {
+      const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+      if (!control) continue;
+      const value = this.tuningValues.get(key) ?? control.defaultValue;
+      this.net.sendDevTune(key, value);
+      void this.saveGameplayDefault(key, value);
+    }
+    this.dirtyTuningKeys.clear();
   }
 
   private updateGameplayButtonPosition() {
@@ -459,7 +485,7 @@ export class DevMode {
       "cursor:pointer; border-radius:6px; border:1px solid #3a4658; background:#2a3242; color:#cfe; padding:8px; font:600 12px system-ui,sans-serif;";
     defaults.onclick = () => {
       this.tuningValues.clear();
-      for (const c of DEV_TUNING_CONTROLS) this.net.sendDevTune(c.key, c.defaultValue);
+      for (const c of DEV_TUNING_CONTROLS) this.dirtyTuningKeys.add(c.key);
       this.renderGameplayPanel();
     };
     body.appendChild(defaults);
@@ -501,7 +527,7 @@ export class DevMode {
       const raw = control.integer ? Math.round(clamped * control.scale) : clamped * control.scale;
       input.value = formatTuning(raw / control.scale);
       this.tuningValues.set(control.key, raw);
-      this.net.sendDevTune(control.key, raw);
+      this.dirtyTuningKeys.add(control.key);
     };
     input.onchange = commit;
     input.onkeydown = (e) => {
@@ -515,6 +541,19 @@ export class DevMode {
     row.appendChild(input);
     row.appendChild(unit);
     return row;
+  }
+
+  private async saveGameplayDefault(key: DevTuningKey, value: number) {
+    try {
+      const res = await fetch("/__gameplay/default", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key, value }),
+      });
+      if (!res.ok) console.warn("[gameplay] default save failed", await res.text());
+    } catch (e) {
+      console.warn("[gameplay] default save failed", e);
+    }
   }
 
   // ---- adding props (library + upload) ----

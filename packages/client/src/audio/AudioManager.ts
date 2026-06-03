@@ -44,7 +44,7 @@ const DEFS: Record<SfxKey, SfxDef> = {
   heal: { category: "sfx", volume: 0.7, spatial: true, cooldownMs: 60 },
   berserker: { category: "sfx", volume: 0.95, spatial: false, cooldownMs: 500 },
   splash_roar: { category: "sfx", volume: 0.92, spatial: false, cooldownMs: 1000 },
-  gorilla_attack: { category: "sfx", volume: 0.2, spatial: true, cooldownMs: 80 },
+  gorilla_attack: { category: "sfx", volume: 0.1, spatial: true, cooldownMs: 80 },
 };
 
 const FOOT_INTERVAL = 0.34; // seconds between footfalls (walking)

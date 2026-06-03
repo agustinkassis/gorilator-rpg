@@ -937,6 +937,51 @@ const fail = (res: ServerResponse, code: number, msg: string) => {
   res.end(msg);
 };
 
+const DEV_TUNING_CONSTANTS: Record<string, { name: string; min: number; max: number; integer?: boolean }> = {
+  waveFirstDelayMs: { name: "WAVE_FIRST_DELAY_MS", min: 0, max: 600_000, integer: true },
+  waveIntervalBaseMs: { name: "WAVE_INTERVAL_BASE_MS", min: 0, max: 900_000, integer: true },
+  waveIntervalStepMs: { name: "WAVE_INTERVAL_STEP_MS", min: 0, max: 300_000, integer: true },
+  waveIntervalMaxMs: { name: "WAVE_INTERVAL_MAX_MS", min: 0, max: 1_800_000, integer: true },
+  waveSpawnSpreadMs: { name: "WAVE_SPAWN_SPREAD_MS", min: 0, max: 300_000, integer: true },
+  waveSizeBase: { name: "WAVE_SIZE_BASE", min: 0, max: 200, integer: true },
+  waveSizePerPlayer: { name: "WAVE_SIZE_PER_PLAYER", min: 0, max: 50, integer: true },
+  waveSizePerWave: { name: "WAVE_SIZE_PER_WAVE", min: 0, max: 50, integer: true },
+  waveSizeMax: { name: "WAVE_SIZE_MAX", min: 1, max: 500, integer: true },
+  goblinLiveCap: { name: "GOBLIN_LIVE_CAP", min: 0, max: 500, integer: true },
+  playerAttackCooldownMs: { name: "ATTACK_COOLDOWN_MS", min: 0, max: 10_000, integer: true },
+  playerAttackWindupMs: { name: "ATTACK_WINDUP_MS", min: 0, max: 5_000, integer: true },
+  enemyAttackCooldownMs: { name: "GOBLIN_ATTACK_COOLDOWN_MS", min: 0, max: 20_000, integer: true },
+  enemyAttackWindupMs: { name: "GOBLIN_ATTACK_WINDUP_MS", min: 0, max: 10_000, integer: true },
+  enemyAttackRange: { name: "GOBLIN_ATTACK_RANGE", min: 0.2, max: 20 },
+  enemyAggroRadius: { name: "GOBLIN_AGGRO_RADIUS", min: 0, max: 80 },
+  enemyDeaggroRadius: { name: "GOBLIN_DEAGGRO_RADIUS", min: 0, max: 120 },
+  goblinHouseDamage: { name: "GOBLIN_HOUSE_DAMAGE", min: 0, max: 1_000 },
+  damageDivisor: { name: "DAMAGE_DIVISOR", min: 0.1, max: 100 },
+  playerRespawnMs: { name: "PLAYER_RESPAWN_MS", min: 0, max: 120_000, integer: true },
+};
+
+function formatConstantValue(value: number, integer?: boolean): string {
+  if (integer) return String(Math.round(value));
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+}
+
+function writeGameplayDefault(root: string, rawKey: unknown, rawValue: unknown): { key: string; constant: string; value: number } {
+  const key = String(rawKey || "");
+  const rule = DEV_TUNING_CONSTANTS[key];
+  if (!rule) throw new Error(`unknown tuning key: ${key}`);
+  const n = Number(rawValue);
+  if (!Number.isFinite(n)) throw new Error("value must be a finite number");
+  const clamped = Math.max(rule.min, Math.min(rule.max, n));
+  const value = rule.integer ? Math.round(clamped) : clamped;
+  const constantsPath = resolve(root, "../shared/src/constants.ts");
+  const src = readFileSync(constantsPath, "utf8");
+  const literal = formatConstantValue(value, rule.integer);
+  const pattern = new RegExp(`(export\\s+const\\s+${rule.name}\\s*=\\s*)[-+]?\\d[\\d_]*(?:\\.\\d+)?`, "m");
+  if (!pattern.test(src)) throw new Error(`constant not found: ${rule.name}`);
+  writeFileSync(constantsPath, src.replace(pattern, (_match, prefix: string) => `${prefix}${literal}`));
+  return { key, constant: rule.name, value };
+}
+
 /** Build a manifest entry from a meta object + a (already-written) model url. */
 function entryFromMeta(meta: Record<string, unknown>, model: string, id: string): PropEntry {
   const entry: PropEntry = {
@@ -1575,6 +1620,19 @@ function modelImporter(): Plugin {
             sendJson(res, { ok: true, scope, key });
           } catch (e) {
             fail(res, 500, String(e));
+          }
+        });
+      });
+
+      // ======== Gameplay tuning defaults (shared constants edited from Dev Mode) ========
+      server.middlewares.use("/__gameplay/default", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}") as Record<string, unknown>;
+            sendJson(res, { ok: true, ...writeGameplayDefault(root, b.key, b.value) });
+          } catch (e) {
+            fail(res, 400, String(e));
           }
         });
       });
