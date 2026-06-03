@@ -745,6 +745,80 @@
         font-weight: 900;
         overflow-wrap: anywhere;
       }
+      #worktreePanel .wtBranchValueLine {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 24px;
+        gap: 6px;
+        align-items: center;
+      }
+      #worktreePanel .wtBranchCopy {
+        width: 24px;
+        height: 24px;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 212, 121, 0.28);
+        border-radius: 5px;
+        display: inline-grid;
+        place-items: center;
+        background: rgba(255, 212, 121, 0.06);
+        color: #ffe0a8;
+        cursor: pointer;
+      }
+      #worktreePanel .wtBranchCopy:hover,
+      #worktreePanel .wtBranchCopy:focus-visible {
+        border-color: rgba(255, 212, 121, 0.82);
+        background: rgba(255, 212, 121, 0.14);
+        outline: none;
+      }
+      #worktreePanel .wtBranchCopy.copied {
+        border-color: rgba(139, 240, 170, 0.55);
+        background: rgba(84, 217, 140, 0.14);
+      }
+      #worktreePanel .wtBranchCopy:disabled {
+        opacity: 0.48;
+        cursor: wait;
+      }
+      #worktreePanel .wtBranchCopyIcon {
+        position: relative;
+        width: 12px;
+        height: 12px;
+        display: block;
+      }
+      #worktreePanel .wtBranchCopyIcon::before,
+      #worktreePanel .wtBranchCopyIcon::after {
+        content: "";
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        box-sizing: border-box;
+        border: 1.5px solid currentColor;
+        border-radius: 2px;
+      }
+      #worktreePanel .wtBranchCopyIcon::before {
+        left: 1px;
+        top: 3px;
+        opacity: 0.58;
+      }
+      #worktreePanel .wtBranchCopyIcon::after {
+        right: 1px;
+        top: 1px;
+        background: rgba(8, 6, 10, 0.95);
+      }
+      #worktreePanel .wtBranchCopy.copied .wtBranchCopyIcon::before {
+        display: none;
+      }
+      #worktreePanel .wtBranchCopy.copied .wtBranchCopyIcon::after {
+        width: 11px;
+        height: 6px;
+        right: 0;
+        top: 2px;
+        border-top: 0;
+        border-right: 0;
+        border-radius: 0;
+        background: transparent;
+        transform: rotate(-45deg);
+        color: #8bf0aa;
+      }
       #worktreePanel .wtTargetSelect {
         min-width: 0;
         width: 100%;

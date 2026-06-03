@@ -547,6 +547,16 @@ function targetUntrackedPaths(cwd: string): string[] {
     .filter(Boolean);
 }
 
+function unmergedPaths(cwd: string): string[] {
+  const raw = captureGit(["diff", "--name-only", "--diff-filter=U"], cwd, false);
+  return raw ? raw.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+function unresolvedConflictReason(paths: string[]): string {
+  const shown = paths.slice(0, 3).join(", ");
+  return paths.length > 3 ? `Target worktree has unresolved conflicts: ${shown}, ...` : `Target worktree has unresolved conflicts: ${shown}`;
+}
+
 function pendingTargetConflictReasons(root: string, targetBranch: string, sources: string[]): Map<string, string> {
   const reasons = new Map<string, string>();
   if (!sources.length) return reasons;
@@ -556,6 +566,12 @@ function pendingTargetConflictReasons(root: string, targetBranch: string, source
     return reasons;
   }
   const existingTarget = worktreePathForBranch(root, targetBranch);
+  const targetUnmergedPaths = existingTarget ? unmergedPaths(existingTarget) : [];
+  if (targetUnmergedPaths.length) {
+    const reason = unresolvedConflictReason(targetUnmergedPaths);
+    for (const source of sources) reasons.set(source, reason);
+    return reasons;
+  }
   const trackedSnapshot = existingTarget ? targetTrackedSnapshot(existingTarget) : "";
   const untrackedPaths = existingTarget ? targetUntrackedPaths(existingTarget) : [];
   const parent = resolve(root, ".gorilator");
@@ -589,6 +605,8 @@ function pendingTargetConflictReasons(root: string, targetBranch: string, source
 }
 
 function stashTargetChanges(cwd: string): string {
+  const targetUnmergedPaths = unmergedPaths(cwd);
+  if (targetUnmergedPaths.length) throw new Error(unresolvedConflictReason(targetUnmergedPaths));
   const status = execFileSync("git", ["status", "--porcelain=v1"], { cwd, encoding: "utf8" }).trim();
   if (!status) return "";
   const before = latestStashSha(cwd);
