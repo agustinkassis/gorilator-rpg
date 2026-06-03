@@ -465,25 +465,120 @@ function worktreePathForBranch(root: string, branch: string): string {
   return "";
 }
 
-function ensureCleanWorktree(root: string, targetBranch: string) {
-  const status = execFileSync("git", ["status", "--porcelain=v1"], { cwd: root, encoding: "utf8" }).trim();
-  if (!status) return;
-  throw new Error(
-    `Target branch ${targetBranch} is checked out at ${root} and has uncommitted changes. Commit or stash them before merging from the game.`,
-  );
+interface TargetMergeWorktree {
+  cwd: string;
+  temporary: boolean;
+  checkedOutTarget: boolean;
 }
 
-function targetMergeWorktree(root: string, targetBranch: string): { cwd: string; temporary: boolean } {
+function targetMergeWorktree(root: string, targetBranch: string): TargetMergeWorktree {
   const existing = worktreePathForBranch(root, targetBranch);
   if (existing) {
-    ensureCleanWorktree(existing, targetBranch);
-    return { cwd: existing, temporary: false };
+    return { cwd: existing, temporary: false, checkedOutTarget: true };
   }
   const parent = resolve(root, ".gorilator");
   mkdirSync(parent, { recursive: true });
   const tmp = mkdtempSync(resolve(parent, "merge-"));
   execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
-  return { cwd: tmp, temporary: true };
+  return { cwd: tmp, temporary: true, checkedOutTarget: false };
+}
+
+function removeTemporaryWorktree(root: string, cwd: string) {
+  try {
+    execFileSync("git", ["worktree", "remove", "--force", cwd], { cwd: root, encoding: "utf8" });
+  } catch {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+function gitErrorMessage(err: unknown): string {
+  const out = `${String((err as { stdout?: unknown }).stdout ?? "")}\n${String((err as { stderr?: unknown }).stderr ?? "")}`.trim();
+  return out || (err instanceof Error ? err.message : String(err));
+}
+
+function latestStashSha(cwd: string): string {
+  return captureGit(["rev-parse", "-q", "--verify", "stash@{0}"], cwd) ?? "";
+}
+
+function stashTargetChanges(cwd: string): string {
+  const status = execFileSync("git", ["status", "--porcelain=v1"], { cwd, encoding: "utf8" }).trim();
+  if (!status) return "";
+  const before = latestStashSha(cwd);
+  execFileSync("git", ["stash", "push", "--include-untracked", "-m", "gorilator autostash before target merge"], {
+    cwd,
+    encoding: "utf8",
+  });
+  const after = latestStashSha(cwd);
+  return after && after !== before ? after : "";
+}
+
+function dropAutostash(cwd: string, stashSha: string) {
+  if (!stashSha || latestStashSha(cwd) !== stashSha) return;
+  execFileSync("git", ["stash", "drop", "stash@{0}"], { cwd, encoding: "utf8" });
+}
+
+function restoreAutostash(cwd: string, stashSha: string) {
+  if (!stashSha) return;
+  execFileSync("git", ["stash", "apply", "--index", stashSha], { cwd, encoding: "utf8" });
+  dropAutostash(cwd, stashSha);
+}
+
+function abortCherryPick(cwd: string) {
+  try {
+    execFileSync("git", ["cherry-pick", "--abort"], { cwd, encoding: "utf8" });
+  } catch {
+    // The pick may not have started.
+  }
+}
+
+function cherryPickCommit(cwd: string, source: string) {
+  try {
+    execFileSync("git", ["cherry-pick", source], { cwd, encoding: "utf8" });
+  } catch (err) {
+    abortCherryPick(cwd);
+    throw err;
+  }
+}
+
+function preflightTargetAutostash(root: string, targetBranch: string, source: string, stashSha: string) {
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-check-"));
+  try {
+    execFileSync("git", ["worktree", "add", "--detach", tmp, targetBranch], { cwd: root, encoding: "utf8" });
+    cherryPickCommit(tmp, source);
+    if (stashSha) execFileSync("git", ["stash", "apply", "--index", stashSha], { cwd: tmp, encoding: "utf8" });
+  } catch (err) {
+    throw new Error(
+      `Local changes in the checked-out ${targetBranch} worktree would conflict with ${source.slice(0, 7)}. ${gitErrorMessage(err)}`,
+    );
+  } finally {
+    removeTemporaryWorktree(root, tmp);
+  }
+}
+
+function cherryPickIntoCheckedOutTarget(root: string, targetBranch: string, cwd: string, source: string) {
+  const stashSha = stashTargetChanges(cwd);
+  let picked = false;
+  try {
+    if (stashSha) preflightTargetAutostash(root, targetBranch, source, stashSha);
+    cherryPickCommit(cwd, source);
+    picked = true;
+    restoreAutostash(cwd, stashSha);
+  } catch (err) {
+    if (!picked) {
+      try {
+        restoreAutostash(cwd, stashSha);
+      } catch (restoreErr) {
+        throw new Error(`Could not restore local changes after merge failed. ${gitErrorMessage(restoreErr)}`);
+      }
+    } else if (stashSha) {
+      throw new Error(
+        `Merged ${source.slice(0, 7)} into ${targetBranch}, but local changes could not be reapplied. They are still saved in the latest Git stash for ${cwd}. ${gitErrorMessage(err)}`,
+      );
+    }
+    throw err;
+  }
 }
 
 function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown): string {
@@ -521,22 +616,10 @@ function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): Worktree
   ensureLocalTargetBranch(root, targetBranch);
   const target = targetMergeWorktree(root, targetBranch);
   try {
-    execFileSync("git", ["cherry-pick", source], { cwd: target.cwd, encoding: "utf8" });
-  } catch (err) {
-    try {
-      execFileSync("git", ["cherry-pick", "--abort"], { cwd: target.cwd, encoding: "utf8" });
-    } catch {
-      // The pick may not have started; temp worktree cleanup still runs below.
-    }
-    throw err;
+    if (target.checkedOutTarget) cherryPickIntoCheckedOutTarget(root, targetBranch, target.cwd, source);
+    else cherryPickCommit(target.cwd, source);
   } finally {
-    if (target.temporary) {
-      try {
-        execFileSync("git", ["worktree", "remove", "--force", target.cwd], { cwd: root, encoding: "utf8" });
-      } catch {
-        rmSync(target.cwd, { recursive: true, force: true });
-      }
-    }
+    if (target.temporary) removeTemporaryWorktree(root, target.cwd);
   }
   return worktreeInfo();
 }
