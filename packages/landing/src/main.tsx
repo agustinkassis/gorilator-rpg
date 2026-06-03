@@ -1,64 +1,67 @@
 import { useCallback, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   ArrowUpRight,
+  Check,
+  Copy,
   Github,
+  Hammer,
   Loader2,
   Play,
   Shield,
-  Sparkles,
-  Sword,
   Swords,
   Trophy,
+  Users,
   Zap,
 } from "lucide-react";
 import { useReveal, useScrollY, usePointerParallax } from "./hooks";
-import { connectNostr, hasNostrExtension, shortNpub, type NostrIdentity } from "./nostr";
+import {
+  connectNostr,
+  fetchNostrProfile,
+  hasNostrExtension,
+  shortNpub,
+  type NostrIdentity,
+} from "./nostr";
 import "./styles.css";
 
 const gameUrl = "https://game.gorilator.io";
 const repoUrl = "https://github.com/agustinkassis/gorilator-rpg";
 
-const screenshots = [
-  {
-    src: "/screenshots/gorilator-splash.png",
-    title: "Choose the defender",
-    caption: "Name the gorilla that will hold the line when the siege starts.",
-  },
-  {
-    src: "/screenshots/gorilator-world.png",
-    title: "Defend La Crypta",
-    caption: "Protect the house at the center while waves push through the field.",
-  },
-  {
-    src: "/screenshots/gorilator-hud.png",
-    title: "Survive the waves",
-    caption: "Track health, resources, minimap pressure, inventory, and the next attack.",
-  },
+const features = [
+  { icon: Shield, title: "Tower Defense" },
+  { icon: Swords, title: "RPG" },
+  { icon: Users, title: "Online Multiplayer" },
+  { icon: Hammer, title: "Crafting" },
+  { icon: Zap, title: "Resource Pickups" },
+  { icon: Trophy, title: "Nostr Identity" },
 ];
 
-const features = [
-  {
-    icon: Shield,
-    title: "Tower Defense",
-    body: "La Crypta is the tower, the field is the lane. Hold the center or lose it all.",
-  },
-  {
-    icon: Swords,
-    title: "Wave Combat",
-    body: "Read the minimap, position fast, and break wave after escalating wave.",
-  },
-  {
-    icon: Zap,
-    title: "Resource Pickups",
-    body: "Gather drops, spend stamina, and throw everything you have at the horde.",
-  },
-  {
-    icon: Trophy,
-    title: "Nostr Identity",
-    body: "Bring your own keys. Your gorilla, your progress, signed and yours.",
-  },
-];
+/** A tiny ostrich — the "ostr" in Nostr. Sits in the connect button's glyph. */
+function Ostrich() {
+  return (
+    <svg
+      className="ostrich"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="8" cy="5" r="1.3" />
+      <path d="M6.8 4.7 4.9 5.2 6.8 5.7" />
+      <path d="M8.7 6.1c1.3 1.7.7 3.3 2.1 4.4" />
+      <path d="M10.8 10.5c-4.2-.2-5 5.3.2 6 5.1.6 7.4-3.9 4.5-5.9-1.5-1-3.4-.5-4.7 0z" />
+      <path d="M17.6 11.3c1.6-.6 2.6.6 1.8 2" />
+      <path d="M11.7 16.3 11.1 20.8" />
+      <path d="M14.6 16.5 15.6 20.8" />
+    </svg>
+  );
+}
 
 /** A field of slow-rising embers behind the hero. Positions are deterministic
  *  per index so they don't reshuffle on re-render. */
@@ -109,8 +112,14 @@ function NostrButton() {
         await new Promise((r) => setTimeout(r, 400));
       }
       const id = await connectNostr();
-      setIdentity(id);
+      setIdentity(id); // show the npub immediately
       setStatus("idle");
+      // resolve the avatar + display name from the npub's kind-0 in the background
+      void fetchNostrProfile(id.pubkey).then((profile) => {
+        if (profile.name || profile.picture) {
+          setIdentity((cur) => (cur && cur.pubkey === id.pubkey ? { ...cur, ...profile } : cur));
+        }
+      });
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : "Could not connect.");
@@ -121,7 +130,11 @@ function NostrButton() {
     return (
       <a className="nostrChip connected" href={gameUrl} title={identity.npub}>
         {identity.picture ? (
-          <img src={identity.picture} alt="" />
+          <img
+            src={identity.picture}
+            alt=""
+            onError={() => setIdentity((cur) => (cur ? { ...cur, picture: undefined } : cur))}
+          />
         ) : (
           <span className="nostrDot" />
         )}
@@ -137,7 +150,9 @@ function NostrButton() {
         {status === "connecting" ? (
           <Loader2 size={17} className="spin" />
         ) : (
-          <span className="nostrGlyph">ostr</span>
+          <span className="nostrGlyph">
+            <Ostrich />
+          </span>
         )}
         <span>{status === "connecting" ? "Connecting…" : "Connect with Nostr"}</span>
       </button>
@@ -173,6 +188,9 @@ function Hero() {
       <nav className="nav" aria-label="Primary">
         <span className="brand">GORILATOR</span>
         <div className="navActions">
+          <a className="iconLink" href="/stats.html" aria-label="Live Servers">
+            <Activity size={19} />
+          </a>
           <a className="iconLink" href={repoUrl} aria-label="GitHub repository">
             <Github size={19} />
           </a>
@@ -184,18 +202,14 @@ function Hero() {
       </nav>
 
       <div className="heroInner" style={contentStyle}>
-        <p className="eyebrow">
+        <a className="osBadge" href={repoUrl}>
           <span className="eyebrowDot" />
-          Defend La Crypta
-        </p>
+          100% Open Source
+        </a>
         <h1 className="heroTitle">
-          <span data-text="GORI">GORI</span>
-          <span data-text="LATOR">LATOR</span>
+          <span>GORILATOR</span>
         </h1>
-        <p className="lede">
-          A brutal isometric tower-defense where your gorilla guards La Crypta — gather resources,
-          throw weapons, and survive wave after wave of attackers.
-        </p>
+        <p className="tagline">Defend La Crypta.</p>
 
         <div className="heroActions">
           <a className="startBtn" href={gameUrl} aria-label="Start playing Gorilator">
@@ -214,21 +228,6 @@ function Hero() {
         </div>
       </div>
 
-      <div className="statusStrip" aria-label="Game highlights">
-        <span>
-          <Shield size={15} /> Tower defense
-        </span>
-        <span>
-          <Sword size={15} /> Wave combat
-        </span>
-        <span>
-          <Zap size={15} /> Resource pickups
-        </span>
-        <span>
-          <Sparkles size={15} /> Nostr login
-        </span>
-      </div>
-
       <div className="scrollHint" aria-hidden>
         <span className="mouse">
           <span className="wheel" />
@@ -238,7 +237,7 @@ function Hero() {
   );
 }
 
-function FeatureCard({ icon: Icon, title, body, index }: (typeof features)[number] & { index: number }) {
+function FeatureCard({ icon: Icon, title, index }: (typeof features)[number] & { index: number }) {
   const { ref, shown } = useReveal();
   return (
     <article
@@ -250,27 +249,63 @@ function FeatureCard({ icon: Icon, title, body, index }: (typeof features)[numbe
         <Icon size={24} />
       </span>
       <h3>{title}</h3>
-      <p>{body}</p>
     </article>
   );
 }
 
-function Shot({ shot, index }: { shot: (typeof screenshots)[number]; index: number }) {
-  const { ref, shown } = useReveal();
+type InstallTab = { id: string; label: string; cmd?: string; soon?: boolean };
+
+const installTabs: InstallTab[] = [
+  { id: "oneliner", label: "One-liner", cmd: "curl -fsSL https://gorilator.io/install.sh | bash" },
+  { id: "npm", label: "npm", cmd: "npx gorilator install" },
+  { id: "railway", label: "Railway", soon: true },
+];
+
+/** Tabbed "how to self-host" box with a copy-to-clipboard command line. */
+function InstallBox() {
+  const [active, setActive] = useState("oneliner");
+  const [copied, setCopied] = useState(false);
+  const tab = installTabs.find((t) => t.id === active) ?? installTabs[0];
+  const cmd = tab.cmd ?? "";
+
+  const onCopy = useCallback(async () => {
+    if (!cmd) return;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable (insecure context) — ignore
+    }
+  }, [cmd]);
+
   return (
-    <article
-      ref={ref}
-      className={`shot ${shown ? "in" : ""}`}
-      style={{ transitionDelay: `${index * 110}ms` }}
-    >
-      <div className="shotImg">
-        <img src={shot.src} alt={`${shot.title} screenshot`} loading="lazy" />
+    <div className="installBox">
+      <div className="installTabs" role="tablist">
+        {installTabs.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={active === t.id}
+            className={`installTab ${active === t.id ? "active" : ""} ${t.soon ? "soon" : ""}`}
+            onClick={() => !t.soon && setActive(t.id)}
+            disabled={t.soon}
+          >
+            {t.label}
+            {t.soon && <span className="soonTag">soon</span>}
+          </button>
+        ))}
       </div>
-      <div className="shotBody">
-        <h3>{shot.title}</h3>
-        <p>{shot.caption}</p>
+      <div className="installBody">
+        <code className="installCmd">
+          <span className="installPrompt">$</span>
+          {cmd}
+        </code>
+        <button className="copyBtn" onClick={onCopy} aria-label="Copy command">
+          {copied ? <Check size={16} /> : <Copy size={16} />}
+        </button>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -284,7 +319,6 @@ function App() {
 
       <section className="band features" aria-label="Game systems">
         <div className="sectionHead" ref={featuresReveal.ref as React.Ref<HTMLDivElement>}>
-          <p className="eyebrow center">What you're up against</p>
           <h2 className={`sectionTitle ${featuresReveal.shown ? "in" : ""}`}>
             Hold the house. Break the waves.
           </h2>
@@ -296,39 +330,26 @@ function App() {
         </div>
       </section>
 
-      <section className="band screens" aria-label="Screenshots">
-        <div className="sectionHead">
-          <p className="eyebrow center">From the game</p>
-          <h2 className="sectionTitle in">Every wave is a pressure test.</h2>
-        </div>
-        <div className="shotGrid">
-          {screenshots.map((shot, i) => (
-            <Shot key={shot.src} shot={shot} index={i} />
-          ))}
-        </div>
-      </section>
-
       <section
         className={`finalCta ${ctaReveal.shown ? "in" : ""}`}
         ref={ctaReveal.ref as React.Ref<HTMLDivElement>}
-        aria-label="Play now"
+        aria-label="Start your own server"
       >
         <div className="finalGlow" aria-hidden />
-        <h2>The siege won't wait.</h2>
-        <p>Step into the arena, bring your keys, and defend La Crypta.</p>
-        <a className="startBtn big" href={gameUrl}>
-          <span className="startGlow" aria-hidden />
-          <Play size={30} fill="currentColor" />
-          <span className="startLabel">START</span>
+        <h2>Start your own server</h2>
+        <p>Host your own Gorilator realm — installs natively, no Docker.</p>
+        <InstallBox />
+        <a className="finalOs" href={repoUrl}>
+          <Github size={15} /> 100% Open Source · MIT
         </a>
-        <div className="finalAlt">
-          <NostrButton />
-        </div>
       </section>
 
       <footer className="footer">
         <span className="brand small">GORILATOR</span>
         <div className="footerLinks">
+          <a href="/stats.html">
+            <Activity size={16} /> Live Servers
+          </a>
           <a href={repoUrl}>
             <Github size={16} /> Source
           </a>
@@ -336,7 +357,7 @@ function App() {
             <Play size={14} fill="currentColor" /> Play
           </a>
         </div>
-        <p className="footerNote">Multiplayer isometric RPG · Babylon.js + Colyseus · Nostr identity</p>
+        <p className="footerNote">100% open source · MIT License</p>
       </footer>
     </main>
   );

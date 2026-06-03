@@ -37,33 +37,70 @@ export function shortNpub(npub: string): string {
 }
 
 /**
- * Lightweight "connect": ask the extension for the pubkey, then race the relays
- * for a kind-0 profile so we can greet the player by name. The profile lookup is
- * best-effort — a missing profile never blocks the connection.
+ * "Connect": ask the NIP-07 extension for the user's pubkey. Returns immediately
+ * with just the identity (pubkey + npub) — the profile (avatar/name) is resolved
+ * separately via fetchNostrProfile so the UI never blocks on the relays.
  */
 export async function connectNostr(): Promise<NostrIdentity> {
   if (!window.nostr) {
     throw new Error("No Nostr extension found — install Alby or nos2x.");
   }
   const pubkey = await window.nostr.getPublicKey();
-  const npub = npubEncode(pubkey);
-  const identity: NostrIdentity = { pubkey, npub };
+  return { pubkey, npub: npubEncode(pubkey) };
+}
 
-  try {
+export interface NostrProfile {
+  name?: string;
+  picture?: string;
+}
+
+/**
+ * Resolve a pubkey's kind-0 metadata (display name + avatar) from the relays. Uses a
+ * live subscription that resolves on the first profile event — unlike a short-timeout
+ * `pool.get`, a slow first relay connection won't drop the result. Best-effort: an
+ * empty profile is returned if nothing arrives within the cap.
+ */
+export function fetchNostrProfile(pubkey: string, timeoutMs = 8000): Promise<NostrProfile> {
+  return new Promise((resolve) => {
     const pool = new SimplePool();
-    const event = await Promise.race([
-      pool.get(RELAYS, { kinds: [0], authors: [pubkey] }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
-    ]);
-    pool.close(RELAYS);
-    if (event?.content) {
-      const meta = JSON.parse(event.content) as { name?: string; display_name?: string; picture?: string };
-      identity.name = meta.display_name || meta.name;
-      identity.picture = meta.picture;
-    }
-  } catch {
-    // best-effort profile lookup; ignore failures
-  }
-
-  return identity;
+    let settled = false;
+    let sub: { close: () => void } | null = null;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (profile: NostrProfile) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        sub?.close();
+      } catch {
+        /* ignore */
+      }
+      pool.close(RELAYS);
+      resolve(profile);
+    };
+    timer = setTimeout(() => finish({}), timeoutMs);
+    sub = pool.subscribeMany(
+      RELAYS,
+      { kinds: [0], authors: [pubkey] },
+      {
+        onevent(ev) {
+          try {
+            const meta = JSON.parse(ev.content) as {
+              name?: string;
+              display_name?: string;
+              displayName?: string;
+              picture?: string;
+            };
+            finish({
+              // NIP-24 display_name (or the camelCase variant some clients use) wins over the handle.
+              name: meta.display_name || meta.displayName || meta.name || undefined,
+              picture: typeof meta.picture === "string" ? meta.picture : undefined,
+            });
+          } catch {
+            /* wait for a parseable event */
+          }
+        },
+      },
+    );
+  });
 }

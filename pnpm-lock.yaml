@@ -70,6 +70,9 @@ importers:
         specifier: ^19.0.0
         version: 19.2.7(react@19.2.7)
     devDependencies:
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.41
       '@types/react':
         specifier: ^19.0.2
         version: 19.2.16
