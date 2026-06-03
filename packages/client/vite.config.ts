@@ -10,8 +10,9 @@ import {
   rmSync,
   unlinkSync,
   statSync,
+  createReadStream,
 } from "fs";
-import { basename, relative, resolve } from "path";
+import { basename, extname, relative, resolve } from "path";
 import { execFileSync } from "child_process";
 
 /** The app version shown in-game (the tiny footer tag), read from this package's
@@ -77,6 +78,10 @@ interface WorktreeFilePayload {
   path: string;
   content: string;
   baseContent: string;
+  kind: string;
+  mime: string;
+  editable: boolean;
+  language: string;
 }
 
 const emptyWorktreeInfo = (): WorktreeInfo => ({
@@ -339,30 +344,103 @@ function currentGitChanges(root: string): WorktreeChange[] {
     .filter((change) => change.path);
 }
 
-function repoJsonPath(root: string, rawPath: unknown): { abs: string; rel: string } {
+function repoFilePath(root: string, rawPath: unknown): { abs: string; rel: string } {
   const requested = String(rawPath ?? "").replace(/\\/g, "/");
   const abs = resolve(root, requested);
   const rel = relative(root, abs).replace(/\\/g, "/");
   if (!rel || rel.startsWith("../") || rel === ".." || resolve(root, rel) !== abs) {
     throw new Error("file must be inside the repository");
   }
-  if (!rel.toLowerCase().endsWith(".json")) throw new Error("only JSON files can be edited here");
   return { abs, rel };
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  ".avif": "image/avif",
+  ".cjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".flac": "audio/flac",
+  ".gif": "image/gif",
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".m4a": "audio/mp4",
+  ".md": "text/markdown; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".ogg": "audio/ogg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".ts": "text/typescript; charset=utf-8",
+  ".tsx": "text/typescript; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".wav": "audio/wav",
+  ".webm": "video/webm",
+  ".webp": "image/webp",
+  ".yaml": "text/yaml; charset=utf-8",
+  ".yml": "text/yaml; charset=utf-8",
+};
+
+const EDITABLE_EXTS = new Set([".json", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".css", ".html", ".md", ".txt", ".yaml", ".yml"]);
+const IMAGE_EXTS = new Set([".avif", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"]);
+const AUDIO_EXTS = new Set([".flac", ".m4a", ".mp3", ".ogg", ".wav"]);
+const VIDEO_EXTS = new Set([".mov", ".mp4", ".webm"]);
+const MODEL_EXTS = new Set([".gbl", ".glb", ".gltf"]);
+
+function worktreeFileMeta(rel: string) {
+  const ext = extname(rel).toLowerCase();
+  const kind = IMAGE_EXTS.has(ext)
+    ? "image"
+    : AUDIO_EXTS.has(ext)
+      ? "audio"
+      : VIDEO_EXTS.has(ext)
+        ? "video"
+        : MODEL_EXTS.has(ext)
+          ? "model"
+          : ext === ".json"
+            ? "json"
+            : EDITABLE_EXTS.has(ext)
+              ? "code"
+              : "unsupported";
+  return {
+    kind,
+    mime: MIME_BY_EXT[ext] ?? "application/octet-stream",
+    editable: EDITABLE_EXTS.has(ext),
+    language: ext.replace(/^\./, "") || "text",
+  };
+}
+
 function readWorktreeFile(root: string, rawPath: unknown): WorktreeFilePayload {
-  const file = repoJsonPath(root, rawPath);
-  const content = existsSync(file.abs) ? readFileSync(file.abs, "utf8") : "";
-  const baseContent = captureGit(["show", `HEAD:${file.rel}`], root, false) ?? "";
-  return { path: file.rel, content, baseContent };
+  const file = repoFilePath(root, rawPath);
+  const meta = worktreeFileMeta(file.rel);
+  const content = meta.editable && existsSync(file.abs) ? readFileSync(file.abs, "utf8") : "";
+  const baseContent = meta.editable ? captureGit(["show", `HEAD:${file.rel}`], root, false) ?? "" : "";
+  return { path: file.rel, content, baseContent, ...meta };
 }
 
 function writeWorktreeFile(root: string, rawPath: unknown, rawContent: unknown): WorktreeFilePayload {
-  const file = repoJsonPath(root, rawPath);
+  const file = repoFilePath(root, rawPath);
+  const meta = worktreeFileMeta(file.rel);
+  if (!meta.editable) throw new Error("this file type is preview-only");
   const content = String(rawContent ?? "");
-  JSON.parse(content);
+  if (meta.kind === "json") JSON.parse(content);
   writeFileSync(file.abs, content.endsWith("\n") ? content : `${content}\n`);
   return readWorktreeFile(root, file.rel);
+}
+
+function sendWorktreeRawFile(res: ServerResponse, root: string, rawPath: unknown) {
+  const file = repoFilePath(root, rawPath);
+  if (!existsSync(file.abs)) throw new Error("file does not exist");
+  const meta = worktreeFileMeta(file.rel);
+  res.statusCode = 200;
+  res.setHeader("content-type", meta.mime);
+  res.setHeader("cache-control", "no-store");
+  createReadStream(file.abs).on("error", (err) => fail(res, 500, String(err))).pipe(res);
 }
 
 function ensureLocalTargetBranch(root: string, targetBranch: string) {
@@ -1447,6 +1525,18 @@ function worktreeTagger(): Plugin {
             fail(res, 400, String(e));
           }
         });
+      });
+
+      server.middlewares.use("/__worktree/raw", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        try {
+          const url = new URL(req.url ?? "/", "http://localhost");
+          sendWorktreeRawFile(res, info.root, url.searchParams.get("path"));
+        } catch (e) {
+          fail(res, 400, String(e));
+        }
       });
 
       server.middlewares.use("/__worktree/merge", (req, res) => {

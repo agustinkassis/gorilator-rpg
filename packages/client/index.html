@@ -956,10 +956,10 @@
         color: #bff8ca;
         overflow-wrap: anywhere;
       }
-      #worktreePanel .wtChangeRow.json {
+      #worktreePanel .wtChangeRow.file {
         cursor: pointer;
       }
-      #worktreePanel .wtChangeRow.json:hover {
+      #worktreePanel .wtChangeRow.file:hover {
         background: rgba(255, 212, 121, 0.08);
       }
       #worktreePanel .wtEmpty {
@@ -984,7 +984,7 @@
         pointer-events: auto;
       }
       #jsonEditorModal[hidden] { display: none; }
-      .jsonEditorShell {
+      .fileExplorerShell {
         width: min(1180px, calc(100vw - 36px));
         height: min(760px, calc(100vh - 36px));
         display: grid;
@@ -996,7 +996,7 @@
         color: #ead7ad;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       }
-      .jsonEditorHead {
+      .fileExplorerHead {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 14px;
@@ -1004,24 +1004,26 @@
         padding: 12px;
         border-bottom: 1px solid rgba(255, 212, 121, 0.18);
       }
-      .jsonEditorTitle {
+      .fileExplorerTitle {
         color: #ffd479;
         font: 900 15px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
         overflow-wrap: anywhere;
       }
-      .jsonEditorStatus {
+      .fileExplorerStatus {
         margin-top: 4px;
         font: 800 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
         overflow-wrap: anywhere;
       }
-      .jsonEditorStatus.ok { color: #8bf0aa; }
-      .jsonEditorStatus.bad { color: #ff8b7a; }
-      .jsonEditorActions {
+      .fileExplorerStatus.ok { color: #8bf0aa; }
+      .fileExplorerStatus.bad { color: #ff8b7a; }
+      .fileExplorerActions {
         display: flex;
         gap: 8px;
         align-items: center;
       }
-      .jsonEditorBtn {
+      .fileExplorerBtn {
+        box-sizing: border-box;
+        min-height: 31px;
         border: 1px solid rgba(255, 212, 121, 0.38);
         border-radius: 6px;
         background: rgba(255, 212, 121, 0.08);
@@ -1029,29 +1031,42 @@
         font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         padding: 8px 10px;
         cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
-      .jsonEditorBtn.primary {
+      .fileExplorerBtn:visited {
+        color: #ffe0a8;
+      }
+      .fileExplorerBtn.primary {
         border-color: rgba(139, 240, 170, 0.44);
         background: rgba(84, 217, 140, 0.13);
         color: #bff8ca;
       }
-      .jsonEditorBtn:hover,
-      .jsonEditorBtn:focus-visible {
+      .fileExplorerBtn:hover,
+      .fileExplorerBtn:focus-visible {
         border-color: rgba(255, 212, 121, 0.88);
         outline: none;
       }
-      .jsonEditorBtn:disabled {
+      .fileExplorerBtn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }
-      .jsonEditorBody {
+      .fileExplorerBody {
         min-height: 0;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        gap: 12px;
         padding: 12px;
       }
-      .jsonEditorPane {
+      .fileExplorerBody.editable {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+      }
+      .fileExplorerBody.preview {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .fileExplorerPane,
+      .filePreviewPane {
         min-height: 0;
         display: grid;
         grid-template-rows: auto minmax(0, 1fr);
@@ -1060,14 +1075,14 @@
         overflow: hidden;
         background: rgba(255, 255, 255, 0.035);
       }
-      .jsonEditorPaneTitle {
+      .fileExplorerPaneTitle {
         padding: 8px 10px;
         border-bottom: 1px solid rgba(255, 212, 121, 0.12);
         color: rgba(255, 230, 168, 0.7);
         font: 900 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
         text-transform: uppercase;
       }
-      .jsonEditorText {
+      .fileExplorerText {
         min-width: 0;
         min-height: 0;
         resize: none;
@@ -1079,12 +1094,12 @@
         outline: none;
         tab-size: 2;
       }
-      .jsonDiff {
+      .fileDiff {
         min-height: 0;
         overflow: auto;
         background: rgba(3, 3, 6, 0.7);
       }
-      .jsonDiffLine {
+      .fileDiffLine {
         display: grid;
         grid-template-columns: 46px 46px 18px minmax(0, 1fr);
         gap: 6px;
@@ -1093,32 +1108,91 @@
         box-sizing: border-box;
         font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
       }
-      .jsonDiffLine.add { background: rgba(84, 217, 140, 0.13); }
-      .jsonDiffLine.remove { background: rgba(255, 106, 77, 0.13); }
-      .jsonDiffNum {
+      .fileDiffLine.add { background: rgba(84, 217, 140, 0.13); }
+      .fileDiffLine.remove { background: rgba(255, 106, 77, 0.13); }
+      .fileDiffNum {
         color: rgba(255, 230, 168, 0.34);
         text-align: right;
         user-select: none;
       }
-      .jsonDiffMark {
+      .fileDiffMark {
         color: rgba(255, 230, 168, 0.62);
         user-select: none;
       }
-      .jsonDiffText {
+      .fileDiffText {
         min-width: 0;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
         color: #f4ead5;
       }
-      .jsonDiffMore {
+      .fileDiffMore {
         padding: 8px 10px;
         color: rgba(255, 230, 168, 0.56);
       }
+      .filePreviewPane {
+        background: rgba(3, 3, 6, 0.7);
+      }
+      .filePreviewImage {
+        align-self: center;
+        justify-self: center;
+        max-width: calc(100% - 24px);
+        max-height: calc(100% - 24px);
+        object-fit: contain;
+        background: repeating-conic-gradient(rgba(255,255,255,0.08) 0% 25%, rgba(0,0,0,0.12) 0% 50%) 50% / 24px 24px;
+      }
+      .filePreviewPlayer {
+        align-self: center;
+        justify-self: center;
+        width: min(760px, calc(100% - 24px));
+      }
+      .filePreviewVideo {
+        align-self: center;
+        justify-self: center;
+        width: calc(100% - 24px);
+        height: calc(100% - 24px);
+        min-height: 320px;
+        background: #000;
+        object-fit: contain;
+      }
+      .filePreviewModelWrap {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+      }
+      .filePreviewModelCanvas {
+        width: 100%;
+        height: 100%;
+        min-height: 420px;
+        display: block;
+        touch-action: none;
+        outline: none;
+      }
+      .filePreviewUnsupported,
+      .filePreviewError {
+        align-self: center;
+        justify-self: center;
+        max-width: min(720px, calc(100% - 24px));
+        color: rgba(255, 230, 168, 0.72);
+        font: 800 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+      .filePreviewError {
+        position: absolute;
+        inset-inline: 18px;
+        bottom: 18px;
+        padding: 10px 12px;
+        border: 1px solid rgba(255, 106, 77, 0.38);
+        border-radius: 7px;
+        background: rgba(34, 9, 7, 0.88);
+        color: #ffad7a;
+      }
       @media (max-width: 820px) {
-        .jsonEditorBody {
+        .fileExplorerBody.editable {
           grid-template-columns: minmax(0, 1fr);
         }
-        .jsonEditorActions {
+        .fileExplorerActions {
           flex-wrap: wrap;
           justify-content: end;
         }
