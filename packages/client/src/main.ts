@@ -495,7 +495,7 @@ function renderWorktreePanel() {
   targetWrap.append(targetLabel, targetSelect);
   const bringTargetWrap = createWorktreeNode("div", "wtBringTargetWrap");
   const bringTargetLabel = createWorktreeNode("span", "wtBranchLabel", "Update");
-  const bringTargetBtn = createWorktreeNode("button", "wtBringTargetBtn", worktreeMergeBusy ? "Working" : "Bring Target");
+  const bringTargetBtn = createWorktreeNode("button", "wtBringTargetBtn", worktreeMergeBusy ? "Working" : "Merge In");
   bringTargetBtn.type = "button";
   bringTargetBtn.disabled = worktreeMergeBusy || !canMergeTarget;
   bringTargetBtn.title = canMergeTarget
@@ -554,7 +554,11 @@ function renderWorktreePanel() {
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
 
-      const mergeBtn = createWorktreeNode("button", hovered ? "wtMergeBtn preview" : "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
+      const mergeBtn = createWorktreeNode(
+        "button",
+        hovered ? "wtMergeBtn preview" : "wtMergeBtn",
+        worktreeMergeBusy ? "Merging" : "Merge into target",
+      );
       mergeBtn.type = "button";
       mergeBtn.title = `Merge ${commit.hash} into ${targetBranch}`;
       mergeBtn.disabled = worktreeMergeBusy;
@@ -584,7 +588,7 @@ function renderWorktreePanel() {
             renderWorktreePanel();
           });
       });
-      const action = createWorktreeNode("span", "wtMergeAction");
+      const action = createWorktreeNode("span", "wtMergeAction wtPendingAction");
       action.append(mergeBtn);
       row.append(action);
       pendingSection.append(row);
@@ -665,7 +669,7 @@ function renderWorktreePanel() {
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
 
-      const mergeBtn = createWorktreeNode("button", "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
+      const mergeBtn = createWorktreeNode("button", "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge In");
       mergeBtn.type = "button";
       mergeBtn.title = `Merge ${targetBranch} history through ${commit.hash} into ${branch}`;
       mergeBtn.disabled = worktreeMergeBusy;
@@ -695,7 +699,7 @@ function renderWorktreePanel() {
             renderWorktreePanel();
           });
       });
-      const mergeLabel = createWorktreeNode("span", "wtMergeLabel", "Merge");
+      const mergeLabel = createWorktreeNode("span", "wtMergeLabel", "Merge In");
       const action = createWorktreeNode("span", "wtMergeAction wtIncomingAction");
       action.append(mergeBtn, mergeLabel);
       row.append(action);

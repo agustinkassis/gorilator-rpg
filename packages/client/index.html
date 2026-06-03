@@ -866,7 +866,7 @@
       }
       #worktreePanel .wtMergeBtn {
         box-sizing: border-box;
-        width: 58px;
+        width: var(--wt-merge-action-width, 58px);
         height: 23px;
         border: 1px solid rgba(139, 240, 170, 0.38);
         border-radius: 5px;
@@ -877,9 +877,15 @@
         padding: 0 7px;
       }
       #worktreePanel .wtMergeAction {
-        width: 58px;
+        width: var(--wt-merge-action-width, 58px);
         height: 23px;
         display: grid;
+      }
+      #worktreePanel .wtPendingAction {
+        --wt-merge-action-width: 132px;
+      }
+      #worktreePanel .wtIncomingAction {
+        --wt-merge-action-width: 74px;
       }
       #worktreePanel .wtMergeAction > * {
         grid-area: 1 / 1;
@@ -906,7 +912,7 @@
       }
       #worktreePanel .wtMergeLabel {
         box-sizing: border-box;
-        width: 58px;
+        width: var(--wt-merge-action-width, 58px);
         height: 23px;
         border: 1px solid transparent;
         border-radius: 5px;
