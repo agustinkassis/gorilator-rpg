@@ -1,0 +1,46 @@
+name: Publish CLI to npm
+
+# Publishes packages/cli (the `gorilator` package) to the npm registry
+# whenever a GitHub Release is published.
+on:
+  release:
+    types: [published]
+  # Allow manual triggering from the Actions tab as a fallback.
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # enables npm provenance
+    defaults:
+      run:
+        working-directory: packages/cli
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # No NODE_AUTH_TOKEN needed: authentication is via OIDC Trusted Publishing,
+      # configured on npmjs.com for this repo + workflow. Provenance is automatic.
+      - name: Publish to npm
+        run: npm publish

@@ -32,6 +32,7 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [performance.md](performance.md) | The perf pipeline: the F3 overlay, tagging any work, recording benchmarks, the JSONL data format, and the `pnpm perf` analyzer (FPS / CPU / GPU / memory) |
 | [performance-research.md](performance-research.md) | The living benchmarking **process**, standard scenarios, dated **findings log**, and the prioritized **optimization backlog** (continuous perf research) |
 | [nostr.md](nostr.md) | All Nostr events: login challenge, server-signed player saves, and the server/realm **discovery** event (+ the public HTTP API) |
+| [publishing-cli.md](publishing-cli.md) | How the `gorilator` CLI is auto-published to npm on each GitHub Release via CI (OIDC Trusted Publishing, no token), plus the release checklist |
 
 Related top-level docs: [`../README.md`](../README.md) (quick start + stack),
 [`../REALMS.md`](../REALMS.md) (realm/discovery spec for external apps),
