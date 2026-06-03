@@ -589,13 +589,67 @@ function modelImporter(): Plugin {
   };
 }
 
+/**
+ * Dev-only endpoints for the in-game performance overlay (F3). They persist client
+ * perf artefacts to the repo-root `perf-logs/` directory (gitignored), the same
+ * place the server writes its JSONL — so one folder holds every artefact the
+ * analyzer reads. See docs/performance.md.
+ *   POST /__perf/save?name=<file>&kind=log|benchmark   raw body → perf-logs/<file>
+ *   GET  /__perf/list                                  → list saved artefacts
+ */
+function perfLogs(): Plugin {
+  // Vite's root is packages/client; the shared perf-logs dir lives at the repo root.
+  const perfDirFor = (root: string) => resolve(root, "../../perf-logs");
+  // Keep a client-supplied filename inside perf-logs: strip any path, allow only a
+  // safe charset, and force a .jsonl/.json extension.
+  const safeName = (raw: string, kind: string) => {
+    const base = (raw.split(/[\\/]/).pop() || "").replace(/[^a-zA-Z0-9._-]/g, "_");
+    const fallback = `${kind === "benchmark" ? "bench" : "perf-log"}-${Date.now()}`;
+    const name = base || fallback;
+    return /\.(jsonl|json)$/i.test(name) ? name : `${name}.${kind === "benchmark" ? "json" : "jsonl"}`;
+  };
+  return {
+    name: "rpg-perf-logs",
+    configureServer(server: ViteDevServer) {
+      const dir = perfDirFor(server.config.root);
+      server.middlewares.use("/__perf/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        const url = new URL(req.url || "", "http://localhost");
+        const name = safeName(url.searchParams.get("name") || "", url.searchParams.get("kind") || "log");
+        void collectBody(req).then((buf) => {
+          try {
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            writeFileSync(resolve(dir, name), buf);
+            sendJson(res, { ok: true, name, bytes: buf.length });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__perf/list", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        try {
+          const files = existsSync(dir)
+            ? readdirSync(dir)
+                .filter((f) => /\.(jsonl|json)$/i.test(f))
+                .map((f) => ({ name: f, size: statSync(resolve(dir, f)).size }))
+            : [];
+          sendJson(res, files);
+        } catch (e) {
+          fail(res, 500, String(e));
+        }
+      });
+    },
+  };
+}
+
 // @rpg/shared is consumed as its compiled output (packages/shared/dist), resolved
 // via the workspace symlink + its package.json "exports". That keeps the Colyseus
 // schema decorators compiled correctly by tsc, independent of esbuild's handling.
 export default defineConfig({
   // Inject the package version as a global constant for the footer version tag.
   define: { __APP_VERSION__: JSON.stringify(appVersion()) },
-  plugins: [modelImporter()],
+  plugins: [modelImporter(), perfLogs()],
   server: {
     port: Number(process.env.CLIENT_PORT) || 5173,
     strictPort: true,

@@ -11,6 +11,10 @@ packages/*/dist/
 # Realm-tracker lifetime stats (runtime state; mirrored to the Nostr event)
 .server-realms.json
 
+# Performance logs + benchmark results (client JSONL via the F3 overlay, server
+# JSONL when PERF_LOG=1). Local profiling artefacts; analyze with scripts/perf-analyze.mjs
+perf-logs/
+
 # Auto-generated server Nostr identity (a secret nsec; set NOSTR_NSEC to override)
 .nostr-identity
 

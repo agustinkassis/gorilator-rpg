@@ -12,6 +12,7 @@
     "build:shared": "pnpm --filter @rpg/shared build",
     "build": "pnpm --filter @rpg/shared build && pnpm --filter @rpg/client build && pnpm --filter @gorilator/landing build",
     "build:landing": "pnpm --filter @gorilator/landing build",
+    "perf": "node scripts/perf-analyze.mjs",
     "deploy": "bash cli/gorilator install",
     "gorilator": "bash cli/gorilator"
   },

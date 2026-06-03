@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { Room, Client } from "@colyseus/core";
 import {
   GameState,
@@ -82,6 +83,7 @@ import { loadResourceDrops } from "../systems/resourceDrops";
 import { loadStructureLoot } from "../systems/structureDrops";
 import { setRockObstacles } from "../systems/pathfinding";
 import { devMove, devDelete, devSet } from "../systems/devEdit";
+import { perfTracker } from "../systems/perf";
 import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
 import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrSave";
 
@@ -352,11 +354,22 @@ export class GameRoom extends Room<GameState> {
     // whole game freezes/slows/speeds for everyone. Direct edits (dev_move etc.)
     // still apply while paused since they mutate state outside this loop.
     this.setSimulationInterval((deltaMs) => {
+      const tickStart = performance.now();
+      // Record this tick's wall time + entity counts into the perf tracker (powers
+      // GET /api/perf, the F3 overlay's server line, and PERF_LOG=1 JSONL logs).
+      const recordTick = () =>
+        perfTracker.recordTick(performance.now() - tickStart, {
+          players: this.state.players.size,
+          enemies: this.state.enemies.size,
+          entities: this.entityCount(),
+        });
+
       // Realm over (La Crypta fell): freeze the whole world and tick down the
       // intermission. When it hits zero the next realm spins up from scratch.
       if (this.state.restartTimerMs > 0) {
         this.state.restartTimerMs = Math.max(0, this.state.restartTimerMs - deltaMs);
         if (this.state.restartTimerMs === 0) this.startNewRealm();
+        recordTick();
         return; // no gameplay runs during the game-over countdown
       }
 
@@ -375,21 +388,28 @@ export class GameRoom extends Room<GameState> {
           return true;
         },
       };
-      staminaSystem(this.state, dt); // sets p.sprinting; movement reads it for the speed boost
-      movementSystem(this.state, dt);
+      // Each system runs inside a perf span so a tick-time spike traces to the exact
+      // culprit (the `tag:*` rows in the server summary / analyzer).
+      perfTracker.span("stamina", () => staminaSystem(this.state, dt)); // sets p.sprinting; movement reads it for the speed boost
+      perfTracker.span("movement", () => movementSystem(this.state, dt));
       // Paused: normal movement is frozen, but the local player roams as a ghost
       // at REAL (unscaled) time — decoupled from the game clock.
       if (this.state.timeScale === 0) ghostMovementSystem(this.state, deltaMs / 1000);
-      combatSystem(this.state, dt, emitDamage, emitKill, emitXp, emitHeal, repairInventory);
-      goblinAiSystem(this.state, dt, emitDamage, emitKill);
-      if (this.state.timeScale > 0) separationSystem(this.state); // fan attackers out — no stacking on one tile
-      waveSystem(this.state, dt); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
-      this.sacredCircleHealSystem(dt);
-      spawnerSystem(this.state, dt); // dev-placed object spawners (coexist with waves)
+      perfTracker.span("combat", () =>
+        combatSystem(this.state, dt, emitDamage, emitKill, emitXp, emitHeal, repairInventory),
+      );
+      perfTracker.span("goblinAi", () => goblinAiSystem(this.state, dt, emitDamage, emitKill));
+      if (this.state.timeScale > 0)
+        perfTracker.span("separation", () => separationSystem(this.state)); // fan attackers out — no stacking on one tile
+      perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
+      perfTracker.span("sacredCircleHeal", () => this.sacredCircleHealSystem(dt));
+      perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
       this.releasePendingThrows(scaledMs);
-      treeRegrowSystem(this.state, dt);
-      potionRespawnSystem(this.state, dt);
-      bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp);
+      perfTracker.span("resources", () => {
+        treeRegrowSystem(this.state, dt);
+        potionRespawnSystem(this.state, dt);
+      });
+      perfTracker.span("bananas", () => bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp));
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {
@@ -397,8 +417,10 @@ export class GameRoom extends Room<GameState> {
           this.sendInventory(pid);
         }
       };
-      itemPickupSystem(this.state, dt, collect); // walk-onto a clicked item
-      autoGrabSystem(this.state, collect); // auto-collect anything nearby
+      perfTracker.span("pickups", () => {
+        itemPickupSystem(this.state, dt, collect); // walk-onto a clicked item
+        autoGrabSystem(this.state, collect); // auto-collect anything nearby
+      });
       // Tally each death the instant a player flips into the DEAD state (any cause).
       this.state.players.forEach((p) => {
         const dead = p.state === AnimState.DEAD;
@@ -432,6 +454,7 @@ export class GameRoom extends Room<GameState> {
         this.realmTick = 0;
         this.reportRealm(); // ~1/s: feed the realm tracker (start/accumulate/abandon)
       }
+      recordTick();
     }, 1000 / TICK_RATE);
 
     console.log(`[room] ${this.roomId} created`);
@@ -760,6 +783,23 @@ export class GameRoom extends Room<GameState> {
   private persistSave(sid: string, p: Player, reason: string): void {
     if (!p.pubkey) return;
     this.serverSaver.save(p.pubkey, buildServerSave(p, this.inventories.get(sid) ?? []), reason);
+  }
+
+  /** Total synced entities across every collection — the "world size" the perf
+   *  tracker pairs with each tick's cost (so a tick-time trend reads against load). */
+  private entityCount(): number {
+    const s = this.state;
+    return (
+      s.players.size +
+      s.enemies.size +
+      s.trees.size +
+      s.rocks.size +
+      s.logs.size +
+      s.stones.size +
+      s.potions.size +
+      s.bananas.size +
+      s.houses.size
+    );
   }
 
   /** Rebuild the pathfinding rock obstacles from the live Rock entities (all of
