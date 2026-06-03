@@ -9,6 +9,7 @@ import { importModel, applyTransform, LoadedProp } from "../scene/props";
  */
 export class PropImporter {
   private panel: HTMLElement;
+  private toggleBtn: HTMLButtonElement;
   private open = false;
   private file: File | null = null;
   private prop: LoadedProp | null = null;
@@ -24,11 +25,12 @@ export class PropImporter {
     btn.id = "propImportBtn";
     btn.textContent = "📦 Import Model";
     btn.style.cssText =
-      "position:fixed; right:16px; bottom:132px; z-index:40; cursor:pointer;" +
+      "position:fixed; right:16px; bottom:132px; z-index:40; cursor:pointer; display:none;" +
       "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
       "padding:6px 10px; font:12px system-ui,sans-serif;";
     btn.onclick = () => this.toggle();
     document.body.appendChild(btn);
+    this.toggleBtn = btn;
 
     const panel = document.createElement("div");
     panel.id = "propImporterPanel";
@@ -93,6 +95,11 @@ export class PropImporter {
     (panel.querySelector("#piAdd") as HTMLElement).onclick = () => void this.add();
     (panel.querySelector("#piDiscard") as HTMLElement).onclick = () => this.discard();
     // (M is the world-map hotkey now; open this dev tool with its button.)
+  }
+
+  setVisible(on: boolean) {
+    this.toggleBtn.style.display = on ? "block" : "none";
+    if (!on && this.open) this.toggle();
   }
 
   private toggle() {

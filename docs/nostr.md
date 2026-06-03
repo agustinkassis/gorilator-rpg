@@ -180,14 +180,14 @@ access**.
 | `t` tag | `gorilator` (filter `{kinds:[30078], "#t":["gorilator"]}` to find every server) |
 | author | the server's pubkey (its reference/identity) |
 | refreshed | on every realm start/end **and every 30 minutes** |
-| content | server name, play URL, `totalRealms`, `maxRounds`, the live realm (id, wave, players, joined npubs), and the last realm |
+| content | server name, server `version`, play URL, `totalRealms`, `maxRounds`, the live realm (id, wave, players, joined npubs), and the last realm |
 
 A **realm** = one game (first live defender → La Crypta falls / room empties). See
 [gameplay.md](gameplay.md) for the lifecycle.
 
 **HTTP API** (same origin as `/colyseus`, CORS-open):
 
-- `GET /api/status` — server identity + lifetime stats + the live realm
+- `GET /api/status` — server identity + version + lifetime stats + the live realm
 - `GET /api/realm` — the current realm to join + players already in it
 
 > **Full spec + copy-paste discovery code for external apps:** [`../REALMS.md`](../REALMS.md).

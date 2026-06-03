@@ -41,6 +41,7 @@ and **updates it in place** — on every realm start/end and **every 30 minutes*
 ["d", "gorilator-server"]
 ["t", "gorilator"]          # discover EVERY Gorilator server: filter {kinds:[30078], "#t":["gorilator"]}
 ["name", "<server name>"]
+["version", "<server version>"]
 ["r", "<play url>"]
 ["realms", "<totalRealms>"]
 ["max_rounds", "<maxRounds>"]
@@ -53,6 +54,7 @@ and **updates it in place** — on every realm start/end and **every 30 minutes*
 {
   "v": 1,
   "name": "Gorilator NYC",
+  "version": "0.1.3",                    // server package version
   "url": "https://game.example.com",     // where to play
   "pubkey": "<hex server pubkey>",
   "totalRealms": 142,                    // realms ever started here
@@ -110,7 +112,7 @@ event content (always current):
 
 ```jsonc
 {
-  "v": 1, "name": "...", "url": "...", "pubkey": "...",
+  "v": 1, "name": "...", "version": "0.1.3", "url": "...", "pubkey": "...",
   "totalRealms": 142, "maxRounds": 23,
   "currentRealm": { "id": "...", "startedAt": 0, "wave": 6, "players": 3, "npubs": ["..."] },
   "lastRealm": { ... },

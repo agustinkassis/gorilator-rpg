@@ -4,7 +4,6 @@ import { NetworkClient } from "../net/NetworkClient";
 import { PropManager } from "./PropManager";
 import { SelectionManager, Selectable } from "./Selection";
 import { Inspector, Field, Action } from "./Inspector";
-import { PropLibrary } from "./PropLibrary";
 import { LibraryExplorer } from "./LibraryExplorer";
 import { PropDef } from "../scene/props";
 import type { CharacterManager } from "./CharacterManager";
@@ -26,7 +25,6 @@ export class DevMode {
   private lastDragSend = 0; // throttle clock for synced-entity drag moves
   private selection: SelectionManager;
   private inspector: Inspector;
-  private library: PropLibrary;
   private explorer: LibraryExplorer;
   private btn: HTMLButtonElement;
   private addBtn: HTMLButtonElement;
@@ -34,6 +32,7 @@ export class DevMode {
   private banner: HTMLElement;
   private timeBar: HTMLElement;
   private timeButtons: { scale: number; el: HTMLButtonElement }[] = [];
+  private visibilityControls: Array<(on: boolean) => void> = [];
   private canvas: HTMLCanvasElement | null;
   private charManager: CharacterManager | null = null; // wired post-construction (main.ts)
   private game: Game | null = null; // wired post-construction (main.ts) — for focus + nodeFor
@@ -46,6 +45,11 @@ export class DevMode {
   /** Wire in the Game so the library explorer can select + camera-focus entities. */
   setGame(g: Game) {
     this.game = g;
+  }
+
+  onVisibilityChange(fn: (on: boolean) => void) {
+    this.visibilityControls.push(fn);
+    fn(this.active);
   }
 
   /** Library-explorer hook: select + highlight an entity by (kind,id), open its
@@ -101,10 +105,6 @@ export class DevMode {
   ) {
     this.selection = new SelectionManager(scene, propManager);
     this.inspector = new Inspector();
-    this.library = new PropLibrary({
-      onPlace: (model, name) => void this.addFromModel(model, name),
-      onUpload: (file, name) => void this.uploadModel(file, name),
-    });
     this.canvas = scene.getEngine().getRenderingCanvas();
 
     const btn = document.createElement("button");
@@ -118,15 +118,15 @@ export class DevMode {
     document.body.appendChild(btn);
     this.btn = btn;
 
-    // "Add model" opens the library; only shown while editing.
+    // "New entity" opens the entity library directly on the placement tab.
     const addBtn = document.createElement("button");
     addBtn.id = "devAddModelBtn";
-    addBtn.textContent = "＋ Add model";
+    addBtn.textContent = "＋ New entity";
     addBtn.style.cssText =
       "position:fixed; right:16px; bottom:240px; z-index:40; cursor:pointer; display:none;" +
       "background:#283; color:#fff; border:1px solid #4a9a52; border-radius:6px;" +
       "padding:6px 10px; font:12px system-ui,sans-serif;";
-    addBtn.onclick = () => this.library.toggle();
+    addBtn.onclick = () => this.explorer.openNew();
     document.body.appendChild(addBtn);
     this.addBtn = addBtn;
 
@@ -148,6 +148,8 @@ export class DevMode {
       focusEntity: (kind, id) => this.focusEntity(kind, id),
       focusPos: (x, z) => this.focusPos(x, z),
       clearFocus: () => this.clearFocus(),
+      placeModel: (model, name) => void this.addFromModel(model, name),
+      uploadModel: (file, name) => void this.uploadModel(file, name),
     });
 
     const banner = document.createElement("div");
@@ -230,6 +232,7 @@ export class DevMode {
     this.btn.style.color = "#fff";
     this.addBtn.style.display = "block";
     this.entitiesBtn.style.display = "block";
+    this.setVisibilityControls(true);
     this.banner.style.display = "block";
     this.timeBar.style.display = "flex";
     this.reflectScale(this.net.room?.state.timeScale ?? 1); // show current speed, don't change it
@@ -249,15 +252,19 @@ export class DevMode {
     this.btn.style.color = "#9fe0a0";
     this.addBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
+    this.setVisibilityControls(false);
     this.banner.style.display = "none";
     this.timeBar.style.display = "none";
-    this.library.close();
     this.explorer?.close();
     this.clearFocus(); // release the camera back to the player
     const cam = this.scene.activeCamera as ArcRotateCamera | null;
     if (cam) setCameraZoom(cam, 1); // back to the normal play zoom
     this.inspector.hide();
     this.setCursor("default");
+  }
+
+  private setVisibilityControls(on: boolean) {
+    for (const fn of this.visibilityControls) fn(on);
   }
 
   /** Pause ⇄ resume (1×). */
@@ -307,9 +314,9 @@ export class DevMode {
       if (!res.ok) throw new Error(await res.text());
       const out = await res.json();
       await this.spawnAndSelect({ id: out.id, name: out.name, model: out.model, x: pos.x, z: pos.z, scale: 5, rotationY: 0 });
-      this.library.setStatus(`✓ placed "${out.name}" — drag to position, edit at right`);
+      this.explorer.setStatus(`placed "${out.name}" - drag to position, edit at right`);
     } catch (e) {
-      this.library.setStatus("place failed: " + (e as Error).message);
+      this.explorer.setStatus("place failed: " + (e as Error).message);
     }
   }
 
@@ -326,9 +333,9 @@ export class DevMode {
       if (!res.ok) throw new Error(await res.text());
       const out = await res.json();
       await this.spawnAndSelect({ id: out.id, name: out.name, model: out.model, x: pos.x, z: pos.z, scale: 5, rotationY: 0 });
-      this.library.setStatus(`✓ imported "${out.name}" — drag to position, edit at right`);
+      this.explorer.setStatus(`imported "${out.name}" - drag to position, edit at right`);
     } catch (e) {
-      this.library.setStatus("import failed: " + (e as Error).message);
+      this.explorer.setStatus("import failed: " + (e as Error).message);
     }
   }
 
@@ -341,7 +348,7 @@ export class DevMode {
     const sel: Selectable = { kind: "prop", id: placed.id, root: placed.loaded.root, meshes: placed.loaded.meshes };
     this.selection.select(sel);
     this.showSelection(sel);
-    this.library.close(); // clear the panel so the cursor can position on the canvas
+    this.explorer.close(); // clear the panel so the cursor can position on the canvas
     this.drag = sel; // arm the follow-drag; the next mouse-move relocates it, a click drops it
     this.setCursor("grabbing");
   }

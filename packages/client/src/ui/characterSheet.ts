@@ -79,11 +79,10 @@ export class CharacterSheet {
     this.loadEquip();
 
     const btn = document.createElement("button");
-    btn.textContent = "📊 Character (C)";
-    btn.style.cssText =
-      "position:fixed; right:16px; bottom:96px; z-index:40; cursor:pointer;" +
-      "background:#2a3242; color:#f0d27a; border:1px solid #c9a24a; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
+    btn.id = "charBtn";
+    btn.className = "hudIconBtn";
+    btn.innerHTML = `<span class="hudIcon" aria-hidden="true">📊</span><span class="hudKey">(C)</span>`;
+    btn.title = "Character (C)";
     btn.onclick = () => this.toggle();
     document.body.appendChild(btn);
 

@@ -37,12 +37,9 @@ export class InventoryUI {
     this.grid = document.getElementById("invGrid") as HTMLElement;
     this.cursor = document.getElementById("invCursor") as HTMLElement;
     this.btn = document.getElementById("invBtn") as HTMLElement;
-    // bag icon (replaces the "Inventory (I)" label)
-    this.btn.textContent = "🎒";
+    // Compact HUD launcher: bag icon plus hotkey.
+    this.btn.innerHTML = `<span class="hudIcon" aria-hidden="true">🎒</span><span class="hudKey">(I)</span>`;
     this.btn.title = "Inventory (I)";
-    this.btn.style.fontSize = "26px";
-    this.btn.style.lineHeight = "1";
-    this.btn.style.padding = "8px 12px";
     this.grid.style.gridTemplateColumns = `repeat(${INV_COLS}, 48px)`;
 
     for (let i = 0; i < INV_SLOTS; i++) {

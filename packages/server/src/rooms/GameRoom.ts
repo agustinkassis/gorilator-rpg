@@ -73,7 +73,7 @@ import {
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
 import { goblinAiSystem, waveSystem, resetWaves } from "../systems/goblins";
-import { realmTracker } from "../systems/realms";
+import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
 import { spawnHouse } from "../systems/houses";
 import { healingTowerPosition } from "../systems/healingTower";
@@ -466,15 +466,21 @@ export class GameRoom extends Room<GameState> {
   private reportRealm() {
     let live = 0;
     const npubs: string[] = [];
+    const players: RealmPlayer[] = [];
     this.state.players.forEach((p) => {
-      if (p.hp > 0 && p.state !== AnimState.DEAD) live++;
-      if (p.pubkey) npubs.push(p.pubkey);
+      const alive = p.hp > 0 && p.state !== AnimState.DEAD;
+      if (alive) live++;
+      if (p.pubkey) {
+        npubs.push(p.pubkey);
+        players.push({ pubkey: p.pubkey, name: p.name, level: p.level, alive });
+      }
     });
     realmTracker.update({
       connected: this.state.players.size,
       live,
       wave: this.state.waveNumber,
       npubs,
+      players,
     });
   }
 

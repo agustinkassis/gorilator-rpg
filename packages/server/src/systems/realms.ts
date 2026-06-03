@@ -69,6 +69,7 @@ interface PersistStats {
 class RealmTracker {
   private readonly name = process.env.SERVER_NAME?.trim() || "Gorilator Server";
   private readonly url = resolvePlayUrl();
+  private readonly version = resolveServerVersion();
   private readonly statsFile =
     process.env.SERVER_STATS_FILE?.trim() || join(process.cwd(), ".server-realms.json");
 
@@ -166,6 +167,7 @@ class RealmTracker {
     return {
       v: CONTENT_VERSION,
       name: this.name,
+      version: this.version,
       url: this.url,
       pubkey,
       totalRealms: this.stats.totalRealms,
@@ -258,6 +260,7 @@ class RealmTracker {
             ["d", SERVER_STATUS_DTAG],
             ["t", APP_TAG],
             ["name", this.name],
+            ["version", this.version],
             ["r", this.url],
             ["realms", String(this.stats.totalRealms)],
             ["max_rounds", String(this.stats.maxRounds)],
@@ -304,6 +307,16 @@ function resolvePlayUrl(): string {
   if (explicit) return explicit;
   const host = process.env.CLIENT_HOSTNAME?.trim();
   return host ? `https://${host}` : "";
+}
+
+/** Read the server package version from package.json in both tsx src/ and dist/. */
+function resolveServerVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+    return typeof pkg?.version === "string" && pkg.version.trim() ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 
 function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {

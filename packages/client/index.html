@@ -251,12 +251,16 @@
         }
       }
       /* Inventory */
-      #invBtn {
+      .hudIconBtn {
         position: fixed;
-        right: 18px;
         bottom: 22px;
         z-index: 5;
-        padding: 10px 14px;
+        width: 76px;
+        height: 46px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
         font: 600 14px system-ui, sans-serif;
         color: #f0e6d2;
         background: linear-gradient(#3a2c1e, #241a12);
@@ -265,8 +269,22 @@
         cursor: pointer;
         box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
       }
-      #invBtn:hover {
+      .hudIconBtn:hover {
         background: linear-gradient(#4a3826, #2e2117);
+      }
+      .hudIconBtn .hudIcon {
+        font-size: 24px;
+        line-height: 1;
+      }
+      .hudIconBtn .hudKey {
+        font-size: 13px;
+        line-height: 1;
+      }
+      #invBtn {
+        right: 18px;
+      }
+      #charBtn {
+        right: 94px;
       }
       #invPanel {
         position: fixed;
@@ -1297,7 +1315,7 @@
       <div id="xpText">Lv. 1 · 0 / 100 XP</div>
     </div>
     <div id="xpLevelUp">LEVEL UP!</div>
-    <button id="invBtn">Inventory (I)</button>
+    <button id="invBtn" class="hudIconBtn">Inventory (I)</button>
     <div id="invPanel">
       <div id="invTitle">Inventory</div>
       <div id="invGrid"></div>

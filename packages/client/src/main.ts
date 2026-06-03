@@ -355,7 +355,6 @@ if (import.meta.env.DEV) {
     },
     onPlaced: (def, placement) => void characterManager.placeNew(def, placement),
   });
-  characterImporter.setVisible(true);
 
   (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode, debugStats };
 
@@ -364,9 +363,13 @@ if (import.meta.env.DEV) {
 
   // Model importer: upload a .glb, place/resize/rotate/name it, concrete or not,
   // and persist it to the codebase (button bottom-right, or press M).
-  new PropImporter(scene, shadow, () => {
+  const propImporter = new PropImporter(scene, shadow, () => {
     const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
     return me ? { x: me.x, z: me.z } : null;
+  });
+  devMode?.onVisibilityChange((on) => {
+    characterImporter.setVisible(on);
+    propImporter.setVisible(on);
   });
 
   // Dev-only clip viewer: press a number key to play that animation clip on the
