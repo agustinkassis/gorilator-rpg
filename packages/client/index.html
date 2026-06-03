@@ -19,6 +19,31 @@
         display: block;
         touch-action: none;
         outline: none;
+        transform-origin: center;
+      }
+      body.splashImpact #renderCanvas {
+        animation: splashCanvasTremble 0.5s cubic-bezier(0.08, 0.85, 0.22, 1) both;
+      }
+      body.splashImpact #splash {
+        animation: splashOverlayTremble 0.5s cubic-bezier(0.08, 0.85, 0.22, 1) both;
+      }
+      @keyframes splashCanvasTremble {
+        0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+        7% { transform: translate3d(-13px, 8px, 0) rotate(-0.9deg) scale(1.025); }
+        15% { transform: translate3d(12px, -10px, 0) rotate(0.8deg) scale(1.028); }
+        24% { transform: translate3d(-10px, 7px, 0) rotate(-0.65deg) scale(1.022); }
+        35% { transform: translate3d(8px, -5px, 0) rotate(0.45deg) scale(1.016); }
+        48% { transform: translate3d(-6px, 4px, 0) rotate(-0.3deg) scale(1.01); }
+        66% { transform: translate3d(4px, -3px, 0) rotate(0.2deg) scale(1.006); }
+        100% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+      }
+      @keyframes splashOverlayTremble {
+        0% { transform: translate3d(0, 0, 0); }
+        9% { transform: translate3d(9px, -5px, 0); }
+        18% { transform: translate3d(-8px, 7px, 0); }
+        30% { transform: translate3d(6px, -4px, 0); }
+        48% { transform: translate3d(-4px, 3px, 0); }
+        100% { transform: translate3d(0, 0, 0); }
       }
       #status {
         position: fixed;
@@ -32,7 +57,7 @@
       #playerBadge {
         position: fixed;
         left: 24px;
-        bottom: 156px;
+        bottom: 132px;
         z-index: 30;
         display: flex;
         align-items: center;
@@ -353,12 +378,13 @@
       }
       #invCursor {
         position: fixed;
-        z-index: 20;
+        z-index: 80;
         pointer-events: none;
         font-size: 30px;
         transform: translate(-50%, -50%);
         display: none;
         filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+        will-change: left, top;
       }
       /* Death / respawn countdown */
       #respawnOverlay {
@@ -534,6 +560,11 @@
       body.preGame #xpLevelUp,
       body.preGame #playerBadge,
       body.preGame #invBtn,
+      body.preGame #invPanel,
+      body.preGame #invCursor,
+      body.preGame #charBtn,
+      body.preGame #charSheetPanel,
+      body.preGame #hotkeyBar,
       body.preGame #propImportBtn,
       body.preGame #propImporterPanel,
       body.preGame #devModeBtn,
@@ -667,6 +698,7 @@
 
       #nameWrap {
         display: flex;
+        justify-content: center;
         pointer-events: auto;
         width: 100%;
         max-width: var(--ctl-w);
@@ -676,6 +708,9 @@
       #nostrStatus,
       #splashHint {
         transform: translateY(-34px);
+        transition:
+          opacity 0.32s ease,
+          transform 0.42s cubic-bezier(0.2, 0.9, 0.24, 1);
       }
       #nameInput {
         box-sizing: border-box;
@@ -699,7 +734,15 @@
           0 16px 42px rgba(0, 0, 0, 0.52),
           inset 0 1px 0 rgba(255, 255, 255, 0.2),
           inset 0 -1px 0 rgba(0, 0, 0, 0.48);
-        transition: border-color 0.2s, box-shadow 0.2s;
+        transform-origin: center;
+        transition:
+          height 0.34s cubic-bezier(0.2, 0.9, 0.24, 1),
+          padding 0.34s cubic-bezier(0.2, 0.9, 0.24, 1),
+          background 0.28s ease,
+          border-color 0.24s ease,
+          box-shadow 0.28s ease,
+          color 0.24s ease,
+          text-shadow 0.24s ease;
       }
       #nameInput::placeholder { color: rgba(240, 230, 210, 0.62); }
       #nameInput:focus {
@@ -714,6 +757,39 @@
       #nameInput.shake {
         animation: splashNudge 0.4s ease;
         border-color: #c9302c;
+      }
+      #splash.nameCommitted:not(.nostr) #nameWrap {
+        pointer-events: none;
+        animation: splashNameRise 0.52s cubic-bezier(0.2, 0.95, 0.22, 1) forwards;
+      }
+      #splash.nameCommitted:not(.nostr) #nameInput {
+        height: 58px;
+        padding: 0 8px;
+        color: #ffe6a8;
+        -webkit-text-fill-color: #ffe6a8;
+        font: 900 clamp(25px, 4.6vw, 40px) / 1.1 Georgia, "Times New Roman", serif;
+        background: transparent;
+        border: 0;
+        outline: 0;
+        box-shadow: none;
+        text-shadow:
+          0 3px 12px rgba(0, 0, 0, 0.82),
+          0 0 28px rgba(255, 190, 80, 0.5);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        caret-color: transparent;
+      }
+      #splash.nameCommitted:not(.nostr) #nameInput::placeholder { opacity: 0; }
+      #splash.nameCommitted:not(.nostr) #actionRow,
+      #splash.nameCommitted:not(.nostr) #nostrStatus,
+      #splash.nameCommitted:not(.nostr) #splashHint {
+        opacity: 0;
+        transform: translateY(-50px) scale(0.97);
+        pointer-events: none;
+      }
+      @keyframes splashNameRise {
+        from { transform: translateY(-34px) scale(1); }
+        to { transform: translateY(-58px) scale(1.03); }
       }
       #enterBtn {
         flex: 7 1 0;
@@ -757,7 +833,7 @@
       #assetLoad {
         position: absolute;
         left: 50%;
-        top: clamp(154px, 23vh, 214px);
+        bottom: calc(env(safe-area-inset-bottom, 0px) + clamp(18px, 2.6vh, 24px));
         z-index: 5;
         width: min(440px, 76vw);
         transform: translateX(-50%);
@@ -775,7 +851,7 @@
       }
       #assetLoad.ready {
         opacity: 0;
-        transform: translateX(-50%) translateY(-6px) scale(0.98);
+        transform: translateX(-50%) translateY(6px) scale(0.98);
         visibility: hidden;
         transition:
           opacity 0.22s ease,
@@ -1183,7 +1259,7 @@
       @keyframes splashTrayDown { to { transform: translateY(64px); opacity: 0; } }
 
       /* Launch FX: a white/gold flash that masks the cut into the live game, plus
-         an expanding shockwave ring from the slam. */
+         an expanding shockwave ring from the floor impact. */
       #splashFlash {
         position: absolute;
         inset: 0;
@@ -1204,7 +1280,7 @@
         position: absolute;
         z-index: 10; /* above the nostr overlay */
         left: 50%;
-        top: 46%;
+        top: 76%;
         width: 44px;
         height: 44px;
         margin: -22px 0 0 -22px;
@@ -1320,8 +1396,8 @@
       <div id="invTitle">Inventory</div>
       <div id="invGrid"></div>
       <div id="invHint">
-        Click an item then a slot to move it · <b>double-click</b> a potion to
-        drink it · press <b>E</b> or the button to close
+        Click an item then an inventory, character, or quick slot · <b>double-click</b>
+        a potion to drink it · press <b>I</b> or the button to close
       </div>
     </div>
     <div id="invCursor"></div>

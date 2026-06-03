@@ -33,6 +33,8 @@ export interface HouseModel {
   show(): void;
   /** Toggle picking on the house model geometry. */
   setPickable(on: boolean): void;
+  /** Move the visible model to the synced house centre. */
+  moveTo(x: number, z: number): void;
 }
 
 /**
@@ -114,6 +116,17 @@ export async function loadHouse(
     proxy.isPickable = false;
     shadow.addShadowCaster(proxy); // ...but it still casts a shadow
 
+    const rootBaseX = root.position.x;
+    const rootBaseZ = root.position.z;
+    const proxyBaseX = proxy.position.x;
+    const proxyBaseZ = proxy.position.z;
+    const moveTo = (x: number, z: number) => {
+      root.position.x = rootBaseX + x;
+      root.position.z = rootBaseZ + z;
+      proxy.position.x = proxyBaseX + x;
+      proxy.position.z = proxyBaseZ + z;
+    };
+
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
 
     return {
@@ -131,6 +144,7 @@ export async function loadHouse(
         root.isPickable = on;
         for (const mesh of r.meshes) mesh.isPickable = on;
       },
+      moveTo,
     };
   } catch (e) {
     console.warn(`[assets] failed to load ${HOUSE_URL}`, e);

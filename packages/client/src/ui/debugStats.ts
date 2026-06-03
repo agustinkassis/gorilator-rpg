@@ -10,6 +10,7 @@ export interface GameDebugStats {
   rocks: number;
   stones: number;
   bananas: number;
+  items: number;
   houses: number;
   thrown: number;
   particleFx: number;
@@ -224,7 +225,7 @@ export class DebugStats {
       ? this.titled("World Objects", this.rows([
           ["Characters", String(gs.entities), `${gs.players} players`],
           ["Trees / rocks", `${gs.trees} / ${gs.rocks}`, "resource nodes"],
-          ["Drops", String(gs.logs + gs.stones + gs.bananas + gs.potions), `${gs.logs} log / ${gs.stones} stone / ${gs.bananas} banana / ${gs.potions} potion`],
+          ["Drops", String(gs.logs + gs.stones + gs.bananas + gs.potions + gs.items), `${gs.logs} log / ${gs.stones} stone / ${gs.bananas} banana / ${gs.potions} potion / ${gs.items} custom`],
           ["Houses", String(gs.houses), "tracked"],
           ["Thrown items", String(gs.thrown), "flight visuals"],
           ["Particle FX", String(gs.particleFx), "expiring systems"],

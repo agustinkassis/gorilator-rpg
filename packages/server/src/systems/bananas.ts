@@ -34,7 +34,7 @@ import {
 } from "@rpg/shared";
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
-import { dropStructureLoot } from "./resources";
+import { applyDamageDrops, dropEntityLoot, dropStructureLoot } from "./resources";
 import type { EmitKill } from "./combat";
 
 /** A banana mid-flight, resolved when its landing time arrives. */
@@ -320,6 +320,21 @@ function landBanana(
     const damage = amount;
     target.hp = Math.max(0, target.hp - damage);
     emitDamage({ targetId: target.id, amount: damage, crit: false });
+    const enemyTarget = state.enemies.get(target.id);
+    const characterKind = enemyTarget?.kind ?? (state.players.has(target.id) ? "player" : "enemy");
+    const characterModelId = enemyTarget?.modelId;
+    applyDamageDrops(
+      state,
+      target,
+      characterKind,
+      target.id,
+      characterModelId,
+      target.x,
+      target.z,
+      target.maxHp,
+      damage,
+      1.2,
+    );
     if (target.hp <= 0) {
       target.state = AnimState.DEAD;
       if (state.players.has(target.id)) {
@@ -340,6 +355,7 @@ function landBanana(
             : DUMMY_RESPAWN_MS;
       const thrower = state.players.get(f.ownerId);
       if (thrower) grantXp(thrower, killXp(state, target.id), emitXp); // the thrower gains XP
+      dropEntityLoot(state, characterKind, target.id, characterModelId, target.x, target.z, 1.2);
     } else if (target.state !== AnimState.ATTACK && target.state !== AnimState.THROW) {
       // play the hurt animation — but never interrupt an attack/throw in progress
       target.state = AnimState.HIT;

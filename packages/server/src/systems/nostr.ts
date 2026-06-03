@@ -201,11 +201,10 @@ export function sanitizeSaveContent(content: string): PlayerSave | null {
 /** Normalize an inventory to exactly INV_SLOTS valid slots. */
 function sanitizeInventory(raw: unknown): InventorySlot[] {
   const arr = Array.isArray(raw) ? raw : [];
-  const types = new Set(["log", "potion", "stone", "banana", "berserker_potion"]);
   const out: InventorySlot[] = [];
   for (let i = 0; i < INV_SLOTS; i++) {
     const s = arr[i] as { type?: unknown; count?: unknown } | undefined;
-    const type = typeof s?.type === "string" && types.has(s.type) ? s.type : "";
+    const type = typeof s?.type === "string" && /^[a-z0-9_-]{1,48}$/.test(s.type) ? s.type : "";
     const count = Math.max(0, Math.min(MAX_STACK, Math.floor(finite(s?.count, 0))));
     out.push({ type: count > 0 ? (type as InventorySlot["type"]) : "", count: type && count > 0 ? count : 0 });
   }

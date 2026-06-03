@@ -8,6 +8,7 @@ import { loadHouse } from "./entities/models/house";
 import { PropManager } from "./dev/PropManager";
 import { CharacterManager } from "./dev/CharacterManager";
 import { CharacterImporter } from "./dev/CharacterImporter";
+import { AnimationTester } from "./dev/AnimationTester";
 import { DevMode, frontOfPlayer } from "./dev/DevMode";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
@@ -28,13 +29,14 @@ import { AudioControls } from "./ui/audioControls";
 import { HomeBar } from "./ui/homeBar";
 import { GameMenu } from "./ui/gameMenu";
 import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
-import { setupClickToMove } from "./input/ClickToMove";
+import { preloadMouseCursors, setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
 import { TOWER_PROP_NAME } from "@rpg/shared";
 import { PerfTracker } from "./perf/PerfTracker";
 import { attachBabylonProbes } from "./perf/babylonProbes";
 import { PerfOverlay } from "./perf/overlay";
+import { buildResourceBreakdown, buildRenderProfile } from "./perf/breakdown";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -82,6 +84,12 @@ const net = new NetworkClient();
 const perf = new PerfTracker();
 const perfProbes = attachBabylonProbes(engine, scene, perf);
 const perfOverlay = new PerfOverlay(perf, perfProbes, net.httpBase());
+// "What's heavy" drill-down + FPS-dip culprit capture: render load + elements come
+// from the live scene, entities from the game's per-category counts; reasons are the
+// perf spans (incl. the scene.render sub-phases). The render profile pairs those
+// with the probe's engine sub-phase timings for a deep, saveable snapshot.
+perf.setBreakdownProvider(() => buildResourceBreakdown(scene, game.debugStats(), perf.latest()));
+perf.setRenderProfileProvider(() => buildRenderProfile(scene, perfProbes.renderPhases(), perf.latest(), perf.meta));
 (window as Window & { __perf?: unknown }).__perf = perf;
 if (new URLSearchParams(location.search).has("perf")) perfOverlay.toggle();
 
@@ -115,8 +123,7 @@ setupClickToMove({
   scene,
   ground,
   net,
-  resolvePick: game.resolvePick,
-  resolveNearby: game.resolveNearby,
+  pickTargetAt: game.pickTargetAt,
   onMoveTo: (point) => {
     hud.showClickMarker(point);
   },
@@ -177,6 +184,11 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
       promise: audio.ready,
     },
     {
+      label: "mouse cursors",
+      weight: 1,
+      promise: preloadMouseCursors(),
+    },
+    {
       label: "La Crypta house",
       weight: 4,
       promise: loadHouse(scene, shadow).then((house) => {
@@ -194,7 +206,7 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
     {
       label: "placed characters",
       weight: 2,
-      promise: characterManager.loadAll(),
+      promise: characterManager.loadAll({ placements: false }),
     },
   ];
   const total = tasks.reduce((sum, task) => sum + task.weight, 0);
@@ -249,19 +261,26 @@ async function start() {
     onEnemyChange: (e, id) => game.changeEnemy(e, id),
     onEnemyRemove: (id) => game.removeEnemy(id),
     onPotionAdd: (p, id) => game.addPotion(p, id),
+    onPotionChange: (p, id) => game.changePotion(p, id),
     onPotionRemove: (id) => game.removePotion(id),
     onTreeAdd: (t, id) => game.addTree(t, id),
     onTreeChange: (t, id) => game.changeTree(t, id),
     onTreeRemove: (id) => game.removeTree(id),
     onLogAdd: (l, id) => game.addLog(l, id),
+    onLogChange: (l, id) => game.changeLog(l, id),
     onLogRemove: (id) => game.removeLog(id),
     onRockAdd: (r, id) => game.addRock(r, id),
     onRockChange: (r, id) => game.changeRock(r, id),
     onRockRemove: (id) => game.removeRock(id),
     onStoneAdd: (s, id) => game.addStone(s, id),
+    onStoneChange: (s, id) => game.changeStone(s, id),
     onStoneRemove: (id) => game.removeStone(id),
     onBananaAdd: (b, id) => game.addBanana(b, id),
+    onBananaChange: (b, id) => game.changeBanana(b, id),
     onBananaRemove: (id) => game.removeBanana(id),
+    onItemAdd: (item, id) => game.addItem(item, id),
+    onItemChange: (item, id) => game.changeItem(item, id),
+    onItemRemove: (id) => game.removeItem(id),
     onHouseAdd: (h, id) => game.addHouse(h, id),
     onHouseChange: (h, id) => game.changeHouse(h, id),
     onHouseRemove: (id) => game.removeHouse(id),
@@ -327,8 +346,8 @@ async function start() {
 
     splash.setAssetProgress(100, "realm ready", "ready");
 
-    // Cinematic hand-off: the gorilla slams, the camera punches in and a white
-    // flash masks the cut from the splash scene to the live game world.
+    // Cinematic hand-off: the splash hero snaps into its attack animation, the camera
+    // punches in, and a white flash masks the cut into the live game world.
     await splash.playLaunch();
     splash.dispose();
 
@@ -353,7 +372,10 @@ if (import.meta.env.DEV) {
       const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
       return me ? frontOfPlayer({ x: me.x, z: me.z, rotY: me.rotY }) : null; // beside the player, not on them
     },
-    onPlaced: (def, placement) => void characterManager.placeNew(def, placement),
+    onPlaced: (_def, placement) => {
+      window.setTimeout(() => devMode?.focusEntity("enemy", placement.id), 500);
+      window.setTimeout(() => devMode?.focusEntity("enemy", placement.id), 1700);
+    },
   });
 
   (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode, debugStats };
@@ -367,40 +389,15 @@ if (import.meta.env.DEV) {
     const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
     return me ? { x: me.x, z: me.z } : null;
   });
+  const animationTester = new AnimationTester({
+    getClips: () => game.animationTestClips(),
+    playClip: (state) => game.playAnimationTestClip(state),
+    clearClip: () => game.clearAnimationTestClip(),
+  });
   devMode?.onVisibilityChange((on) => {
     characterImporter.setVisible(on);
     propImporter.setVisible(on);
-  });
-
-  // Dev-only clip viewer: press a number key to play that animation clip on the
-  // local character (with its name on screen) so we can identify which clip is
-  // which. Move (click the ground) to resume the normal game animations.
-  const label = document.createElement("div");
-  label.style.cssText =
-    "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;" +
-    "background:#000a;color:#fff;padding:6px 14px;border-radius:6px;" +
-    "font:14px/1.4 monospace;pointer-events:none;display:none;white-space:pre";
-  document.body.appendChild(label);
-
-  window.addEventListener("keydown", (e) => {
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
-    const clips = [...new Set(scene.animationGroups.map((g) => g.name))].sort();
-    if (e.key === "0") {
-      label.style.display = "none";
-      return;
-    }
-    if (e.key < "1" || e.key > "9") return;
-    const name = clips[parseInt(e.key, 10) - 1];
-    if (!name) return;
-    scene.animationGroups.forEach((g) => g.stop());
-    scene.animationGroups
-      .filter((g) => g.name === name)
-      .forEach((g) => g.start(true, 1.0, g.from, g.to, false));
-    label.textContent =
-      `▶ clip ${e.key}/${clips.length}: ${name}\n` +
-      clips.map((c, i) => `${i + 1}: ${c}`).join("   ");
-    label.style.display = "block";
+    animationTester.setVisible(on);
   });
 }
 

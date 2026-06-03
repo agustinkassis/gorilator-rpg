@@ -34,11 +34,13 @@ export class CharacterManager {
   ) {}
 
   /** Fetch the def library + placements and instantiate every placed character. */
-  async loadAll(): Promise<void> {
+  async loadAll(opts: { placements?: boolean } = {}): Promise<void> {
     try {
       const [defs, placements] = await Promise.all([
         fetch("/__char/defs", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
-        fetch("/__char/placements", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
+        opts.placements === false
+          ? Promise.resolve([])
+          : fetch("/__char/placements", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])),
       ]);
       for (const d of defs as CharacterDef[]) this.defs.set(d.id, d);
       await Promise.all(
@@ -132,6 +134,21 @@ export class CharacterManager {
       node = node.parent as Nullable<TransformNode>;
     }
     return null;
+  }
+
+  /** Cheap Dev Mode ground-footprint pick used instead of ray-picking character meshes. */
+  pickAt(point: { x: number; z: number }): PlacedCharacter | null {
+    let best: PlacedCharacter | null = null;
+    let bestD2 = Infinity;
+    const radius = 1.4;
+    for (const c of this.chars.values()) {
+      const d2 = (point.x - c.placement.x) ** 2 + (point.z - c.placement.z) ** 2;
+      if (d2 <= radius * radius && d2 < bestD2) {
+        best = c;
+        bestD2 = d2;
+      }
+    }
+    return best;
   }
 
   /** Toggle pickability for every placed character (on while editing). */

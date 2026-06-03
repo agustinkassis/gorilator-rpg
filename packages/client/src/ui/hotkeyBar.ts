@@ -1,6 +1,6 @@
 import { InventorySlot, ItemType } from "@rpg/shared";
+import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
-const ICONS: Record<string, string> = { log: "🪵", potion: "🧪", stone: "🪨", banana: "🍌", berserker_potion: "⚡" };
 const KEYS = ["Q", "W", "E", "R"];
 const THROWABLE: ReadonlySet<string> = new Set(["banana", "stone"]); // hold the key to charge + throw
 
@@ -19,6 +19,7 @@ export class HotkeyBar {
   private autoFilled = new Set<string>(); // item types already auto-assigned a quick slot
   private dragSrc: number | null = null; // quick slot currently being dragged
   private dropHandled = false; // a drag that landed on a quick slot (so dragend won't clear it)
+  private heldInventoryType: ItemType | "" = "";
 
   constructor(private useSlot: (index: number) => void) {
     const bar = document.createElement("div");
@@ -68,7 +69,17 @@ export class HotkeyBar {
         this.binds[i] = "";
         this.render();
       });
-      slot.addEventListener("click", () => this.activate(i));
+      slot.addEventListener("click", () => {
+        if (document.body.classList.contains("preGame")) return;
+        const heldType = this.currentHeldInventoryType();
+        if (heldType) {
+          this.binds[i] = heldType;
+          this.render();
+          window.dispatchEvent(new Event("inventory:consumeHeld"));
+          return;
+        }
+        this.activate(i);
+      });
 
       // drag a bound slot to rearrange it (drop on another slot) or remove it (drop
       // anywhere outside the quick bar)
@@ -108,6 +119,7 @@ export class HotkeyBar {
     document.body.appendChild(bar);
 
     window.addEventListener("keydown", (e) => {
+      if (document.body.classList.contains("preGame")) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || e.repeat) return;
       const i = KEYS.indexOf((e.key || "").toUpperCase());
@@ -115,6 +127,12 @@ export class HotkeyBar {
       // throwables (banana/stone) are hold+release (owned by ClickToMove); others use here
       if (this.binds[i] && !THROWABLE.has(this.binds[i])) this.activate(i);
     });
+    window.addEventListener("inventory:heldChanged", (e) => {
+      const type = (e as CustomEvent<{ type?: ItemType | "" }>).detail?.type ?? "";
+      this.heldInventoryType = type || "";
+    });
+    window.addEventListener("items:changed", () => this.render());
+    void loadItemDefs().then(() => this.render());
 
     this.render();
   }
@@ -169,10 +187,16 @@ export class HotkeyBar {
     if (idx >= 0) this.useSlot(idx);
   }
 
+  private currentHeldInventoryType(): ItemType | "" {
+    const type = this.heldInventoryType || (document.body.dataset.invHeldType as ItemType | undefined) || "";
+    return type;
+  }
+
   private render() {
     for (let i = 0; i < 4; i++) {
       const type = this.binds[i];
-      this.icons[i].textContent = type ? (ICONS[type] ?? "❓") : "";
+      if (type) renderItemIcon(this.icons[i], type, 26);
+      else this.icons[i].textContent = "";
       const n = type ? this.count(type) : 0;
       this.counts[i].textContent = type ? String(n) : "";
       this.slotEls[i].style.opacity = type && n === 0 ? "0.45" : "1";

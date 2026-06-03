@@ -1,4 +1,11 @@
 import { InventorySlot, ItemType, INV_SLOTS, MAX_STACK } from "@rpg/shared";
+import { itemDefs } from "./items";
+
+function stackLimit(type: ItemType | ""): number {
+  if (!type) return MAX_STACK;
+  const custom = itemDefs().find((d) => d.id === type)?.stack;
+  return Math.max(1, Math.min(MAX_STACK, Math.round(Number(custom) || MAX_STACK)));
+}
 
 /** A fresh empty inventory grid. */
 export function makeInventory(): InventorySlot[] {
@@ -8,10 +15,11 @@ export function makeInventory(): InventorySlot[] {
 /** Add `amount` of an item, stacking into existing stacks then empty slots. */
 export function addItem(inv: InventorySlot[], type: ItemType, amount = 1): void {
   let remaining = amount;
+  const limit = stackLimit(type);
   for (const slot of inv) {
     if (remaining <= 0) break;
-    if (slot.type === type && slot.count < MAX_STACK) {
-      const add = Math.min(remaining, MAX_STACK - slot.count);
+    if (slot.type === type && slot.count < limit) {
+      const add = Math.min(remaining, limit - slot.count);
       slot.count += add;
       remaining -= add;
     }
@@ -19,7 +27,7 @@ export function addItem(inv: InventorySlot[], type: ItemType, amount = 1): void 
   for (const slot of inv) {
     if (remaining <= 0) break;
     if (slot.type === "") {
-      const add = Math.min(remaining, MAX_STACK);
+      const add = Math.min(remaining, limit);
       slot.type = type;
       slot.count = add;
       remaining -= add;
@@ -72,7 +80,7 @@ export function moveItem(inv: InventorySlot[], from: number, to: number): void {
     inv[from] = { type: "", count: 0 };
   } else if (b.type === a.type) {
     const total = a.count + b.count;
-    b.count = Math.min(MAX_STACK, total);
+    b.count = Math.min(stackLimit(a.type), total);
     const leftover = total - b.count;
     inv[from] = leftover > 0 ? { type: a.type, count: leftover } : { type: "", count: 0 };
   } else {

@@ -90,6 +90,81 @@ Controls: type a **label** and click **● 10s** to record a benchmark; **Save l
 writes the ring buffer to `perf-logs/`; **Download** hands you the file directly;
 **Clear** empties the in-memory ring.
 
+### "What's heavy" — the breakdown + slowdown capture
+
+Click **▸ What's heavy** to expand a ranked drill-down of what's consuming
+resources, in three lists (each heaviest-first, with a proportional bar):
+
+```
+▾ What's heavy   ⚠ 2
+Reasons — ms / frame
+  scene.render      6.62 ms  ███████████
+  game.update       0.63 ms  █
+Elements — renderables
+  triangles      3.1m tris   ███████████
+  house:node0    1.7m tris   ██████
+  draw calls     734 draws   ██
+Entities — game objects
+  trees          120         ███████████
+  drops          66          ██████
+  rocks          45          ████
+⚠ Slowdowns (2)              save · clear
+  🔴 33fps  14:21:07 · scene.render
+  🟡 41fps  14:20:55 · game.update
+```
+
+- **Reasons** = the perf spans (the *why*: where frame time goes) — see §3.
+- **Elements** = renderables: draw calls, triangles, particle systems, and the
+  individual **heaviest meshes** (named by game `kind`, e.g. `house:node0`).
+- **Entities** = game-object counts by category (reused from the `P` Activity
+  Monitor's `game.debugStats()`).
+
+**Automatic slowdown tracking.** The moment FPS drops below the slow threshold
+(default **50**; set `__perf.slowFpsThreshold`), the tracker snapshots *why* —
+the full breakdown at that instant — into a **Slowdowns** log, on the dip's onset
+and every ~2 s while it persists. **This runs even with the overlay closed**, so a
+stutter during real play is captured for you to inspect later; the **⚠ N** badge on
+the expand button counts what's been captured (and reddens until you look). Each
+entry records the dip FPS, the time, the single loudest `cause`, and the complete
+reasons/elements/entities snapshot. **save** writes them to
+`perf-logs/slowdowns-<ts>.json` (`__perf.saveSlowReport()`); **clear** resets the
+log. Because tags are always-on, the captured reasons are populated whether or not
+heavy capture was running.
+
+### Going deeper: `scene.render` decomposed
+
+A single `scene.render` span tells you the GPU-facing work is expensive but not
+*why*. While heavy capture is on (overlay open / benchmark), the Babylon probes
+break it into **sub-phases** — emitted as `render.*` reasons (ms), so they're logged,
+benchmarked, and analyzed like any tag:
+
+| Reason | What it times | If it's high… |
+| --- | --- | --- |
+| `render.shadows` | shadow maps + render targets | shrink the shadow map, cull casters, fewer/looser lights |
+| `render.activeMeshEval` | frustum culling / active-mesh selection | too many meshes evaluated — freeze static meshes, merge, instance |
+| `render.main` | the main forward pass | overdraw, material/shader cost, draw-call count |
+| `render.animations` | skeletal + node animation eval | too many animated skeletons on screen |
+| `render.particles` | particle systems | cap particle counts, pool/limit simultaneous FX |
+
+Alongside, the render load is **attributed to each game-element kind** (by walking
+the active meshes and grouping on `metadata.kind`), shown in the
+**Scene render — by element** list and logged as `geo:<kind>` triangle tags
+(`geo:house`, `geo:goblin`, `geo:tree`…). This answers *which element* is heavy to
+draw — e.g. one `house` mesh at 1.6M triangles dominating the shadow pass.
+
+> Real example from this game: `render.shadows ≈ 5–10 ms` and `render.activeMeshEval`
+> with a p99 spike, traced to `geo:house = 1.66M tris` — the house geometry is the
+> shadow-pass bottleneck.
+
+**Render profile (deep snapshot).** Click **📷 save render profile** in the panel (or
+`__perf.captureRenderProfile()`) to write a `render-profile-<ts>.json` pairing the
+sub-phase timings with scene totals (draw calls, materials, textures), the full
+per-kind load, and the 16 heaviest individual meshes — the "save the details for
+later" artefact. Inspect it directly or with `jq`:
+```bash
+jq '.phases, .byCategory[:5], .totals' perf-logs/render-profile-*.json
+```
+
 ---
 
 ## 3. Tagging any resource usage
@@ -175,6 +250,8 @@ writes there directly when `PERF_LOG=1`.
 | `perf-log-<ts>.jsonl` | client **Save log** | one `ClientPerfSample` per line |
 | `server-<stamp>.jsonl` | server, `PERF_LOG=1` | one `ServerPerfSample` per line |
 | `bench-<label>-<ts>.json` | any benchmark | one `BenchmarkResult` object |
+| `slowdowns-<ts>.json` | overlay **save** / `saveSlowReport()` | captured `SlowEvent[]` + env |
+| `render-profile-<ts>.json` | 📷 button / `captureRenderProfile()` | sub-phase ms + per-kind load + heaviest meshes |
 
 The types are the single source of truth — see
 [`packages/shared/src/perf.ts`](../packages/shared/src/perf.ts).
@@ -333,12 +410,18 @@ The whole point: change things with evidence, not vibes.
 ```bash
 # In-game
 F3                      # toggle the overlay (or load with ?perf)
+▸ What's heavy          # expand the elements/entities/reasons breakdown
 ●  10s button           # record + auto-save a benchmark
 
 # Console (client)
 __perf.startBenchmark("label", 10000)   # benchmark → perf-logs/
 __perf.save("my-log.jsonl")             # dump the ring buffer
 __perf.summary(5)                       # last 5s summary, in-memory
+__perf.breakdown()                      # live {reasons, render, elements, entities}
+__perf.slowdowns()                      # captured FPS-dip snapshots
+__perf.saveSlowReport()                 # slowdowns → perf-logs/slowdowns-*.json
+__perf.captureRenderProfile()           # deep render snapshot → render-profile-*.json
+__perf.slowFpsThreshold = 55            # tune what counts as "slow"
 
 # Server
 PERF_LOG=1 pnpm dev:server              # continuous JSONL → perf-logs/

@@ -21,11 +21,9 @@ import {
   SPEED_PER_LEVEL,
   THROW_POWER_PER_LEVEL,
 } from "@rpg/shared";
+import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
 const MODEL_URL = "/models/knight.glb";
-
-/** Emoji icon per item type (mirrors the inventory). */
-const ICONS: Record<string, string> = { log: "🪵", potion: "🧪", stone: "🪨", banana: "🍌" };
 
 /** The paper-doll equipment slots (purely client-side / cosmetic for now). */
 const SLOTS: { id: string; name: string }[] = [
@@ -74,6 +72,7 @@ export class CharacterSheet {
 
   // equipment (client-side)
   private equip: Record<string, string> = {};
+  private heldInventoryType = "";
 
   constructor() {
     this.loadEquip();
@@ -87,8 +86,9 @@ export class CharacterSheet {
     document.body.appendChild(btn);
 
     const panel = document.createElement("div");
+    panel.id = "charSheetPanel";
     panel.style.cssText =
-      "position:fixed; right:16px; top:56px; width:384px; max-height:90vh; overflow-y:auto; z-index:50;" +
+      "position:fixed; left:16px; top:56px; width:min(384px, calc(100vw - 32px)); max-height:calc(100vh - 72px); overflow-y:auto; z-index:50;" +
       "background:#10131af2; border:2px solid #c9a24a; border-radius:10px; display:none;" +
       "box-shadow:0 8px 30px #000a; color:#e8e8e8; font:13px/1.5 system-ui,sans-serif;";
     panel.innerHTML = `
@@ -100,7 +100,7 @@ export class CharacterSheet {
         <canvas id="charSheetCanvas" style="width:168px; height:224px; border-radius:8px; background:#0b0e14; outline:none; flex:0 0 auto;"></canvas>
         <div id="charSheetEquip" style="display:grid; grid-template-columns:1fr 1fr; gap:8px; align-content:start; flex:1;"></div>
       </div>
-      <div style="text-align:center; font-size:10px; color:#7f8a98; padding:4px 12px 0;">drag items from the inventory onto a slot · right-click to clear</div>
+      <div style="text-align:center; font-size:10px; color:#7f8a98; padding:4px 12px 0;">drag items from inventory onto slots · drag equipped items back to inventory</div>
       <div id="charSheetBody" style="padding:10px 14px 14px;"></div>`;
     document.body.appendChild(panel);
     this.panel = panel;
@@ -115,6 +115,23 @@ export class CharacterSheet {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "c" || e.key === "C") this.toggle();
     });
+    window.addEventListener("inventory:heldChanged", (e) => {
+      this.heldInventoryType = (e as CustomEvent<{ type?: string }>).detail?.type ?? "";
+    });
+    window.addEventListener("characterSheet:unequip", (e) => {
+      const slotId = (e as CustomEvent<{ slotId?: string }>).detail?.slotId;
+      if (slotId && this.equip[slotId]) {
+        delete this.equip[slotId];
+        this.saveEquip();
+        this.renderSlot(slotId);
+      }
+    });
+    window.addEventListener("items:changed", () => {
+      for (const s of SLOTS) this.renderSlot(s.id);
+    });
+    void loadItemDefs().then(() => {
+      for (const s of SLOTS) this.renderSlot(s.id);
+    });
   }
 
   // ---- equipment slots ----
@@ -128,11 +145,15 @@ export class CharacterSheet {
         "position:relative; height:56px; border:1px solid #3a4456; border-radius:8px;" +
         "background:#171b25; display:flex; align-items:center; justify-content:center;" +
         "font-size:30px; line-height:1; cursor:pointer;";
+      slot.draggable = true;
+      const icon = document.createElement("div");
+      icon.className = "charItemIcon";
+      icon.style.cssText = "display:grid; place-items:center; width:34px; height:34px;";
       const label = document.createElement("div");
       label.textContent = s.name;
       label.style.cssText =
         "position:absolute; bottom:2px; right:5px; font-size:9px; color:#6b7686; pointer-events:none;";
-      slot.appendChild(label);
+      slot.append(icon, label);
 
       slot.addEventListener("dragover", (e) => {
         e.preventDefault();
@@ -145,11 +166,35 @@ export class CharacterSheet {
         e.preventDefault();
         slot.style.borderColor = "#3a4456";
         const type = e.dataTransfer?.getData("text/itemtype");
-        if (type && ICONS[type]) {
+        if (type) {
           this.equip[s.id] = type;
           this.saveEquip();
           this.renderSlot(s.id);
         }
+      });
+      const placeHeldInventoryItem = () => {
+        const type = this.currentHeldInventoryType();
+        if (!type) return false;
+        this.equip[s.id] = type;
+        this.saveEquip();
+        this.renderSlot(s.id);
+        window.dispatchEvent(new Event("inventory:consumeHeld"));
+        return true;
+      };
+      slot.addEventListener("pointerdown", (e) => {
+        if (placeHeldInventoryItem()) e.preventDefault();
+      });
+      slot.addEventListener("click", () => {
+        placeHeldInventoryItem();
+      });
+      slot.addEventListener("dragstart", (e) => {
+        const type = this.equip[s.id];
+        if (!type) {
+          e.preventDefault();
+          return;
+        }
+        e.dataTransfer?.setData("text/charslot", s.id);
+        e.dataTransfer?.setData("text/itemtype", type);
       });
       slot.addEventListener("contextmenu", (e) => {
         e.preventDefault(); // right-click clears the slot
@@ -166,12 +211,18 @@ export class CharacterSheet {
   private renderSlot(id: string) {
     const el = this.panel.querySelector<HTMLElement>(`[data-slot="${id}"]`);
     if (!el) return;
-    const icon = el.childNodes[0];
-    const emoji = this.equip[id] ? ICONS[this.equip[id]] : "";
-    // first child is the emoji text node; the label div stays as the last child
-    if (icon && icon.nodeType === Node.TEXT_NODE) icon.textContent = emoji;
-    else el.insertBefore(document.createTextNode(emoji), el.firstChild);
-    el.style.opacity = emoji ? "1" : "0.85";
+    const icon = el.querySelector<HTMLElement>(".charItemIcon");
+    const type = this.equip[id] || "";
+    if (icon) {
+      if (type) renderItemIcon(icon, type, 30);
+      else icon.textContent = "";
+    }
+    el.style.opacity = type ? "1" : "0.85";
+    el.draggable = Boolean(type);
+  }
+
+  private currentHeldInventoryType() {
+    return this.heldInventoryType || document.body.dataset.invHeldType || "";
   }
 
   private loadEquip() {
@@ -242,7 +293,13 @@ export class CharacterSheet {
   // ---- open/close ----
 
   toggle() {
-    this.open = !this.open;
+    if (document.body.classList.contains("preGame")) return;
+    this.setOpen(!this.open);
+  }
+
+  private setOpen(open: boolean) {
+    if (this.open === open) return;
+    this.open = open;
     this.panel.style.display = this.open ? "block" : "none";
     this.lastSig = "";
     if (this.open) {

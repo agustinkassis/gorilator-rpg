@@ -1,0 +1,86 @@
+{
+  "defaults": {
+    "tree": {
+      "hp": 100,
+      "drops": [
+        {
+          "item": "log",
+          "quantity": 3,
+          "probability": 1,
+          "trigger": "kill"
+        }
+      ]
+    },
+    "rock": {
+      "hp": 1000,
+      "drops": [
+        {
+          "item": "stone",
+          "quantity": 120,
+          "probability": 1,
+          "trigger": "damage"
+        }
+      ]
+    },
+    "house": {
+      "hp": 300,
+      "drops": []
+    },
+    "dummy": {
+      "brain": "idle",
+      "hp": 60,
+      "stats": {
+        "maxHp": 60,
+        "attack": 6,
+        "armor": 8,
+        "critChance": 0.05,
+        "moveSpeed": 0,
+        "throwPower": 1,
+        "level": 1
+      },
+      "drops": []
+    },
+    "goblin": {
+      "brain": "attacks_home",
+      "hp": 45,
+      "stats": {
+        "maxHp": 45,
+        "attack": 70,
+        "armor": 8,
+        "critChance": 0,
+        "moveSpeed": 3.6,
+        "throwPower": 1,
+        "level": 2
+      },
+      "drops": [
+        {
+          "item": "potion",
+          "quantity": 1,
+          "probability": 0.6,
+          "trigger": "kill"
+        },
+        {
+          "item": "berserker_potion",
+          "quantity": 1,
+          "probability": 0.16,
+          "trigger": "kill"
+        }
+      ]
+    },
+    "npc": {
+      "brain": "idle",
+      "hp": 60,
+      "stats": {
+        "maxHp": 60,
+        "attack": 6,
+        "armor": 8,
+        "critChance": 0.05,
+        "moveSpeed": 3.6,
+        "throwPower": 1,
+        "level": 1
+      },
+      "drops": []
+    }
+  },
+  "instances": {}
+}

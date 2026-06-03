@@ -10,6 +10,7 @@ import {
   Rock,
   Stone,
   Banana,
+  Item,
   House,
   DamageEvent,
   KillEvent,
@@ -32,19 +33,26 @@ export interface NetHandlers {
   onEnemyChange(e: Enemy, id: string): void;
   onEnemyRemove(id: string): void;
   onPotionAdd(p: Potion, id: string): void;
+  onPotionChange(p: Potion, id: string): void;
   onPotionRemove(id: string): void;
   onTreeAdd(t: Tree, id: string): void;
   onTreeChange(t: Tree, id: string): void;
   onTreeRemove(id: string): void;
   onLogAdd(l: Log, id: string): void;
+  onLogChange(l: Log, id: string): void;
   onLogRemove(id: string): void;
   onRockAdd(r: Rock, id: string): void;
   onRockChange(r: Rock, id: string): void;
   onRockRemove(id: string): void;
   onStoneAdd(s: Stone, id: string): void;
+  onStoneChange(s: Stone, id: string): void;
   onStoneRemove(id: string): void;
   onBananaAdd(b: Banana, id: string): void;
+  onBananaChange(b: Banana, id: string): void;
   onBananaRemove(id: string): void;
+  onItemAdd(item: Item, id: string): void;
+  onItemChange(item: Item, id: string): void;
+  onItemRemove(id: string): void;
   onHouseAdd(h: House, id: string): void;
   onHouseChange(h: House, id: string): void;
   onHouseRemove(id: string): void;
@@ -160,6 +168,7 @@ export class NetworkClient {
         if (seenPotions.has(id)) return;
         seenPotions.add(id);
         handlers.onPotionAdd(potion, id);
+        $(potion).onChange(() => handlers.onPotionChange(potion, id));
       };
       $(room.state).potions.onAdd(bindPotion);
       room.state.potions?.forEach((potion, id) => bindPotion(potion, id));
@@ -189,6 +198,7 @@ export class NetworkClient {
         if (seenLogs.has(id)) return;
         seenLogs.add(id);
         handlers.onLogAdd(log, id);
+        $(log).onChange(() => handlers.onLogChange(log, id));
       };
       $(room.state).logs.onAdd(bindLog);
       room.state.logs?.forEach((log, id) => bindLog(log, id));
@@ -218,6 +228,7 @@ export class NetworkClient {
         if (seenStones.has(id)) return;
         seenStones.add(id);
         handlers.onStoneAdd(stone, id);
+        $(stone).onChange(() => handlers.onStoneChange(stone, id));
       };
       $(room.state).stones.onAdd(bindStone);
       room.state.stones?.forEach((stone, id) => bindStone(stone, id));
@@ -232,6 +243,7 @@ export class NetworkClient {
         if (seenBananas.has(id)) return;
         seenBananas.add(id);
         handlers.onBananaAdd(banana, id);
+        $(banana).onChange(() => handlers.onBananaChange(banana, id));
       };
       $(room.state).bananas.onAdd(bindBanana);
       room.state.bananas?.forEach((banana, id) => bindBanana(banana, id));
@@ -239,6 +251,23 @@ export class NetworkClient {
         seenBananas.delete(id);
         handlers.onBananaRemove(id);
       });
+
+      phase = "bind generic items";
+      const seenItems = new Set<string>();
+      const bindItem = (item: Item, id: string) => {
+        if (seenItems.has(id)) return;
+        seenItems.add(id);
+        handlers.onItemAdd(item, id);
+        $(item).onChange(() => handlers.onItemChange(item, id));
+      };
+      if (room.state.items) {
+        $(room.state).items.onAdd(bindItem);
+        room.state.items.forEach((item, id) => bindItem(item, id));
+        $(room.state).items.onRemove((_item, id) => {
+          seenItems.delete(id);
+          handlers.onItemRemove(id);
+        });
+      }
 
       phase = "bind houses";
       const seenHouses = new Set<string>();
@@ -335,6 +364,14 @@ export class NetworkClient {
     this.room?.send("dev_move", { kind, id, x, z });
   }
 
+  /** Create a synced world object and return the client-chosen id for focusing it. */
+  sendDevSpawn(kind: string, x: number, z: number): string {
+    const safe = kind.replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
+    const id = `dev-${safe}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    this.room?.send("dev_spawn", { kind, id, x, z });
+    return id;
+  }
+
   /** Delete a synced world object (persisted server-side). */
   sendDevDelete(kind: string, id: string) {
     this.room?.send("dev_delete", { kind, id });
@@ -343,6 +380,11 @@ export class NetworkClient {
   /** Set one editable field on a synced world object. */
   sendDevSet(kind: string, id: string, field: string, value: number | boolean | string) {
     this.room?.send("dev_set", { kind, id, field, value });
+  }
+
+  /** Grant an item stack to the local player's inventory. */
+  sendDevGiveItem(type: string, amount = 1) {
+    this.room?.send("dev_give_item", { type, amount });
   }
 
   /** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */

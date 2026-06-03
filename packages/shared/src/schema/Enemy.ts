@@ -1,5 +1,6 @@
 import { Schema, type } from "@colyseus/schema";
 import { AnimState } from "../types";
+import type { BrainId } from "../entityFeatures";
 import {
   DUMMY_MAX_HP,
   DUMMY_ATTACK,
@@ -14,19 +15,25 @@ import {
  */
 export class Enemy extends Schema {
   @type("string") id = "";
-  @type("string") kind = "dummy"; // "dummy" | "goblin" — picks the model + behaviour
+  @type("string") kind = "dummy"; // "dummy" | "goblin" | "npc" — broad gameplay bucket
+  @type("string") modelId = ""; // custom CharacterDef id; empty uses the built-in kind model
+  @type("string") displayName = ""; // optional nameplate override for custom characters
+  @type("string") brain: BrainId | "" = ""; // empty = default for kind
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") rotY = 0;
   @type("number") hp = DUMMY_MAX_HP;
   @type("number") maxHp = DUMMY_MAX_HP;
   @type("number") level = 1; // shown on the name label; sets the XP it drops
+  @type("number") xp = 0;
   @type("string") state: AnimState = AnimState.IDLE;
 
   // combat stats
   @type("number") attack = DUMMY_ATTACK;
   @type("number") armor = DUMMY_ARMOR;
   @type("number") critChance = DUMMY_CRIT_CHANCE;
+  @type("number") moveSpeed = 0; // 0 ⇒ use the brain's default movement speed
+  @type("number") throwPower = 1;
 
   // ---- server-only (not synced) ----
   stateTimer = 0;

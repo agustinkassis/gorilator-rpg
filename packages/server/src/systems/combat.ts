@@ -25,8 +25,6 @@ import {
   AGENT_RADIUS,
   TREE_BANANA_DROP_CHANCE,
   ROCK_COLLISION_SCALE,
-  GOBLIN_POTION_DROP_CHANCE,
-  GOBLIN_BERSERKER_POTION_DROP_CHANCE,
   HOUSE_REPAIR_MIN_HP,
   HOUSE_REPAIR_MAX_HP,
 } from "@rpg/shared";
@@ -37,8 +35,8 @@ import {
   onTreeDamaged,
   onRockMined,
   onRockDamaged,
-  dropPotion,
-  dropBerserkerPotion,
+  dropEntityLoot,
+  applyDamageDrops,
 } from "./resources";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
@@ -216,21 +214,8 @@ export function combatSystem(
     }
   });
 
-  // Dummies just tick their reaction / respawn timers. Goblins have their own
-  // AI (goblinAiSystem) that owns their HIT/DEAD/respawn, so skip them here.
-  state.enemies.forEach((e) => {
-    if (e.kind === "goblin") return;
-    if (e.state === AnimState.HIT) {
-      e.stateTimer -= dtMs;
-      if (e.stateTimer <= 0 && e.hp > 0) e.state = AnimState.IDLE;
-    } else if (e.state === AnimState.DEAD) {
-      e.respawnTimer -= dtMs;
-      if (e.respawnTimer <= 0) {
-        e.hp = e.maxHp;
-        e.state = AnimState.IDLE;
-      }
-    }
-  });
+  // Enemy HIT/DEAD/brain timers are owned by goblinAiSystem, which now drives all
+  // enemy brains (idle dummies included).
 }
 
 /** Apply damage from a completed swing, if the target is still valid and in range. */
@@ -293,6 +278,21 @@ function connectHit(
   }
 
   const pe = target as Player | Enemy;
+  const enemyTarget = state.enemies.get(targetId);
+  const characterKind = enemyTarget?.kind ?? (state.players.has(targetId) ? "player" : "enemy");
+  const characterModelId = enemyTarget?.modelId;
+  applyDamageDrops(
+    state,
+    pe,
+    characterKind,
+    targetId,
+    characterModelId,
+    pe.x,
+    pe.z,
+    pe.maxHp,
+    amount,
+    1.2,
+  );
   if (crit) applyKnockback(pe, attacker.x, attacker.z); // a crit blows the target back
   if (pe.hp <= 0) {
     pe.state = AnimState.DEAD;
@@ -312,12 +312,7 @@ function connectHit(
           ? GOBLIN_RESPAWN_MS
           : DUMMY_RESPAWN_MS;
     grantXp(attacker, killXp(state, targetId), emitXp); // the killer gains XP
-    if (state.enemies.get(targetId)?.kind === "goblin") {
-      if (Math.random() < GOBLIN_POTION_DROP_CHANCE) dropPotion(state, pe.x, pe.z);
-      if (Math.random() < GOBLIN_BERSERKER_POTION_DROP_CHANCE) {
-        dropBerserkerPotion(state, pe.x, pe.z);
-      }
-    }
+    dropEntityLoot(state, characterKind, targetId, characterModelId, pe.x, pe.z, 1.2);
   } else if (pe.state !== AnimState.ATTACK && pe.state !== AnimState.THROW) {
     // hurt animation — but a hit never interrupts an attack/throw in progress
     pe.state = AnimState.HIT;

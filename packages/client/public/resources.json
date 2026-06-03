@@ -7,7 +7,7 @@
   },
   "rock": {
     "item": "stone",
-    "amount": 150,
+    "amount": 120,
     "trigger": "hit",
     "hp": 1000
   }

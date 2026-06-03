@@ -1,4 +1,26 @@
-import { GameState, AnimState, WORLD_SIZE } from "@rpg/shared";
+import {
+  GameState,
+  AnimState,
+  WORLD_SIZE,
+  Tree,
+  Rock,
+  Potion,
+  Log,
+  Stone,
+  Banana,
+  House,
+  Enemy,
+  TREE_HP,
+  TREE_ARMOR,
+  ROCK_HP,
+  ROCK_ARMOR,
+  HOUSE_HP,
+  HOUSE_COLLISION_RADIUS,
+  BrainId,
+} from "@rpg/shared";
+import { entityHp } from "./entityFeatures";
+import { configureEnemy } from "./enemyConfig";
+import { safeItemId, spawnCustomItem } from "./items";
 
 /**
  * Dev Mode world edits applied to the authoritative state at runtime. Because the
@@ -10,7 +32,7 @@ import { GameState, AnimState, WORLD_SIZE } from "@rpg/shared";
  *
  * Rocks are supported too: a rock is also a collision circle, so after a rock
  * move/delete the room calls refreshRockObstacles() to rebuild the nav grid from
- * the live Rock entities (see GameRoom). Crates/house remain static for now.
+ * the live Rock entities (see GameRoom). Crates remain static for now.
  */
 
 type EditableMap = { get(id: string): { x: number; z: number } | undefined; delete(id: string): boolean };
@@ -22,16 +44,139 @@ function mapFor(state: GameState, kind: string): EditableMap | null {
       return state.trees as unknown as EditableMap;
     case "potion":
       return state.potions as unknown as EditableMap;
+    case "log":
+      return state.logs as unknown as EditableMap;
+    case "stone":
+      return state.stones as unknown as EditableMap;
+    case "banana":
+      return state.bananas as unknown as EditableMap;
+    case "item":
+      return state.items as unknown as EditableMap;
     case "enemy":
       return state.enemies as unknown as EditableMap;
     case "rock":
       return state.rocks as unknown as EditableMap; // collision is refreshed by the room
+    case "house":
+      return state.houses as unknown as EditableMap;
     default:
       return null; // player/static handled elsewhere
   }
 }
 
 const clamp = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
+const safeId = (kind: string, id: string) =>
+  id && id.length <= 80 ? id : `dev-${kind}-${Date.now().toString(36)}`;
+
+export function devSpawn(
+  state: GameState,
+  kind: string,
+  id: string,
+  x: number,
+  z: number,
+): { kind: string; id: string } | null {
+  const px = clamp(Number(x) || 0);
+  const pz = clamp(Number(z) || 0);
+  const k = String(kind || "").trim().toLowerCase();
+  const eid = safeId(k, id);
+
+  if (k === "item" || k.startsWith("item:")) {
+    const itemId = safeItemId(k.startsWith("item:") ? k.slice(5) : id);
+    const e = spawnCustomItem(state, itemId, px, pz, eid);
+    return e ? { kind: "item", id: e.id } : null;
+  }
+
+  switch (k) {
+    case "tree": {
+      if (state.trees.has(eid)) return null;
+      const e = new Tree();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      e.maxHp = entityHp("tree", eid, undefined, TREE_HP);
+      e.hp = e.maxHp;
+      e.armor = TREE_ARMOR;
+      e.alive = true;
+      state.trees.set(e.id, e);
+      return { kind: "tree", id: e.id };
+    }
+    case "rock": {
+      if (state.rocks.has(eid)) return null;
+      const e = new Rock();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      e.radius = 1.4;
+      e.maxHp = entityHp("rock", eid, undefined, ROCK_HP);
+      e.hp = e.maxHp;
+      e.armor = ROCK_ARMOR;
+      e.alive = true;
+      state.rocks.set(e.id, e);
+      return { kind: "rock", id: e.id };
+    }
+    case "potion":
+    case "berserker_potion": {
+      if (state.potions.has(eid)) return null;
+      const e = new Potion();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      e.kind = k;
+      state.potions.set(e.id, e);
+      return { kind: "potion", id: e.id };
+    }
+    case "log": {
+      if (state.logs.has(eid)) return null;
+      const e = new Log();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      state.logs.set(e.id, e);
+      return { kind: "log", id: e.id };
+    }
+    case "stone": {
+      if (state.stones.has(eid)) return null;
+      const e = new Stone();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      state.stones.set(e.id, e);
+      return { kind: "stone", id: e.id };
+    }
+    case "banana": {
+      if (state.bananas.has(eid)) return null;
+      const e = new Banana();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      state.bananas.set(e.id, e);
+      return { kind: "banana", id: e.id };
+    }
+    case "house": {
+      if (state.houses.has(eid)) return null;
+      const e = new House();
+      e.id = eid;
+      e.x = px;
+      e.z = pz;
+      e.radius = HOUSE_COLLISION_RADIUS;
+      e.maxHp = entityHp("house", eid, undefined, HOUSE_HP);
+      e.hp = e.maxHp;
+      e.alive = true;
+      state.houses.set(e.id, e);
+      return { kind: "house", id: e.id };
+    }
+    case "dummy":
+    case "goblin": {
+      if (state.enemies.has(eid)) return null;
+      const e = new Enemy();
+      e.rotY = 0;
+      configureEnemy(e, { kind: k, id: eid, x: px, z: pz });
+      state.enemies.set(e.id, e);
+      return { kind: "enemy", id: e.id };
+    }
+    default:
+      return null;
+  }
+}
 
 /** Relocate an editable entity to a ground point. */
 export function devMove(state: GameState, kind: string, id: string, x: number, z: number): boolean {
@@ -39,6 +184,15 @@ export function devMove(state: GameState, kind: string, id: string, x: number, z
   if (!obj) return false;
   obj.x = clamp(x);
   obj.z = clamp(z);
+  if (kind === "enemy") {
+    const e = state.enemies.get(id);
+    if (e) {
+      e.homeX = obj.x;
+      e.homeZ = obj.z;
+      e.targetX = obj.x;
+      e.targetZ = obj.z;
+    }
+  }
   return true;
 }
 
@@ -60,8 +214,8 @@ export function devSet(
     const t = state.trees.get(id);
     if (!t) return false;
     if (field === "maxHp") {
-      t.maxHp = Math.max(1, Number(value) || t.maxHp);
-      t.hp = Math.min(t.hp, t.maxHp);
+      t.maxHp = Math.max(0, Number(value) || 0);
+      t.hp = t.maxHp <= 0 ? 0 : Math.min(t.hp || t.maxHp, t.maxHp);
       return true;
     }
     if (field === "alive") {
@@ -76,8 +230,76 @@ export function devSet(
     const e = state.enemies.get(id);
     if (!e) return false;
     if (field === "maxHp") {
-      e.maxHp = Math.max(1, Number(value) || e.maxHp);
-      e.hp = Math.min(e.hp, e.maxHp);
+      e.maxHp = Math.max(0, Number(value) || 0);
+      e.hp = e.maxHp <= 0 ? 0 : Math.min(e.hp || e.maxHp, e.maxHp);
+      return true;
+    }
+    if (field === "hp") {
+      e.hp = Math.max(0, Math.min(e.maxHp, Number(value) || 0));
+      return true;
+    }
+    if (field === "level") {
+      e.level = Math.max(1, Math.round(Number(value) || e.level));
+      return true;
+    }
+    if (field === "attack" || field === "armor" || field === "critChance" || field === "moveSpeed" || field === "throwPower") {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return false;
+      (e as unknown as Record<string, number>)[field] = Math.max(0, n);
+      return true;
+    }
+    if (field === "brain") {
+      const v = String(value || "") as BrainId;
+      if (!["idle", "passive_patrol", "war_seeker", "attacks_home"].includes(v)) return false;
+      e.brain = v;
+      e.aggro = false;
+      e.aiTargetId = "";
+      e.targetX = e.homeX || e.x;
+      e.targetZ = e.homeZ || e.z;
+      e.state = v === "idle" ? AnimState.IDLE : AnimState.WALK;
+      return true;
+    }
+    if (field === "displayName") {
+      e.displayName = String(value || "").slice(0, 40);
+      return true;
+    }
+    return false;
+  }
+  if (kind === "rock") {
+    const r = state.rocks.get(id);
+    if (!r) return false;
+    if (field === "maxHp") {
+      r.maxHp = Math.max(0, Number(value) || 0);
+      r.hp = r.maxHp <= 0 ? 0 : Math.min(r.hp || r.maxHp, r.maxHp);
+      return true;
+    }
+    if (field === "alive") {
+      r.alive = !!value;
+      r.hp = r.alive ? r.maxHp : 0;
+      return true;
+    }
+    return false;
+  }
+  if (kind === "player") {
+    const p = state.players.get(id);
+    if (!p) return false;
+    if (field === "maxHp") {
+      p.maxHp = Math.max(0, Number(value) || 0);
+      p.hp = p.maxHp <= 0 ? 0 : Math.min(p.hp || p.maxHp, p.maxHp);
+      return true;
+    }
+    if (field === "hp") {
+      p.hp = Math.max(0, Math.min(p.maxHp, Number(value) || 0));
+      return true;
+    }
+    if (field === "level") {
+      p.level = Math.max(1, Math.round(Number(value) || p.level));
+      return true;
+    }
+    if (field === "attack" || field === "armor" || field === "critChance" || field === "moveSpeed" || field === "throwPower") {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return false;
+      (p as unknown as Record<string, number>)[field] = Math.max(0, n);
       return true;
     }
     return false;

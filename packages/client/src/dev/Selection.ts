@@ -13,7 +13,7 @@ import { PropManager } from "./PropManager";
  *  the transform that positions it; `meshes` are highlighted on selection. The
  *  per-kind editing rules live in the Inspector, keyed off `kind`. */
 export interface Selectable {
-  kind: string; // prop | tree | rock | potion | enemy | player | log | stone | banana
+  kind: string; // prop | tree | rock | potion | enemy | player | log | stone | banana | item
   id: string;
   root: TransformNode;
   meshes: AbstractMesh[];
@@ -25,6 +25,7 @@ const COLORS: Record<string, Color3> = {
   tree: new Color3(0.5, 1, 0.4),
   rock: new Color3(0.6, 0.78, 1),
   potion: new Color3(1, 0.6, 0.95),
+  item: new Color3(0.95, 0.85, 0.45),
   enemy: new Color3(1, 0.55, 0.3),
   player: new Color3(1, 0.85, 0.3),
 };

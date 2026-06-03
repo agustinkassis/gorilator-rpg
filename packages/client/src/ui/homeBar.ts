@@ -92,7 +92,7 @@ export class HomeBar {
     const t =
       secs >= 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}` : `${secs}s`;
     if (waveNumber <= 0) {
-      this.wave.textContent = "GET READY";
+      this.wave.textContent = "WAVE 1";
       this.sub.textContent = `first wave in ${t}`;
     } else {
       this.wave.textContent = `WAVE ${waveNumber}`;

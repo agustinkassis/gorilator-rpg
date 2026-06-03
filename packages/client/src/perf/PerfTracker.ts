@@ -2,8 +2,19 @@ import {
   ClientPerfSample,
   BenchmarkResult,
   MetricSummary,
+  PerfBreakdown,
+  RenderProfile,
+  ResourceItem,
+  SlowEvent,
   summarize,
 } from "@rpg/shared";
+
+/** The live elements/entities/render-load source (set from main.ts; reads scene + game). */
+type BreakdownProvider = () => {
+  render: ResourceItem[];
+  elements: ResourceItem[];
+  entities: ResourceItem[];
+};
 
 /** Per-frame metrics the Babylon probes push in once per rendered frame. */
 export interface FrameMetrics {
@@ -16,6 +27,8 @@ export interface FrameMetrics {
 }
 
 const DEFAULT_CAP = 10_800; // ~3 min at 60 fps — the live ring-buffer ceiling
+const SLOW_RECAPTURE_MS = 2000; // while sustained-slow, re-snapshot the culprits this often
+const SLOW_EVENT_CAP = 60; // keep the most recent N slowdowns
 
 /**
  * The client-side performance tracker: a frame-rate ring buffer plus a tagged
@@ -50,6 +63,19 @@ export class PerfTracker {
 
   /** Environment metadata stamped onto benchmark results (set by the probes). */
   meta: Record<string, unknown> = {};
+
+  // ---- slow-frame ("what's slow") auto-tracking ----
+  /** FPS at or below this is "slow" → the tracker snapshots the culprits. */
+  slowFpsThreshold = 50;
+  /** Supplies the live render/elements/entities lists (set from main.ts; reads the
+   *  scene + game). Null until wired — reasons (span tags) still work without it. */
+  private breakdownProvider: BreakdownProvider | null = null;
+  /** Supplies the deep render profile (set from main.ts; reads scene + probe phases). */
+  private renderProfileProvider: (() => RenderProfile) | null = null;
+  private slowEvents: SlowEvent[] = [];
+  private slowSince: number | null = null; // when the current dip began (null = not slow)
+  private lastSlowCaptureAt = 0;
+  private unseenSlow = 0; // new slowdowns since the overlay last looked
 
   constructor(cap = DEFAULT_CAP) {
     this.cap = cap;
@@ -131,6 +157,103 @@ export class PerfTracker {
       this.bench.samples.push(sample);
       if (sample.t - this.bench.startedAt >= this.bench.durationMs) this.finishBenchmark();
     }
+
+    this.detectSlow(sample); // auto-capture the culprits when the frame rate dips
+  }
+
+  // ---- slow-frame tracking: "start tracking the reasons when fps gets slow" ----
+
+  /** Wire the render/elements/entities source (the scene + game). Reasons (span
+   *  tags) are the tracker's own, so a breakdown is partial-but-useful without it. */
+  setBreakdownProvider(fn: BreakdownProvider) {
+    this.breakdownProvider = fn;
+  }
+
+  /** Wire the deep render-profile source (scene + the probe's sub-phase timings). */
+  setRenderProfileProvider(fn: () => RenderProfile) {
+    this.renderProfileProvider = fn;
+  }
+
+  /** The live "what's consuming resources" snapshot: reasons = this tracker's span
+   *  tags over the last `seconds` (sorted by ms — incl. the scene.render sub-phases;
+   *  the `geo:*` geometry tags are excluded, they're surfaced in `render` instead),
+   *  render/elements/entities from the provider. Backs the overlay's expand panel. */
+  breakdown(seconds = 1): PerfBreakdown {
+    const reasons: ResourceItem[] = [];
+    const m = this.summary(seconds).metrics;
+    for (const k in m) {
+      if (!k.startsWith("tag:") || k.startsWith("tag:geo:")) continue; // geo:* are tris, not ms
+      reasons.push({ label: k.slice(4), value: round(m[k].avg, 3), unit: "ms" });
+    }
+    reasons.sort((a, b) => b.value - a.value);
+    const ext = this.breakdownProvider?.() ?? { render: [], elements: [], entities: [] };
+    return { reasons, render: ext.render, elements: ext.elements, entities: ext.entities };
+  }
+
+  /** Capture + save a deep render profile (sub-phase timings + per-element load +
+   *  heaviest meshes) to perf-logs/render-profile-<ts>.json. Returns it too. */
+  async captureRenderProfile(): Promise<RenderProfile | null> {
+    const profile = this.renderProfileProvider?.();
+    if (!profile) return null;
+    await this.save(`render-profile-${profile.t}.json`, JSON.stringify(profile, null, 2), "benchmark");
+    return profile;
+  }
+
+  /** On each sample: if FPS is below the threshold, snapshot the culprits — once on
+   *  the dip's onset, then periodically while it persists. */
+  private detectSlow(sample: ClientPerfSample) {
+    if (sample.fps >= this.slowFpsThreshold) {
+      this.slowSince = null;
+      return;
+    }
+    const onset = this.slowSince === null;
+    if (onset) this.slowSince = sample.t;
+    if (!onset && sample.t - this.lastSlowCaptureAt < SLOW_RECAPTURE_MS) return;
+
+    this.lastSlowCaptureAt = sample.t;
+    const breakdown = this.breakdown(0.5); // a tight window around the dip
+    this.slowEvents.push({
+      t: sample.t,
+      fps: sample.fps,
+      frameMs: sample.frameMs,
+      cause: breakdown.reasons[0]?.label ?? "unknown",
+      breakdown,
+    });
+    if (this.slowEvents.length > SLOW_EVENT_CAP) this.slowEvents.shift();
+    this.unseenSlow++;
+  }
+
+  /** Captured slowdowns, most recent first. */
+  slowdowns(): SlowEvent[] {
+    return [...this.slowEvents].reverse();
+  }
+  slowCount() {
+    return this.slowEvents.length;
+  }
+  /** Count of slowdowns captured since the overlay last viewed them (for a badge). */
+  unseenSlowdowns() {
+    return this.unseenSlow;
+  }
+  markSlowdownsSeen() {
+    this.unseenSlow = 0;
+  }
+  clearSlowdowns() {
+    this.slowEvents = [];
+    this.unseenSlow = 0;
+    this.slowSince = null;
+  }
+
+  /** Persist the captured slowdowns (+ env) for offline analysis. */
+  async saveSlowReport(): Promise<void> {
+    const report = {
+      src: "client",
+      capturedAt: Date.now(),
+      slowFpsThreshold: this.slowFpsThreshold,
+      count: this.slowEvents.length,
+      meta: { ...this.meta },
+      events: this.slowEvents,
+    };
+    await this.save(`slowdowns-${Date.now()}.json`, JSON.stringify(report, null, 2), "benchmark");
   }
 
   // ---- live read (for the overlay) ----

@@ -119,6 +119,8 @@ interface Placement {
   x: number;
   z: number;
   rotationY: number;
+  brain?: BrainId;
+  stats?: CharacterStatsConfig;
 }
 
 const charsPathFor = (root: string) => resolve(root, "public/characters.json");
@@ -126,6 +128,9 @@ const npcsPathFor = (root: string) => resolve(root, "public/npcs.json");
 const spawnersPathFor = (root: string) => resolve(root, "public/spawners.json");
 const resourcesPathFor = (root: string) => resolve(root, "public/resources.json");
 const structuresPathFor = (root: string) => resolve(root, "public/structures.json");
+const entityFeaturesPathFor = (root: string) => resolve(root, "public/entity-features.json");
+const itemsPathFor = (root: string) => resolve(root, "public/items.json");
+const itemAssetsDirFor = (root: string) => resolve(root, "public/items");
 
 // Per-structure-kind loot table: a list of {item, amount, probability} rolled
 // independently when the structure is destroyed. Read live by the server.
@@ -133,6 +138,40 @@ interface LootEntry {
   item: string;
   amount: number;
   probability: number; // 0..1
+}
+
+interface StructureMask {
+  type: "polygon";
+  points: { x: number; z: number }[];
+}
+
+interface StructureCfg {
+  loot?: LootEntry[];
+  mask?: StructureMask;
+}
+
+function sanitizeStructureMask(raw: unknown): StructureMask | undefined {
+  const obj = raw as { type?: unknown; points?: unknown } | null;
+  if (!obj || obj.type !== "polygon" || !Array.isArray(obj.points)) return undefined;
+  const points = obj.points
+    .slice(0, 64)
+    .map((p) => {
+      const point = p as { x?: unknown; z?: unknown };
+      const x = Number(point.x);
+      const z = Number(point.z);
+      return Number.isFinite(x) && Number.isFinite(z) ? { x, z } : null;
+    })
+    .filter((p): p is { x: number; z: number } => !!p);
+  return points.length >= 3 ? { type: "polygon", points } : undefined;
+}
+
+interface ItemDef {
+  id: string;
+  name: string;
+  icon?: string;
+  model?: string;
+  stack?: number;
+  worldScale?: number;
 }
 
 // Per-resource-kind drop config: which item a tree/rock yields, how many, on hit
@@ -154,14 +193,50 @@ interface SpawnerBehavior {
   chaseSpeed?: number;
   attackCooldownMs?: number;
   houseDamage?: number;
+  brain?: BrainId;
+  modelId?: string;
+  label?: string;
+  stats?: CharacterStatsConfig;
 }
 interface Spawner {
-  id: string; // the selected object's id
+  id: string; // unique spawn rule id
+  ownerId?: string; // selected object's id
+  type?: string; // goblin | dummy | npc | tree | ...
+  modelId?: string;
+  label?: string;
   x: number;
   z: number;
   intervalMs: number;
   cap: number; // max live goblins from this spawner
   behavior?: SpawnerBehavior;
+}
+
+type BrainId = "idle" | "passive_patrol" | "war_seeker" | "attacks_home";
+interface CharacterStatsConfig {
+  maxHp?: number;
+  attack?: number;
+  armor?: number;
+  critChance?: number;
+  moveSpeed?: number;
+  throwPower?: number;
+  level?: number;
+  xp?: number;
+}
+interface FeatureDrop {
+  item: string;
+  quantity: number;
+  probability: number;
+  trigger: "kill" | "damage";
+}
+interface EntityFeatureConfig {
+  hp?: number;
+  brain?: BrainId;
+  stats?: CharacterStatsConfig;
+  drops?: FeatureDrop[];
+}
+interface EntityFeatureManifest {
+  defaults?: Record<string, EntityFeatureConfig>;
+  instances?: Record<string, EntityFeatureConfig>;
 }
 const charDirFor = (root: string) => resolve(root, "public/models/characters");
 
@@ -414,6 +489,8 @@ function modelImporter(): Plugin {
               x: Number(b.x) || 0,
               z: Number(b.z) || 0,
               rotationY: Number(b.rotationY) || 0,
+              ...(b.brain ? { brain: String(b.brain) } : {}),
+              ...(b.stats && typeof b.stats === "object" ? { stats: b.stats } : {}),
             };
             const npcs = readJsonArray<Placement>(npcsPathFor(root));
             npcs.push(placement);
@@ -431,6 +508,78 @@ function modelImporter(): Plugin {
         sendJson(res, readJsonArray<Placement>(npcsPathFor(root)));
       });
 
+      // ======== Item-definition endpoints (dev-authored inventory items) ========
+      server.middlewares.use("/__items/defs", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        sendJson(res, readJsonArray<ItemDef>(itemsPathFor(root)));
+      });
+      server.middlewares.use("/__items/upload", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        const url = new URL(req.url || "", "http://localhost");
+        const kind = url.searchParams.get("kind") === "model" ? "model" : "icon";
+        const base = slug(url.searchParams.get("name") || "item");
+        const rawFile = url.searchParams.get("filename") || "";
+        const rawExt = (rawFile.match(/\.[a-z0-9]+$/i)?.[0] || "").toLowerCase();
+        const ext =
+          kind === "model"
+            ? ".glb"
+            : [".png", ".jpg", ".jpeg", ".webp"].includes(rawExt)
+              ? rawExt
+              : ".png";
+        void collectBody(req).then((buf) => {
+          try {
+            if (!buf.length) return fail(res, 400, "empty body");
+            const dir = itemAssetsDirFor(root);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            const file = `${base}_${kind}_${Date.now()}${ext}`;
+            writeFileSync(resolve(dir, file), buf);
+            sendJson(res, { ok: true, url: `/items/${file}` });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__items/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const raw = JSON.parse(buf.toString("utf8") || "{}") as ItemDef;
+            const id = slug(raw.id || raw.name || "item").slice(0, 48);
+            if (!id) return fail(res, 400, "missing id");
+            const entry: ItemDef = {
+              id,
+              name: String(raw.name || id).slice(0, 48),
+              stack: Math.max(1, Math.min(999, Math.round(Number(raw.stack) || 99))),
+              worldScale: Math.max(0.05, Math.min(20, Number(raw.worldScale) || 1.2)),
+            };
+            if (raw.icon) entry.icon = String(raw.icon);
+            if (raw.model) entry.model = String(raw.model);
+            const items = readJsonArray<ItemDef>(itemsPathFor(root));
+            const i = items.findIndex((x) => x.id === id);
+            if (i >= 0) items[i] = entry;
+            else items.push(entry);
+            writeJsonArray(itemsPathFor(root), items);
+            sendJson(res, { ok: true, item: entry });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__items/delete", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}");
+            const id = String(b.id || "");
+            const items = readJsonArray<ItemDef>(itemsPathFor(root));
+            writeJsonArray(itemsPathFor(root), items.filter((x) => x.id !== id));
+            sendJson(res, { ok: true });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
       // placement-update: patch x/z/rotationY of a placement
       server.middlewares.use("/__char/placement-update", (req, res) => {
         if (req.method !== "POST") return fail(res, 405, "POST only");
@@ -442,6 +591,8 @@ function modelImporter(): Plugin {
             if (!p) return fail(res, 404, "no such placement");
             for (const f of ["x", "z", "rotationY"] as const)
               if (patch[f] !== undefined) p[f] = Number(patch[f]);
+            if (patch.brain !== undefined) (p as Record<string, unknown>).brain = String(patch.brain);
+            if (patch.stats && typeof patch.stats === "object") (p as Record<string, unknown>).stats = patch.stats;
             writeJsonArray(npcsPathFor(root), npcs);
             sendJson(res, { ok: true });
           } catch (e) {
@@ -466,6 +617,76 @@ function modelImporter(): Plugin {
         });
       });
 
+      // ======== Generic entity feature config (HP / drops / brain / stats) ========
+      const readFeatures = (): EntityFeatureManifest => {
+        const p = entityFeaturesPathFor(root);
+        if (!existsSync(p)) return { defaults: {}, instances: {} };
+        try {
+          const o = JSON.parse(readFileSync(p, "utf8"));
+          return o && typeof o === "object" ? o : { defaults: {}, instances: {} };
+        } catch {
+          return { defaults: {}, instances: {} };
+        }
+      };
+      const writeFeatures = (m: EntityFeatureManifest) => {
+        writeFileSync(entityFeaturesPathFor(root), JSON.stringify({
+          defaults: m.defaults ?? {},
+          instances: m.instances ?? {},
+        }, null, 2));
+      };
+      const sanitizeFeature = (raw: Record<string, unknown>): EntityFeatureConfig => {
+        const out: EntityFeatureConfig = {};
+        if (raw.hp !== undefined) out.hp = Math.max(0, Math.round(Number(raw.hp) || 0));
+        if (raw.brain !== undefined) {
+          const b = String(raw.brain);
+          if (["idle", "passive_patrol", "war_seeker", "attacks_home"].includes(b)) out.brain = b as BrainId;
+        }
+        if (raw.stats && typeof raw.stats === "object") {
+          const src = raw.stats as Record<string, unknown>;
+          const stats: CharacterStatsConfig = {};
+          for (const k of ["maxHp", "attack", "armor", "critChance", "moveSpeed", "throwPower", "level", "xp"] as const) {
+            if (src[k] !== undefined && Number.isFinite(Number(src[k]))) stats[k] = Math.max(0, Number(src[k]));
+          }
+          if (Object.keys(stats).length) out.stats = stats;
+        }
+        if (Array.isArray(raw.drops)) {
+          out.drops = raw.drops.slice(0, 40).map((d: Record<string, unknown>) => ({
+            item: String(d.item || "log"),
+            quantity: Math.max(0, Math.round(Number(d.quantity) || 0)),
+            probability: Math.max(0, Math.min(1, Number(d.probability) || 0)),
+            trigger: d.trigger === "damage" ? "damage" : "kill",
+          }));
+        }
+        return out;
+      };
+      server.middlewares.use("/__features/list", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        sendJson(res, readFeatures());
+      });
+      server.middlewares.use("/__features/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}") as Record<string, unknown>;
+            const scope = b.scope === "instance" ? "instances" : "defaults";
+            const key = String(b.key || "");
+            if (!key) return fail(res, 400, "missing key");
+            const manifest = readFeatures();
+            const bucket = scope === "instances"
+              ? { ...(manifest.instances ?? {}) }
+              : { ...(manifest.defaults ?? {}) };
+            const next = sanitizeFeature((b.config && typeof b.config === "object" ? b.config : b) as Record<string, unknown>);
+            bucket[key] = next;
+            if (scope === "instances") manifest.instances = bucket;
+            else manifest.defaults = bucket;
+            writeFeatures(manifest);
+            sendJson(res, { ok: true, scope, key });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
       // ======== Spawner endpoints (objects that spawn goblins) ========
       server.middlewares.use("/__spawners/list", (req, res) => {
         if (req.method !== "GET") return fail(res, 405, "GET only");
@@ -480,6 +701,10 @@ function modelImporter(): Plugin {
             const list = readJsonArray<Spawner>(spawnersPathFor(root));
             const entry: Spawner = {
               id: s.id,
+              ownerId: s.ownerId || s.id,
+              type: s.type || "goblin",
+              ...(s.modelId ? { modelId: s.modelId } : {}),
+              ...(s.label ? { label: s.label } : {}),
               x: Number(s.x) || 0,
               z: Number(s.z) || 0,
               intervalMs: Math.max(200, Number(s.intervalMs) || 4000),
@@ -548,7 +773,7 @@ function modelImporter(): Plugin {
       });
 
       // ======== Structure loot tables (items dropped when a structure is destroyed) ========
-      const readStructures = (): Record<string, { loot: LootEntry[] }> => {
+      const readStructures = (): Record<string, StructureCfg> => {
         const p = structuresPathFor(root);
         if (!existsSync(p)) return {};
         try {
@@ -577,9 +802,15 @@ function modelImporter(): Plugin {
                 }))
               : [];
             const all = readStructures();
-            all[kind] = { loot };
+            const next: StructureCfg = { ...(all[kind] ?? {}), loot };
+            if ("mask" in b) {
+              const mask = sanitizeStructureMask(b.mask);
+              if (mask) next.mask = mask;
+              else delete next.mask;
+            }
+            all[kind] = next;
             writeFileSync(structuresPathFor(root), JSON.stringify(all, null, 2));
-            sendJson(res, { ok: true, kind, count: loot.length });
+            sendJson(res, { ok: true, kind, count: loot.length, mask: !!next.mask });
           } catch (e) {
             fail(res, 500, String(e));
           }

@@ -54,11 +54,17 @@ function load(path) {
   const raw = readFileSync(path, "utf8").trim();
   if (!raw) return { metrics: {}, sampleCount: 0, meta: {}, src: "?" };
 
-  // A benchmark result: one JSON object with a metrics map.
-  if (raw[0] === "{" && !raw.includes("\n")) {
-    const obj = JSON.parse(raw);
-    if (obj.metrics) {
-      return { metrics: obj.metrics, sampleCount: obj.sampleCount ?? 0, meta: obj.meta ?? {}, src: obj.src ?? "?" };
+  // A benchmark result is one JSON object with a `metrics` map. Try to parse the
+  // WHOLE file as JSON first (benchmark files are pretty-printed, so multi-line);
+  // if that throws it's a JSONL sample log, handled below.
+  if (raw[0] === "{" || raw[0] === "[") {
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && obj.metrics) {
+        return { metrics: obj.metrics, sampleCount: obj.sampleCount ?? 0, meta: obj.meta ?? {}, src: obj.src ?? "?" };
+      }
+    } catch {
+      /* not a single JSON object → fall through to JSONL */
     }
   }
 

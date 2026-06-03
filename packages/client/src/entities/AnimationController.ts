@@ -30,8 +30,8 @@ export class AnimationController {
     return Object.keys(this.groups).length > 0;
   }
 
-  play(state: AnimState) {
-    if (state === this.current) return;
+  play(state: AnimState, force = false) {
+    if (!force && state === this.current) return;
     this.current = state;
 
     const next = this.groups[state] ?? this.groups[AnimState.IDLE];

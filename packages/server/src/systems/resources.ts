@@ -25,15 +25,18 @@ import { nearestFreeWorld } from "./pathfinding";
 import { spawnBanana } from "./bananas";
 import { dropConfig } from "./resourceDrops";
 import { structureLoot } from "./structureDrops";
+import { entityDrops, entityFeature, entityHp } from "./entityFeatures";
+import { hasCustomItem, spawnCustomItem } from "./items";
+import type { DropRuleConfig } from "@rpg/shared";
 
 let dropSeq = 0; // id counter for misc drops (potions / future custom items)
 const STONE_GROUP_MIN = 2;
 const STONE_GROUP_MAX = 9;
 
 /** Spawn one collectible of `type` at (x,z), routed to the matching entity map.
- *  The drop editor sets which `type` a resource yields; unknown types fall back to
- *  a stone so a mis-typed/custom item still produces a pickup. */
-function dropItem(state: GameState, type: string, x: number, z: number): void {
+ *  The drop editor sets which `type` a resource yields; custom ids route to the
+ *  generic item map. Unknown types still fall back to stone. */
+export function dropItem(state: GameState, type: string, x: number, z: number): void {
   const spot = nearestFreeWorld(x, z);
   const s = getSeq(state);
   switch (type) {
@@ -67,6 +70,7 @@ function dropItem(state: GameState, type: string, x: number, z: number): void {
       break;
     }
     default: {
+      if (hasCustomItem(type) && spawnCustomItem(state, type, spot.x, spot.z)) break;
       const e = new Stone();
       e.id = `stone-${s.stone++}`;
       e.x = spot.x;
@@ -87,10 +91,95 @@ export function dropBerserkerPotion(state: GameState, x: number, z: number): voi
   dropItem(state, "berserker_potion", x, z);
 }
 
+const dropDamage = new WeakMap<object, Record<string, number>>();
+
+function legacyResourceDrops(kind: "tree" | "rock"): DropRuleConfig[] {
+  if (entityFeature(kind).drops !== undefined) return entityDrops(kind);
+  const cfg = dropConfig(kind);
+  return [
+    {
+      item: cfg.item,
+      quantity: Math.max(0, Math.round(cfg.amount)),
+      probability: 1,
+      trigger: cfg.trigger === "hit" ? "damage" : "kill",
+    },
+  ];
+}
+
+function rulesFor(kind: string, id?: string, modelId?: string): DropRuleConfig[] {
+  return entityDrops(kind, id, modelId);
+}
+
+function scatterDrop(state: GameState, item: string, x: number, z: number, radius = 1.5): void {
+  const angle = Math.random() * Math.PI * 2;
+  const r = 0.4 + Math.random() * radius;
+  dropItem(state, item, x + Math.cos(angle) * r, z + Math.sin(angle) * r);
+}
+
+export function dropEntityLoot(
+  state: GameState,
+  kind: string,
+  id: string,
+  modelId: string | undefined,
+  x: number,
+  z: number,
+  radius = 1.5,
+): void {
+  for (const rule of rulesFor(kind, id, modelId)) {
+    if (rule.trigger !== "kill") continue;
+    if (Math.random() >= rule.probability) continue;
+    for (let i = 0; i < rule.quantity; i++) scatterDrop(state, rule.item, x, z, radius);
+  }
+}
+
+export function applyDamageDrops(
+  state: GameState,
+  target: object,
+  kind: string,
+  id: string,
+  modelId: string | undefined,
+  x: number,
+  z: number,
+  totalHp: number,
+  amount: number,
+  radius = 1.5,
+): void {
+  if (totalHp <= 0 || amount <= 0) return;
+  const rules = rulesFor(kind, id, modelId).filter((r) => r.trigger === "damage");
+  if (!rules.length) return;
+  let rec = dropDamage.get(target);
+  if (!rec) {
+    rec = {};
+    dropDamage.set(target, rec);
+  }
+  rules.forEach((rule, index) => {
+    if (rule.quantity <= 0) return;
+    const perItem = Math.max(1, totalHp) / rule.quantity;
+    const key = `${kind}:${id}:${index}:${rule.item}`;
+    rec![key] = (rec![key] ?? 0) + amount;
+    while (rec![key] >= perItem) {
+      rec![key] -= perItem;
+      if (Math.random() < rule.probability) scatterDrop(state, rule.item, x, z, radius);
+    }
+  });
+}
+
 /** A structure was destroyed: roll its loot table. Each entry is rolled
  *  INDEPENDENTLY (Math.random() < probability) and, on success, drops `amount` of
  *  its item scattered around the structure's footprint. */
 export function dropStructureLoot(state: GameState, kind: string, x: number, z: number): void {
+  const featureLoot = entityDrops(kind);
+  if (entityFeature(kind).drops !== undefined) {
+    for (const e of featureLoot) {
+      if (e.trigger !== "kill" || Math.random() >= e.probability) continue;
+      for (let i = 0; i < e.quantity; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = 1 + Math.random() * 3;
+        dropItem(state, e.item, x + Math.cos(ang) * r, z + Math.sin(ang) * r);
+      }
+    }
+    return;
+  }
   for (const e of structureLoot(kind)) {
     if (Math.random() >= e.probability) continue;
     const n = Math.max(0, Math.round(e.amount));
@@ -156,15 +245,20 @@ function dropFromTree(state: GameState, tree: Tree, item: string) {
  *  configured item every (hp/amount) damage, so it yields `amount` total across its
  *  full hp. Kill-drop trees yield nothing here (everything drops when felled). */
 export function onTreeDamaged(state: GameState, tree: Tree, amount: number) {
-  const cfg = dropConfig("tree");
-  if (cfg.trigger !== "hit") return;
-  const total = Math.round(cfg.amount);
+  const rules = legacyResourceDrops("tree");
+  if (entityFeature("tree").drops !== undefined) {
+    applyDamageDrops(state, tree, "tree", tree.id, undefined, tree.x, tree.z, tree.maxHp, amount, 0.9);
+    return;
+  }
+  const cfg = rules[0];
+  if (!cfg || cfg.trigger !== "damage") return;
+  const total = Math.round(cfg.quantity);
   if (total <= 0) return;
-  const perItem = Math.max(1, cfg.hp) / total; // user's formula: total HP / total items
+  const perItem = Math.max(1, dropConfig("tree").hp) / total; // user's formula: total HP / total items
   tree.damageSinceDrop += amount;
   while (tree.damageSinceDrop >= perItem) {
     tree.damageSinceDrop -= perItem;
-    dropFromTree(state, tree, cfg.item);
+    if (Math.random() < cfg.probability) dropFromTree(state, tree, cfg.item);
   }
 }
 
@@ -178,6 +272,10 @@ export function onTreeCut(state: GameState, tree: Tree) {
   tree.damageSinceDrop = 0;
 
   const cfg = dropConfig("tree");
+  if (entityFeature("tree").drops !== undefined) {
+    dropEntityLoot(state, "tree", tree.id, undefined, tree.x, tree.z, 0.9);
+    return;
+  }
   if (cfg.trigger !== "kill") return;
   const n = Math.max(0, Math.round(cfg.amount));
   for (let i = 0; i < n; i++) {
@@ -242,7 +340,23 @@ function dropStoneGroupFromRock(state: GameState, rock: Rock, count: number) {
 /** Mining damage landed on a rock: shed the configured item progressively — `amount`
  *  total, spread evenly across the rock's HP (so it runs out as the rock is mined). */
 export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
+  const featureRules = entityFeature("rock").drops !== undefined;
   const cfg = dropConfig("rock");
+  if (featureRules) {
+    applyDamageDrops(
+      state,
+      rock,
+      "rock",
+      rock.id,
+      undefined,
+      rock.x,
+      rock.z,
+      rock.maxHp,
+      amount,
+      rock.radius * ROCK_COLLISION_SCALE + 0.8,
+    );
+    return;
+  }
   if (cfg.trigger !== "hit") return; // a kill-trigger rock doesn't shed while being hit
   const total = Math.round(cfg.amount);
   if (total <= 0) return; // configured to yield nothing (also guards the divide below)
@@ -269,6 +383,13 @@ export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
  *  while being mined (see onRockDamaged), so nothing extra drops. */
 export function onRockMined(state: GameState, rock: Rock) {
   const cfg = dropConfig("rock");
+  if (entityFeature("rock").drops !== undefined) {
+    dropEntityLoot(state, "rock", rock.id, undefined, rock.x, rock.z, rock.radius * ROCK_COLLISION_SCALE + 0.8);
+    rock.alive = false;
+    rock.hp = 0;
+    rock.damageSinceStone = 0;
+    return;
+  }
   if (cfg.trigger === "kill") {
     const n = Math.max(0, Math.round(cfg.amount));
     for (let i = 0; i < n; i++) dropFromRock(state, rock, cfg.item);
@@ -283,8 +404,8 @@ export function onRockMined(state: GameState, rock: Rock) {
  *  progressive-drop accumulators. Called once after spawn and on every resources.json
  *  change, so editing a tree/rock's HP commits to all trees/rocks at once. */
 export function applyResourceConfig(state: GameState) {
-  const treeHp = Math.max(1, Math.round(dropConfig("tree").hp));
-  const rockHp = Math.max(1, Math.round(dropConfig("rock").hp));
+  const treeHp = Math.max(0, entityHp("tree", undefined, undefined, dropConfig("tree").hp));
+  const rockHp = Math.max(0, entityHp("rock", undefined, undefined, dropConfig("rock").hp));
   state.trees.forEach((t) => {
     t.maxHp = treeHp;
     if (t.alive) t.hp = treeHp;
@@ -314,10 +435,11 @@ export function resetResources(state: GameState) {
   });
   state.logs.clear();
   state.stones.clear();
+  state.items.clear();
 }
 
 // ---- collection ----
-/** Collect a world item (log / stone / potion / banana) a player walked onto after clicking it. */
+/** Collect a world item a player walked onto after clicking it. */
 export function itemPickupSystem(
   state: GameState,
   _dt: number,
@@ -330,7 +452,8 @@ export function itemPickupSystem(
     const stone = log ? undefined : state.stones.get(id);
     const potion = log || stone ? undefined : state.potions.get(id);
     const banana = log || stone || potion ? undefined : state.bananas.get(id);
-    const target = log ?? stone ?? potion ?? banana;
+    const item = log || stone || potion || banana ? undefined : state.items.get(id);
+    const target = log ?? stone ?? potion ?? banana ?? item;
     if (!target) {
       player.pickupTargetId = "";
       return;
@@ -352,11 +475,14 @@ export function itemPickupSystem(
       } else if (banana) {
         state.bananas.delete(id);
         onCollect(pid, "banana");
-      } else {
+      } else if (potion) {
         // Use the synced kind so berserker_potion gives the buff item, not a heal.
-        const kind = (potion!.kind ?? "potion") as ItemType;
+        const kind = (potion.kind ?? "potion") as ItemType;
         state.potions.delete(id);
         onCollect(pid, kind);
+      } else if (item) {
+        state.items.delete(id);
+        onCollect(pid, item.itemId as ItemType);
       }
       player.pickupTargetId = "";
     }
@@ -368,7 +494,7 @@ type ItemMap = {
   delete(k: string): boolean;
 };
 
-/** Auto-collect any log / stone / potion / banana a player walks near (no click). */
+/** Auto-collect any world item a player walks near (no click). */
 export function autoGrabSystem(
   state: GameState,
   onCollect: (sessionId: string, type: ItemType) => void,
@@ -402,6 +528,17 @@ export function autoGrabSystem(
       const kind = (state.potions.get(id)?.kind ?? "potion") as ItemType;
       state.potions.delete(id);
       onCollect(pid, kind);
+    }
+    const itemIds: string[] = [];
+    state.items.forEach((item, id) => {
+      const dx = item.x - player.x;
+      const dz = item.z - player.z;
+      if (dx * dx + dz * dz <= r2) itemIds.push(id);
+    });
+    for (const id of itemIds) {
+      const kind = state.items.get(id)?.itemId as ItemType | undefined;
+      state.items.delete(id);
+      if (kind) onCollect(pid, kind);
     }
   });
 }

@@ -11,6 +11,7 @@ import {
   GOBLIN_ARMOR,
   GOBLIN_CRIT_CHANCE,
   GOBLIN_CHASE_SPEED,
+  GOBLIN_PATROL_SPEED,
   GOBLIN_AGGRO_RADIUS,
   GOBLIN_DEAGGRO_RADIUS,
   GOBLIN_LEASH,
@@ -40,8 +41,9 @@ import {
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
 import { applyDeathXpPenalty } from "./leveling";
-import { dropStructureLoot } from "./resources";
+import { dropEntityLoot, dropStructureLoot } from "./resources";
 import type { EmitKill } from "./combat";
+import { brainOf, configureEnemy } from "./enemyConfig";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -64,24 +66,7 @@ function homeOf(state: GameState): House | null {
 export function makeGoblin(state: GameState, x: number, z: number, level: number = GOBLIN_LEVEL): Enemy {
   const spot = nearestFreeWorld(x, z);
   const g = new Enemy();
-  g.id = `goblin-${seq++}`;
-  g.kind = "goblin";
-  g.x = spot.x;
-  g.z = spot.z;
-  g.homeX = spot.x;
-  g.homeZ = spot.z;
-  // combat power follows from the goblin's level (same per-level growth players get)
-  const s = statsForLevel(
-    { maxHp: GOBLIN_MAX_HP, attack: GOBLIN_ATTACK, armor: GOBLIN_ARMOR, critChance: GOBLIN_CRIT_CHANCE },
-    level,
-  );
-  g.hp = s.maxHp;
-  g.maxHp = s.maxHp;
-  g.level = level;
-  g.attack = s.attack;
-  g.armor = s.armor;
-  g.critChance = s.critChance;
-  g.state = AnimState.WALK;
+  configureEnemy(g, { kind: "goblin", id: `goblin-${seq++}`, x: spot.x, z: spot.z, stats: { level } });
   const home = homeOf(state);
   g.targetX = home ? home.x : 0;
   g.targetZ = home ? home.z : 0;
@@ -274,13 +259,16 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
   const home = homeOf(state);
 
   state.enemies.forEach((g) => {
-    if (g.kind !== "goblin") return;
+    const brain = brainOf(g);
     if (g.attackCooldown > 0) g.attackCooldown -= dtMs;
 
-    // dead → corpse lingers, then the goblin is removed (a felled wave is consumed)
+    // dead → corpse lingers, then either respawns at home or is consumed by a wave.
     if (g.state === AnimState.DEAD) {
       g.respawnTimer -= dtMs;
-      if (g.respawnTimer <= 0) remove.push(g.id);
+      if (g.respawnTimer <= 0) {
+        if (g.kind === "goblin" && brain === "attacks_home") remove.push(g.id);
+        else respawnEnemy(g, brain);
+      }
       return;
     }
     // struck → flinch, then re-engage
@@ -296,13 +284,31 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
     if (g.state === AnimState.ATTACK) {
       g.stateTimer -= dtMs;
       if (g.stateTimer <= 0) {
-        connectGoblinAttack(state, g, emitDamage, emitKill);
+        connectEnemyAttack(state, g, emitDamage, emitKill);
         g.state = AnimState.IDLE;
       }
       return;
     }
 
+    if (brain === "idle") {
+      g.aggro = false;
+      g.aiTargetId = "";
+      g.state = AnimState.IDLE;
+      return;
+    }
+
+    if (brain === "passive_patrol") {
+      passivePatrol(g, dt);
+      return;
+    }
+
     const near = nearestPlayer(state, g);
+
+    if (brain === "war_seeker") {
+      if (near) engagePlayer(g, near.p, near.d, dt);
+      else g.state = AnimState.IDLE;
+      return;
+    }
 
     // ---- Priority 1: a defender to fight ----
     // Stay locked on a player while it's within the give-up range; otherwise a
@@ -320,20 +326,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
     }
 
     if (engaging && near) {
-      g.aiTargetId = near.p.id;
-      if (near.d <= GOBLIN_ATTACK_RANGE) {
-        g.rotY = Math.atan2(near.p.x - g.x, near.p.z - g.z);
-        if (g.attackCooldown <= 0) {
-          g.state = AnimState.ATTACK;
-          g.stateTimer = GOBLIN_ATTACK_WINDUP_MS;
-          g.attackCooldown = g.atkCooldownMs || GOBLIN_ATTACK_COOLDOWN_MS;
-        } else {
-          g.state = AnimState.IDLE; // in range, on cooldown
-        }
-      } else {
-        stepToward(g, near.p.x, near.p.z, (g.chaseSpeed || GOBLIN_CHASE_SPEED), dt);
-        g.state = AnimState.WALK;
-      }
+      engagePlayer(g, near.p, near.d, dt);
       return;
     }
 
@@ -355,7 +348,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
         // walk to the house's edge (stop at the wall, not the centre)
         const ux = (home.x - g.x) / d;
         const uz = (home.z - g.z) / d;
-        stepToward(g, home.x - ux * reach, home.z - uz * reach, (g.chaseSpeed || GOBLIN_CHASE_SPEED), dt);
+        stepToward(g, home.x - ux * reach, home.z - uz * reach, enemySpeed(g, GOBLIN_CHASE_SPEED), dt);
         g.state = AnimState.WALK;
       }
     } else {
@@ -372,8 +365,56 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
   for (const id of remove) state.enemies.delete(id); // clear felled goblins after the sweep
 }
 
+function enemySpeed(g: Enemy, fallback: number): number {
+  return g.moveSpeed || g.chaseSpeed || fallback;
+}
+
+function engagePlayer(g: Enemy, p: Player, d: number, dt: number) {
+  g.aiTargetId = p.id;
+  if (d <= GOBLIN_ATTACK_RANGE) {
+    g.rotY = Math.atan2(p.x - g.x, p.z - g.z);
+    if (g.attackCooldown <= 0) {
+      g.state = AnimState.ATTACK;
+      g.stateTimer = GOBLIN_ATTACK_WINDUP_MS;
+      g.attackCooldown = g.atkCooldownMs || GOBLIN_ATTACK_COOLDOWN_MS;
+    } else {
+      g.state = AnimState.IDLE;
+    }
+  } else {
+    stepToward(g, p.x, p.z, enemySpeed(g, GOBLIN_CHASE_SPEED), dt);
+    g.state = AnimState.WALK;
+  }
+}
+
+function passivePatrol(g: Enemy, dt: number) {
+  g.wanderTimer -= dt * 1000;
+  const d = Math.hypot(g.targetX - g.x, g.targetZ - g.z);
+  if (g.wanderTimer <= 0 || d < 0.8) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.random() * (g.wanderRadius || GOBLIN_LEASH);
+    g.targetX = clampRange((g.homeX || g.x) + Math.cos(angle) * r);
+    g.targetZ = clampRange((g.homeZ || g.z) + Math.sin(angle) * r);
+    g.wanderTimer = 1500 + Math.random() * 3500;
+  }
+  stepToward(g, g.targetX, g.targetZ, enemySpeed(g, GOBLIN_PATROL_SPEED), dt);
+  g.state = AnimState.WALK;
+}
+
+function respawnEnemy(g: Enemy, brain: ReturnType<typeof brainOf>) {
+  g.hp = g.maxHp;
+  g.x = g.homeX;
+  g.z = g.homeZ;
+  g.targetX = g.homeX;
+  g.targetZ = g.homeZ;
+  g.aiTargetId = "";
+  g.aggro = false;
+  g.attackCooldown = 0;
+  g.stateTimer = 0;
+  g.state = brain === "idle" ? AnimState.IDLE : AnimState.WALK;
+}
+
 /** Dispatch a landed goblin swing to its target — the house, or a player. */
-function connectGoblinAttack(state: GameState, g: Enemy, emitDamage: EmitDamage, emitKill: EmitKill) {
+function connectEnemyAttack(state: GameState, g: Enemy, emitDamage: EmitDamage, emitKill: EmitKill) {
   if (state.houses.has(g.aiTargetId)) connectGoblinHouseHit(state, g, emitDamage);
   else connectGoblinHit(state, g, emitDamage, emitKill);
 }
@@ -414,6 +455,7 @@ function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage, em
     target.state = AnimState.DEAD;
     target.respawnTimer = PLAYER_RESPAWN_MS;
     applyDeathXpPenalty(target); // dying costs 30% of XP (can de-level)
+    dropEntityLoot(state, "player", target.id, undefined, target.x, target.z, 1.2);
     emitKill({
       killerId: g.id,
       killerName: "Goblin",

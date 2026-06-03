@@ -5,6 +5,11 @@ import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH, BERSERK_FLASH } from "./type
 import { makeBerserkerAura } from "../fx/berserkerFx";
 import { lerpAngle, smooth } from "../util/math";
 
+export interface AnimationDebugClip {
+  state: AnimState;
+  label: string;
+}
+
 interface RespawnSeq {
   phase: "out" | "in";
   t: number;
@@ -84,6 +89,7 @@ export class Entity {
   private overlayOn = false; // current overlay on/off (HIT flash, damage flash, or select flash)
   private overlayColor: Color3 = HIT_FLASH; // current overlay tint
   private ghost = false; // Dev Mode: translucent + floating (paused free-roam)
+  private animationTestOverride = false; // Dev tool: hold a manually-triggered clip until cleared
 
   // ---- Berserker buff visuals ----
   /** ms remaining on the berserker buff (0 = inactive); set by Game.ts each server tick. */
@@ -110,6 +116,38 @@ export class Entity {
   /** The current authoritative animation state (for the audio death sting, etc.). */
   get animState(): AnimState {
     return this.state;
+  }
+  /** Dev tool: the mapped skeletal clips on this character, in gameplay-state order. */
+  animationDebugClips(): AnimationDebugClip[] {
+    const order = [
+      AnimState.IDLE,
+      AnimState.WALK,
+      AnimState.ATTACK,
+      AnimState.THROW,
+      AnimState.HIT,
+      AnimState.DEAD,
+    ];
+    return order.flatMap((state) => {
+      const group = this.spawned.groups[state];
+      return group ? [{ state, label: `${stateLabel(state)} - ${group.name}` }] : [];
+    });
+  }
+  /** Dev tool: temporarily override the FSM so a chosen local clip can be tested. */
+  playAnimationDebugClip(state: AnimState): boolean {
+    if (!this.spawned.groups[state]) return false;
+    this.animationTestOverride = true;
+    this.shownState = state;
+    this.yawFixTarget = this.spawned.yawFix?.[state] ?? 0;
+    this.anim.setSpeedScale(1);
+    this.anim.play(state, true);
+    return true;
+  }
+  /** Dev tool: hand animation control back to the server-driven FSM. */
+  clearAnimationDebugClip() {
+    if (!this.animationTestOverride) return;
+    this.animationTestOverride = false;
+    this.yawFixTarget = this.spawned.yawFix?.[this.state] ?? 0;
+    this.refreshAnim(true);
   }
   /** True while the WALK locomotion clip is actually showing (real movement, post-hysteresis). */
   get isMoving(): boolean {
@@ -152,7 +190,7 @@ export class Entity {
    * when the body isn't really moving, so a stuck/blocked/arrived character
    * never walks in place. One-shots (ATTACK/HIT/THROW/DEAD) always play as-is.
    */
-  private refreshAnim() {
+  private refreshAnim(force = false) {
     let want = this.state;
     if (this.state === AnimState.WALK) {
       const moving = this.movingShown
@@ -163,9 +201,9 @@ export class Entity {
     } else {
       this.movingShown = false;
     }
-    if (want !== this.shownState) {
+    if (force || want !== this.shownState) {
       this.shownState = want;
-      this.anim.play(want);
+      this.anim.play(want, force);
     }
   }
 
@@ -221,9 +259,9 @@ export class Entity {
     if (state !== this.state) {
       this.state = state;
       this.stateTime = 0;
-      this.refreshAnim(); // suppresses a non-moving WALK into IDLE
+      if (!this.animationTestOverride) this.refreshAnim(); // suppresses a non-moving WALK into IDLE
       // per-model orientation fix for clips authored off the model's forward
-      this.yawFixTarget = this.spawned.yawFix?.[state] ?? 0;
+      if (!this.animationTestOverride) this.yawFixTarget = this.spawned.yawFix?.[state] ?? 0;
       if (this.corpseFx && state === AnimState.DEAD) this.corpseT = 0; // start the corpse clock
       // the white HIT flash + the select flash are driven centrally in update()
     }
@@ -257,13 +295,15 @@ export class Entity {
     this.lastZ = this.root.position.z;
     const inst = dt > 1e-4 ? Math.hypot(dx, dz) / dt : this.moveSpeed;
     this.moveSpeed = Scalar.Lerp(this.moveSpeed, inst, smooth(dt, 0.08));
-    this.refreshAnim();
+    if (!this.animationTestOverride) this.refreshAnim();
 
     // Sprinting speeds up the run cycle so the legs match the boosted movement
     // (only while the locomotion clip is actually showing).
-    this.anim.setSpeedScale(
-      this.sprinting && this.shownState === AnimState.WALK ? SPRINT_SPEED_MULT : 1,
-    );
+    if (!this.animationTestOverride) {
+      this.anim.setSpeedScale(
+        this.sprinting && this.shownState === AnimState.WALK ? SPRINT_SPEED_MULT : 1,
+      );
+    }
 
     // Berserker buff: scale the model up 30%, run a green particle aura, and
     // shimmer the overlay green while the buff is active. The buff state is driven
@@ -378,4 +418,8 @@ export class Entity {
     this.anim.dispose();
     this.spawned.dispose();
   }
+}
+
+function stateLabel(state: AnimState): string {
+  return state[0] + state.slice(1).toLowerCase();
 }

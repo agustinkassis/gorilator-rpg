@@ -1,5 +1,6 @@
 import { GameState, Player, Enemy, AnimState } from "@rpg/shared";
 import { depenetrate } from "./pathfinding";
+import { brainOf } from "./enemyConfig";
 
 const SEPARATION = 1.4; // min gap between character centres (bodies are AGENT_RADIUS 0.6)
 const SEP2 = SEPARATION * SEPARATION;
@@ -26,8 +27,8 @@ export function separationSystem(state: GameState) {
     if (p.hp > 0 && p.state !== AnimState.DEAD) bodies.push({ ref: p, isPlayer: true });
   });
   state.enemies.forEach((e) => {
-    // only the marching goblins jostle; the fixed training dummies stay put
-    if (e.kind === "goblin" && e.hp > 0 && e.state !== AnimState.DEAD)
+    // only moving brains jostle; fixed idle dummies stay put
+    if (brainOf(e) !== "idle" && e.state !== AnimState.DEAD)
       bodies.push({ ref: e, isPlayer: false });
   });
 

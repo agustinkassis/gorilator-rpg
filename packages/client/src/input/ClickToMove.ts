@@ -1,11 +1,9 @@
 import {
   Scene,
   Mesh,
-  AbstractMesh,
   PointerEventTypes,
-  PickingInfo,
   Vector3,
-  Nullable,
+  Matrix,
 } from "@babylonjs/core";
 import {
   THROW_CHARGE_RISE_MS,
@@ -13,16 +11,14 @@ import {
   THROW_CHARGE_FLOOR,
 } from "@rpg/shared";
 import { NetworkClient } from "../net/NetworkClient";
-import { PickResult } from "../game/Game";
+import { PickResult } from "./FootprintPicker";
 
 export interface ClickToMoveDeps {
   scene: Scene;
   ground: Mesh;
   net: NetworkClient;
-  /** Resolve a picked mesh to its world object (id + kind), or null. */
-  resolvePick: (mesh: Nullable<AbstractMesh>) => PickResult | null;
-  /** Click-assist: nearest clickable target to a ground point, or null. */
-  resolveNearby: (point: Vector3) => PickResult | null;
+  /** Resolve a ground-plane point to its world object (id + kind), or null. */
+  pickTargetAt: (point: Vector3) => PickResult | null;
   /** Called when the player clicks bare ground (to show a marker). */
   onMoveTo: (point: Vector3) => void;
   /** Called when the player clicks an enemy/player to attack — flashes the target. */
@@ -35,9 +31,9 @@ export interface ClickToMoveDeps {
    *  hook returns true when it handled (consumed) the event. */
   dev?: {
     isActive: () => boolean;
-    pointerDown: (pick: Nullable<PickingInfo>) => boolean;
-    pointerMove: (pick: Nullable<PickingInfo>) => boolean;
-    pointerUp: () => void;
+    pointerDown: (point: Vector3 | null, event: PointerEvent) => boolean;
+    pointerMove: (point: Vector3 | null) => boolean;
+    pointerUp: (event: PointerEvent) => void;
   };
 }
 
@@ -88,10 +84,12 @@ function chargePower(ms: number): number {
 }
 
 // Emoji rendered into an SVG = a themed mouse cursor (with an "auto" fallback).
-const cur = (emoji: string) =>
-  `url("data:image/svg+xml,${encodeURIComponent(
+const CURSOR_EMOJIS = ["⚔️", "🪓", "⛏️", "🔨", "🤚"] as const;
+const cursorUrl = (emoji: string) =>
+  `data:image/svg+xml,${encodeURIComponent(
     `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36'><text x='3' y='29' font-size='28'>${emoji}</text></svg>`,
-  )}") 18 18, auto`;
+  )}`;
+const cur = (emoji: string) => `url("${cursorUrl(emoji)}") 18 18, auto`;
 
 const CURSORS = {
   attack: cur("⚔️"),
@@ -101,6 +99,36 @@ const CURSORS = {
   grab: cur("🤚"),
   default: "default",
 };
+
+export function preloadMouseCursors(): Promise<void> {
+  const values = Object.values(CURSORS).filter((cursor) => cursor !== "default");
+  const urls = CURSOR_EMOJIS.map(cursorUrl);
+  const decode = (url: string) =>
+    new Promise<void>((resolve) => {
+      const img = new Image();
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve();
+      };
+      const timer = window.setTimeout(done, 1500);
+      img.onload = done;
+      img.onerror = done;
+      img.src = url;
+      void img.decode?.().then(done, done);
+    });
+
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:none;";
+  document.body.appendChild(probe);
+  for (const cursor of values) probe.style.cursor = cursor;
+  probe.remove();
+
+  return Promise.all(urls.map(decode)).then(() => undefined);
+}
 
 function cursorForKind(kind: string): string {
   if (kind === "log" || kind === "potion" || kind === "stone" || kind === "banana")
@@ -112,14 +140,15 @@ function cursorForKind(kind: string): string {
   return CURSORS.default;
 }
 
-function isHouseMesh(mesh: AbstractMesh): boolean {
-  let node: Nullable<AbstractMesh> = mesh;
-  while (node) {
-    const md = node.metadata as { kind?: string } | null;
-    if (md?.kind === "house") return true;
-    node = node.parent as Nullable<AbstractMesh>;
-  }
-  return false;
+function groundPoint(scene: Scene): Vector3 | null {
+  const camera = scene.activeCamera;
+  if (!camera) return null;
+  const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera, false);
+  const dy = ray.direction.y;
+  if (Math.abs(dy) < 1e-6) return null;
+  const t = -ray.origin.y / dy;
+  if (t < 0) return null;
+  return ray.origin.add(ray.direction.scale(t));
 }
 
 /**
@@ -128,12 +157,14 @@ function isHouseMesh(mesh: AbstractMesh): boolean {
  * enemy/player/tree to attack/chop it, or the ground to walk there.
  */
 export function setupClickToMove(deps: ClickToMoveDeps) {
-  const { scene, ground, net, resolvePick, resolveNearby, onMoveTo } = deps;
+  const { scene, net, pickTargetAt, onMoveTo } = deps;
   const canvas = scene.getEngine().getRenderingCanvas();
   // Stop Babylon from resetting the cursor each pointer move (it would otherwise
   // immediately revert our themed cursor back to the default — the "flash" bug).
   scene.doNotHandleCursors = true;
   scene.skipPointerMovePicking = true;
+  scene.skipPointerDownPicking = true;
+  scene.skipPointerUpPicking = true;
   // No browser context menu when right-clicking in the world.
   canvas?.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -169,9 +200,8 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
     if (!charging || (e.key || "").toUpperCase() !== chargeKey) return;
     charging = false;
     chargeBar.hide();
-    const pick = scene.pick(scene.pointerX, scene.pointerY, (m) => m === ground);
-    if (pick?.hit && pick.pickedPoint)
-      net.sendThrow(pick.pickedPoint.x, pick.pickedPoint.z, power, chargeItem);
+    const p = groundPoint(scene);
+    if (p) net.sendThrow(p.x, p.z, power, chargeItem);
   });
 
   scene.onBeforeRenderObservable.add(() => {
@@ -200,9 +230,8 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
   const MOVE_THROTTLE_MS = 90; // don't spam the server/pathfinder every mouse event
 
   const walkToCursor = () => {
-    const pick = scene.pick(scene.pointerX, scene.pointerY, (m) => m === ground);
-    if (!pick?.hit || !pick.pickedPoint) return;
-    const p = pick.pickedPoint;
+    const p = groundPoint(scene);
+    if (!p) return;
     const now = performance.now();
     // only send when the target has meaningfully moved and enough time has passed
     if (now - lastMoveAt < MOVE_THROTTLE_MS) return;
@@ -221,11 +250,9 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
   scene.onPointerObservable.add((pi) => {
     // ---- hover / drag: theme the cursor, and while the button is held, follow ----
     if (pi.type === PointerEventTypes.POINTERMOVE) {
-      const pick = scene.pick(scene.pointerX, scene.pointerY, (m) => !isHouseMesh(m));
-      if (deps.dev?.isActive() && deps.dev.pointerMove(pick)) return; // Dev Mode owns hover
-      let hit = pick?.hit ? resolvePick(pick.pickedMesh) : null;
-      // click-assist: over bare ground, snap the cursor to a nearby target
-      if (!hit && pick?.pickedMesh === ground && pick.pickedPoint) hit = resolveNearby(pick.pickedPoint);
+      const point = groundPoint(scene);
+      if (deps.dev?.isActive() && deps.dev.pointerMove(point)) return; // Dev Mode owns hover
+      const hit = point ? pickTargetAt(point) : null;
       setCursor(hit ? cursorForKind(hit.kind) : CURSORS.default);
       // holding the left button → keep walking toward the cursor's ground spot
       if (dragging && (pi.event.buttons & 1) !== 0) walkToCursor();
@@ -234,7 +261,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
 
     // ---- left button released → stop following the cursor ----
     if (pi.type === PointerEventTypes.POINTERUP) {
-      if (deps.dev?.isActive()) deps.dev.pointerUp();
+      if (deps.dev?.isActive()) deps.dev.pointerUp(pi.event);
       if (pi.event.button === 0) dragging = false;
       return;
     }
@@ -243,13 +270,11 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
     if (pi.type !== PointerEventTypes.POINTERDOWN) return;
     if (pi.event.button !== 0) return;
 
-    const pick = pi.pickInfo ?? scene.pick(scene.pointerX, scene.pointerY);
-    if (deps.dev?.isActive() && deps.dev.pointerDown(pick)) return; // Dev Mode owns the click
-    if (!pick || !pick.hit) return;
+    const point = groundPoint(scene);
+    if (deps.dev?.isActive() && deps.dev.pointerDown(point, pi.event)) return; // Dev Mode owns the click
+    if (!point) return;
 
-    let hit = resolvePick(pick.pickedMesh);
-    // click-assist: a click on bare ground near a target still hits the target
-    if (!hit && pick.pickedMesh === ground && pick.pickedPoint) hit = resolveNearby(pick.pickedPoint);
+    const hit = pickTargetAt(point);
     if (hit) {
       if (
         hit.kind === "log" ||
@@ -266,14 +291,12 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
       return; // clicking an object doesn't begin a drag-move
     }
 
-    if (pick.pickedMesh === ground && pick.pickedPoint) {
-      net.sendMove(pick.pickedPoint.x, pick.pickedPoint.z);
-      onMoveTo(pick.pickedPoint);
-      // begin the hold-to-move drag: subsequent mouse-moves keep walking
-      dragging = true;
-      lastMoveAt = performance.now();
-      lastMoveX = pick.pickedPoint.x;
-      lastMoveZ = pick.pickedPoint.z;
-    }
+    net.sendMove(point.x, point.z);
+    onMoveTo(point);
+    // begin the hold-to-move drag: subsequent mouse-moves keep walking
+    dragging = true;
+    lastMoveAt = performance.now();
+    lastMoveX = point.x;
+    lastMoveZ = point.z;
   });
 }

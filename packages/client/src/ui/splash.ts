@@ -14,6 +14,7 @@ import {
   DynamicTexture,
   ParticleSystem,
   ShadowGenerator,
+  AnimationGroup,
 } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
 import { SpawnedCharacter } from "../entities/types";
@@ -37,6 +38,11 @@ export interface SplashCredentials {
 const HERO_ACCENT = new Color3(0.98, 0.78, 0.28);
 /** The splash hero is shown bigger than its in-game (1×) size for a bolder pose. */
 const SPLASH_HERO_SCALE = 1.7;
+const ATTACK_IMPACT_FRACTION = 0.7;
+const FALLBACK_ATTACK_SECONDS = 0.9;
+const IMPACT_TO_FLASH_MS = 260;
+const FLASH_COVER_MS = 150;
+const IMPACT_FX_MS = 520;
 
 /**
  * The intro splash. It runs its own lightweight Babylon scene
@@ -44,9 +50,9 @@ const SPLASH_HERO_SCALE = 1.7;
  * pedestal — slowly turntabling, breathing, wreathed in rising embers. The DOM
  * overlay (see index.html) holds the title and the name prompt. When the player
  * commits a name, `playLaunch()` performs a cinematic
- * hand-off: the gorilla rears back into an overhead slam, the camera punches in
- * with a shake, a gold shockwave rings out, and a white flash masks the cut into
- * the live game.
+ * hand-off: the gorilla snaps into its attack animation, the camera punches
+ * in with a floor-impact shake, a gold shockwave rings out, and a white flash
+ * masks the cut into the live game.
  */
 export class SplashScreen {
   /** The splash's own scene. The main render loop draws it while `active`. */
@@ -61,7 +67,7 @@ export class SplashScreen {
   /** Clip FSM when the hero is the rigged glb model; undefined for procedural. */
   private heroAnim?: AnimationController;
   private heroFactory?: CharacterFactory;
-  private slamPlayed = false; // one-shot guard for the launch slam clip
+  private attackPlayed = false; // one-shot guard for the launch attack clip
   private readonly shadow: ShadowGenerator;
   private ring?: Mesh;
   private embers?: ParticleSystem;
@@ -71,6 +77,9 @@ export class SplashScreen {
   private spin = 0; // current hero yaw (a gentle sway, kept facing the camera)
   private launching = false;
   private launchT = 0; // seconds since launch began
+  private launchAttackDuration = FALLBACK_ATTACK_SECONDS;
+  private launchImpactAt = FALLBACK_ATTACK_SECONDS * ATTACK_IMPACT_FRACTION;
+  private impactFxTimer?: number;
 
   // DOM handles
   private readonly el: HTMLElement;
@@ -186,7 +195,8 @@ export class SplashScreen {
 
   /** Restore the name/join controls after a failed room join. */
   showJoinError(message: string) {
-    this.el.classList.remove("connecting");
+    this.el.classList.remove("connecting", "nameCommitted", "impacting");
+    this.clearImpactFx();
     this.input.disabled = false;
     this.assetLoadEl.classList.remove("joining", "ready");
     this.assetStatusEl.textContent = "server offline";
@@ -239,17 +249,21 @@ export class SplashScreen {
    */
   async playLaunch(onReveal?: () => void): Promise<void> {
     this.spin = normalizeAngle(this.spin); // ease toward facing the camera (yaw 0)
+    this.prepareLaunchTiming();
     this.launchT = 0;
     this.launching = true;
-    this.slamPlayed = false;
+    this.attackPlayed = false;
     this.el.classList.add("launching");
     if (this.embers) this.embers.emitRate = 60;
 
-    await wait(680); // ≈ the slam's impact frame
-    this.flashEl.classList.add("show");
+    await wait(Math.round(this.launchImpactAt * 1000)); // 70% through the splash attack clip
+    this.triggerImpactFx();
     this.shockEl.classList.add("show");
 
-    await wait(150); // let the white-out fully cover the screen
+    await wait(IMPACT_TO_FLASH_MS); // let the floor-hit tremble read on the splash
+    this.flashEl.classList.add("show");
+    await wait(FLASH_COVER_MS); // let the white-out fully cover the screen
+    this.clearImpactFx();
     this.active = false; // the splash scene stops rendering...
     onReveal?.(); // ...and the caller reveals the live game underneath
     this.flashEl.classList.add("fade");
@@ -261,6 +275,7 @@ export class SplashScreen {
   /** Fade the overlay out, restore the HUD, and tear down the scene. */
   dispose() {
     this.el.classList.add("gone");
+    this.clearImpactFx();
     document.body.classList.remove("preGame");
     this.embers?.stop();
     window.setTimeout(() => {
@@ -302,7 +317,7 @@ export class SplashScreen {
   private async loadHero() {
     try {
       const factory = new CharacterFactory(this.scene);
-      await factory.preload({ playerOnly: true });
+      await factory.preload({ playerOnly: true, includeAttack: true });
       if (!this.active) return; // already launched / disposed
       // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
       this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
@@ -321,30 +336,66 @@ export class SplashScreen {
     this.spin += (0 - this.spin) * Math.min(1, dt * 8);
     if (this.hero) {
       this.hero.root.rotation.y = this.spin;
-      // The overhead slam. The rigged glb fires its Attack clip once; a posed
-      // model is driven on its own clock (raise 0–0.15s, strike 0.15–0.33s),
-      // delayed so its impact lands ~0.68s in (when the flash fires).
+      // Splash-only launch attack: use the knight/gorilla attack clip for the
+      // final pre-game motion, without touching gameplay's own entity FSM.
       if (this.heroAnim) {
-        if (!this.slamPlayed) {
-          this.heroAnim.play(AnimState.ATTACK);
-          this.slamPlayed = true;
+        if (!this.attackPlayed) {
+          this.heroAnim.play(AnimState.ATTACK, true);
+          this.attackPlayed = true;
         }
       } else {
-        this.hero.pose?.(AnimState.ATTACK, Math.max(0, t - 0.32));
+        this.hero.pose?.(AnimState.ATTACK, t);
       }
     }
 
-    // Camera punch-in, with an extra jolt + shake around the impact.
-    const impact = Math.max(0, 1 - Math.abs(t - 0.7) / 0.18); // 0..1 bump at the slam
-    let radius = this.baseRadius + (5.4 - this.baseRadius) * easeOut(Math.min(1, t / 1.0));
-    radius -= impact * 0.5;
+    // Camera punch-in, with an aggressive floor-hit tremble around the 70% impact.
+    const impactWidth = Math.max(0.16, this.launchAttackDuration * 0.16);
+    const impact = Math.max(0, 1 - Math.abs(t - this.launchImpactAt) / impactWidth);
+    const impactAge = t - this.launchImpactAt;
+    const tremble =
+      impactAge > 0 && impactAge < 0.48
+        ? Math.pow(1 - impactAge / 0.48, 1.35)
+        : 0;
+    const punchT = Math.min(1, t / Math.max(0.65, this.launchImpactAt + 0.2));
+    let radius = this.baseRadius + (5.15 - this.baseRadius) * easeOut(punchT);
+    radius -= impact * 0.9 + tremble * 0.42;
     this.camera.radius = radius;
-    const shake = impact * 0.045;
-    this.camera.alpha = Math.PI / 2 + Math.sin(t * 90) * shake;
-    this.camera.beta = 1.28 + Math.cos(t * 78) * shake * 0.6;
+    const shake = impact * 0.13 + tremble * 0.075;
+    this.camera.alpha =
+      Math.PI / 2 + (Math.sin(t * 118) + Math.sin(t * 171) * 0.45) * shake;
+    this.camera.beta =
+      1.28 + (Math.cos(t * 103) + Math.sin(t * 149) * 0.38) * shake * 0.62;
+    this.camera.target.y = 1.5 - impact * 0.1 + Math.sin(t * 137) * tremble * 0.055;
 
-    // A burst of embers off the slam.
-    if (this.embers) this.embers.emitRate = 60 + impact * 260;
+    // A burst of embers off the floor hit.
+    if (this.embers) this.embers.emitRate = 60 + impact * 440 + tremble * 220;
+  }
+
+  private prepareLaunchTiming() {
+    const attack = this.hero?.groups[AnimState.ATTACK];
+    const duration = animationDurationSeconds(
+      attack,
+      this.hero?.speeds?.[AnimState.ATTACK] ?? 1,
+    );
+    this.launchAttackDuration = duration ?? FALLBACK_ATTACK_SECONDS;
+    this.launchImpactAt = this.launchAttackDuration * ATTACK_IMPACT_FRACTION;
+  }
+
+  private triggerImpactFx() {
+    this.clearImpactFx();
+    void this.el.offsetWidth; // restart CSS impact animations on retry
+    this.el.classList.add("impacting");
+    document.body.classList.add("splashImpact");
+    this.impactFxTimer = window.setTimeout(() => this.clearImpactFx(), IMPACT_FX_MS);
+  }
+
+  private clearImpactFx() {
+    if (this.impactFxTimer !== undefined) {
+      window.clearTimeout(this.impactFxTimer);
+      this.impactFxTimer = undefined;
+    }
+    this.el.classList.remove("impacting");
+    document.body.classList.remove("splashImpact");
   }
 
   // ---- scene props ---------------------------------------------------------
@@ -665,6 +716,10 @@ export class SplashScreen {
       return;
     }
     if (!this.resolveCreds) return;
+    if (!this.nostr) {
+      this.input.value = name;
+      this.el.classList.add("nameCommitted");
+    }
     this.enterBtn.disabled = true;
     this.input.disabled = true;
     const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
@@ -696,6 +751,12 @@ function wait(ms: number): Promise<void> {
 
 function easeOut(x: number): number {
   return 1 - Math.pow(1 - x, 3);
+}
+
+function animationDurationSeconds(group: AnimationGroup | undefined, speed: number): number | undefined {
+  if (!group) return undefined;
+  const duration = group.getLength() / Math.max(0.001, speed);
+  return Number.isFinite(duration) && duration > 0 ? duration : undefined;
 }
 
 /** Wrap an angle into (-π, π] so we ease toward the nearest "face camera". */

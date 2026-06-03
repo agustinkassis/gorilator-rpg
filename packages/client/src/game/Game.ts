@@ -6,7 +6,8 @@ import {
   AbstractMesh,
   Vector3,
   ParticleSystem,
-  Nullable,
+  MeshBuilder,
+  StandardMaterial,
 } from "@babylonjs/core";
 import {
   Player,
@@ -17,6 +18,7 @@ import {
   Rock,
   Stone,
   Banana,
+  Item,
   House,
   AnimState,
   DamageEvent,
@@ -52,7 +54,18 @@ import { DropAnim, startDrop, updateDrop } from "../fx/dropAnim";
 import { HUD } from "../ui/hud";
 import type { GameDebugStats } from "../ui/debugStats";
 import type { AudioManager } from "../audio/AudioManager";
+import type { AnimationDebugClip } from "../entities/Entity";
+import {
+  FootprintPicker,
+  PickResult,
+  StructureMask,
+  cloneStructureMask,
+  defaultStructureMask,
+  normalizeStructureMask,
+} from "../input/FootprintPicker";
 import { smooth } from "../util/math";
+import { applyTransform, importModel } from "../scene/props";
+import { itemDef, loadItemDefs } from "../items/itemRegistry";
 
 interface ServerView {
   x: number;
@@ -64,11 +77,9 @@ interface ServerView {
   level: number;
   sprinting?: boolean; // players only; enemies leave it undefined → no run-speed boost
   berserkerMs?: number; // players only; ms remaining on the berserker buff (0 = none)
-}
-
-export interface PickResult {
-  id: string;
-  kind: string; // player | enemy | tree | log | stone | potion | banana
+  modelId?: string;
+  displayName?: string;
+  kind?: string;
 }
 
 /** One parabolic leg of a thrown banana's path (the throw, then each bounce). */
@@ -110,6 +121,18 @@ interface ParticleFx {
 const THROW_GROUND_Y = 0.18; // resting height of a banana on the ground
 const CLICK_ASSIST_RADIUS = 1.7; // a click this close to a target (world units) still hits it
 const THROW_RESTITUTION = 0.42; // each bounce keeps this fraction of the last's energy
+const TREE_PICK_RADIUS = 1.65;
+const LOG_PICK_RADIUS = 1.1;
+const STONE_PICK_RADIUS = 1.05;
+const POTION_PICK_RADIUS = 1.05;
+const BANANA_PICK_RADIUS = 1.05;
+
+const PICK_PRIORITY = {
+  character: 80,
+  collectible: 70,
+  resource: 50,
+  structure: 30,
+};
 
 /** Minimal collectible model shape (potion/log/stone/banana all satisfy this). */
 interface CollectibleModel {
@@ -141,20 +164,28 @@ const DUMMY_TINT = new Color3(0.72, 0.3, 0.26);
  */
 export class Game {
   private entities = new Map<string, Entity>();
+  private pendingEnemies = new Set<string>();
+  private pendingEnemyViews = new Map<string, Enemy>();
   private potions = new Map<string, (PotionModel | BerserkerPotionModel) & { bob: number; drop?: DropAnim }>();
   private trees = new Map<string, TreeModel & { hp: number; maxHp: number }>();
   private logs = new Map<string, LogModel & { bob: number; drop?: DropAnim }>();
   private rocks = new Map<string, RockModel & { hp: number; maxHp: number }>();
   private stones = new Map<string, StoneModel & { bob: number; drop?: DropAnim }>();
   private bananas = new Map<string, BananaModel & { spin: number; drop?: DropAnim }>();
-  private houses = new Map<string, { hp: number; maxHp: number; anchor: TransformNode }>();
+  private items = new Map<string, CollectibleModel & { bob: number; drop?: DropAnim; itemId: string; restY: number }>();
+  private pendingItems = new Set<string>();
+  private removedItems = new Set<string>();
+  private houses = new Map<string, { hp: number; maxHp: number; alive: boolean; anchor: TransformNode; visual?: TransformNode; meshes?: AbstractMesh[] }>();
   private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
+  private housePickable = false;
   private healingCircle: SacredCircleFx | null = null;
   private thrown: ThrownBanana[] = [];
   private particleFx: ParticleFx[] = []; // expiring banana trails/puffs
   private collecting: CollectFx[] = []; // items animating into a collector
   private playerIds = new Set<string>(); // entity ids that are players (magnet targets)
   private playerLevels = new Map<string, number>(); // last seen level, to detect level-ups
+  private footprints = new FootprintPicker();
+  private structureMasks = new Map<string, StructureMask>();
   private lightnings: Lightning[] = [];
   private deadElapsed: number | null = null; // seconds the local player has been dead
   private dropsEnabled = false; // gate the loot-pop so the initial world sync doesn't all pop at once
@@ -171,10 +202,12 @@ export class Game {
   ) {
     const canvas = camera.getScene().getEngine().getRenderingCanvas();
     if (canvas) this.damageFx = new DamageFx(canvas);
+    void this.loadStructureMasks();
   }
 
   setLocalId(id: string) {
     this.localId = id;
+    for (const [eid, entity] of this.entities) this.upsertCharacterFootprint(eid, entity);
     // Enable the loot-pop shortly after joining, so the initial burst of existing
     // world items (synced on connect) lands quietly — only items dropped DURING
     // play pop into the air.
@@ -251,11 +284,99 @@ export class Game {
         return wrap(this.potions.get(id)?.root);
       case "banana":
         return wrap(this.bananas.get(id)?.root);
-      case "house":
-        return wrap(this.houses.get(id)?.anchor);
+      case "item":
+        return wrap(this.items.get(id)?.root);
+      case "house": {
+        const h = this.houses.get(id);
+        if (!h) return null;
+        return { root: h.visual ?? h.anchor, meshes: h.meshes ?? h.anchor.getChildMeshes(false) };
+      }
       default:
         return null;
     }
+  }
+
+  /** Normal play picking: active, targetable footprints only. */
+  pickTargetAt = (point: Vector3): PickResult | null =>
+    this.footprints.pick({ x: point.x, z: point.z });
+
+  /** Dev Mode picking: include inactive footprints, but keep the local player click-through. */
+  pickSelectableAt = (point: Vector3): PickResult | null => {
+    const hit = this.footprints.pick({ x: point.x, z: point.z }, { includeInactive: true });
+    return hit?.id === this.localId ? null : hit;
+  };
+
+  structureMaskFor(kind: string): StructureMask {
+    return cloneStructureMask(this.structureMasks.get(kind) ?? defaultStructureMask(kind));
+  }
+
+  setStructureMask(kind: string, mask: StructureMask | null) {
+    const clean = mask ? normalizeStructureMask(mask) : null;
+    if (clean) this.structureMasks.set(kind, clean);
+    else this.structureMasks.delete(kind);
+    if (kind === "house") {
+      for (const [id, h] of this.houses) this.upsertHouseFootprint(id, h.anchor.position.x, h.anchor.position.z, h.alive);
+    }
+  }
+
+  private async loadStructureMasks() {
+    try {
+      const res = await fetch("/structures.json", { cache: "no-store" });
+      if (!res.ok) return;
+      const cfg = (await res.json()) as Record<string, { mask?: unknown }>;
+      for (const [kind, value] of Object.entries(cfg || {})) {
+        const mask = normalizeStructureMask(value?.mask);
+        if (mask) this.structureMasks.set(kind, mask);
+      }
+      for (const [id, h] of this.houses) this.upsertHouseFootprint(id, h.anchor.position.x, h.anchor.position.z, h.alive);
+    } catch {
+      /* no structure mask config yet — defaults cover the current world */
+    }
+  }
+
+  private upsertCharacterFootprint(id: string, entity: Entity) {
+    const kind = (entity.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
+    this.footprints.upsert({
+      id,
+      kind,
+      x: entity.root.position.x,
+      z: entity.root.position.z,
+      shape: { type: "circle", radius: CLICK_ASSIST_RADIUS },
+      priority: PICK_PRIORITY.character,
+      active: id !== this.localId && entity.hp > 0,
+    });
+  }
+
+  private upsertCircleFootprint(
+    kind: string,
+    id: string,
+    x: number,
+    z: number,
+    radius: number,
+    priority: number,
+    active = true,
+  ) {
+    this.footprints.upsert({
+      id,
+      kind,
+      x,
+      z,
+      shape: { type: "circle", radius },
+      priority,
+      active,
+    });
+  }
+
+  private upsertHouseFootprint(id: string, x: number, z: number, active: boolean) {
+    this.footprints.upsert({
+      id,
+      kind: "house",
+      x,
+      z,
+      shape: this.structureMasks.get("house") ?? defaultStructureMask("house"),
+      priority: PICK_PRIORITY.structure,
+      active,
+    });
   }
 
   // ---- player callbacks ----
@@ -300,20 +421,52 @@ export class Game {
 
   // ---- enemy callbacks ----
   addEnemy(e: Enemy, id: string) {
-    if (this.entities.has(id)) return;
+    if (this.entities.has(id) || this.pendingEnemies.has(id)) return;
+    if (e.modelId) {
+      this.pendingEnemies.add(id);
+      this.pendingEnemyViews.set(id, e);
+      void this.factory
+        .spawnCustom(e.modelId)
+        .then((spawned) => {
+          if (!this.pendingEnemies.has(id)) return;
+          this.pendingEnemies.delete(id);
+          const view = this.pendingEnemyViews.get(id) ?? e;
+          this.pendingEnemyViews.delete(id);
+          if (this.entities.has(id)) return;
+          const fallback = () => this.factory.spawn(view.kind === "goblin" ? "goblin" : "enemy", DUMMY_TINT);
+          const entity = new Entity(id, spawned ?? fallback(), false);
+          entity.name = view.displayName || "NPC";
+          entity.corpseFx = view.kind === "goblin";
+          this.register(entity, view, true);
+        })
+        .catch((err) => {
+          if (!this.pendingEnemies.has(id)) return;
+          this.pendingEnemies.delete(id);
+          const view = this.pendingEnemyViews.get(id) ?? e;
+          this.pendingEnemyViews.delete(id);
+          console.warn(`[char] failed to spawn custom enemy ${e.modelId}`, err);
+          const entity = new Entity(id, this.factory.spawn("enemy", DUMMY_TINT), false);
+          entity.name = view.displayName || "NPC";
+          this.register(entity, view, true);
+        });
+      return;
+    }
     const isGoblin = e.kind === "goblin";
     const spawned = this.factory.spawn(isGoblin ? "goblin" : "enemy", DUMMY_TINT);
     const entity = new Entity(id, spawned, false);
-    entity.name = isGoblin ? "Goblin" : "Dummy"; // the nameplate appends " Lv.N"
+    entity.name = e.displayName || (isGoblin ? "Goblin" : e.kind === "npc" ? "NPC" : "Dummy"); // the nameplate appends " Lv.N"
     entity.corpseFx = isGoblin; // dead goblins fade out, then respawn at their home
     this.register(entity, e, true);
   }
 
   changeEnemy(e: Enemy, id: string) {
+    if (this.pendingEnemies.has(id)) this.pendingEnemyViews.set(id, e);
     this.apply(id, e);
   }
 
   removeEnemy(id: string) {
+    this.pendingEnemies.delete(id);
+    this.pendingEnemyViews.delete(id);
     this.unregister(id);
   }
 
@@ -337,12 +490,22 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(0.25) : undefined,
     });
+    this.upsertCircleFootprint("potion", id, p.x, p.z, POTION_PICK_RADIUS, PICK_PRIORITY.collectible);
+  }
+
+  changePotion(p: Potion, id: string) {
+    const pot = this.potions.get(id);
+    if (!pot) return;
+    pot.root.position.x = p.x;
+    pot.root.position.z = p.z;
+    this.upsertCircleFootprint("potion", id, p.x, p.z, POTION_PICK_RADIUS, PICK_PRIORITY.collectible);
   }
 
   removePotion(id: string) {
     const pot = this.potions.get(id);
     if (!pot) return;
     this.potions.delete(id);
+    this.footprints.remove("potion", id);
     this.startCollect(pot); // fly into the collector, shrink + fade
   }
 
@@ -357,6 +520,7 @@ export class Game {
     for (const mesh of model.meshes) this.castAndReceive(mesh); // light shadow
     const tm = { ...model, hp: t.hp, maxHp: t.maxHp };
     this.trees.set(id, tm);
+    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS, PICK_PRIORITY.resource, t.alive && t.hp > 0);
     // HP bar floats above the crown; it only appears once the tree is chopped.
     const anchor = new TransformNode(`treeBar-${id}`, scene);
     anchor.parent = model.root;
@@ -372,6 +536,7 @@ export class Game {
     tm.setAlive(t.alive);
     tm.root.position.x = t.x; // follow dev-mode relocation (HP bar is parented, so it tags along)
     tm.root.position.z = t.z;
+    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS, PICK_PRIORITY.resource, t.alive && t.hp > 0);
   }
 
   removeTree(id: string) {
@@ -380,6 +545,7 @@ export class Game {
     this.hud.remove(id);
     tree.dispose();
     this.trees.delete(id);
+    this.footprints.remove("tree", id);
   }
 
   // ---- log callbacks ----
@@ -397,12 +563,22 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(0.12) : undefined,
     });
+    this.upsertCircleFootprint("log", id, l.x, l.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+  }
+
+  changeLog(l: Log, id: string) {
+    const log = this.logs.get(id);
+    if (!log) return;
+    log.root.position.x = l.x;
+    log.root.position.z = l.z;
+    this.upsertCircleFootprint("log", id, l.x, l.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
   }
 
   removeLog(id: string) {
     const log = this.logs.get(id);
     if (!log) return;
     this.logs.delete(id);
+    this.footprints.remove("log", id);
     this.startCollect(log);
   }
 
@@ -420,6 +596,7 @@ export class Game {
     model.setAlive(rock.alive);
     const rm = { ...model, hp: rock.hp, maxHp: rock.maxHp };
     this.rocks.set(id, rm);
+    this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
     // HP bar floats above the boulder; it only appears once the rock is mined.
     const anchor = new TransformNode(`rockBar-${id}`, scene);
     anchor.parent = model.root;
@@ -435,6 +612,7 @@ export class Game {
     rm.setAlive(rock.alive);
     rm.root.position.x = rock.x; // follow dev-mode relocation (HP bar is parented, tags along)
     rm.root.position.z = rock.z;
+    this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
   }
 
   removeRock(id: string) {
@@ -443,6 +621,7 @@ export class Game {
     this.hud.remove(id);
     r.dispose();
     this.rocks.delete(id);
+    this.footprints.remove("rock", id);
   }
 
   // ---- house callbacks ----
@@ -453,7 +632,11 @@ export class Game {
 
   /** Toggle house model picking. Normal play leaves it off while graphics are debugged. */
   setHousePickable(on: boolean) {
+    this.housePickable = on;
     this.houseModel?.setPickable(on);
+    for (const h of this.houses.values()) {
+      for (const mesh of h.meshes ?? []) mesh.isPickable = on;
+    }
   }
 
   setHealingTowerPosition(x: number, z: number) {
@@ -471,10 +654,17 @@ export class Game {
     // HP and float a bar above the roof. The anchor is a fixed node at the house.
     const anchor = new TransformNode(`houseBar-${id}`, scene);
     anchor.position.set(h.x, 9, h.z);
-    const hm = { hp: h.hp, maxHp: h.maxHp, anchor };
+    const visual = id === "house-0" ? undefined : this.buildDevHouseVisual(id, h);
+    const hm = { hp: h.hp, maxHp: h.maxHp, alive: h.alive, anchor, visual: visual?.root, meshes: visual?.meshes };
     this.houses.set(id, hm);
+    this.upsertHouseFootprint(id, h.x, h.z, h.alive);
     this.hud.addResource(id, anchor, () => hm.hp, () => hm.maxHp, "#d98c54");
-    if (h.alive) this.houseModel?.show(); // a (re)built house re-shows its model after a wipe
+    if (id === "house-0") {
+      this.houseModel?.moveTo(h.x, h.z);
+      if (h.alive) this.houseModel?.show(); // a (re)built house re-shows its model after a wipe
+    } else {
+      visual?.root.setEnabled(h.alive);
+    }
   }
 
   changeHouse(h: House, id: string) {
@@ -482,19 +672,60 @@ export class Game {
     if (!hm) return;
     hm.hp = h.hp;
     hm.maxHp = h.maxHp;
+    hm.alive = h.alive;
     hm.anchor.position.x = h.x;
     hm.anchor.position.z = h.z;
-    if (!h.alive) this.houseModel?.hide(); // collapsed
-    else this.houseModel?.show();
+    this.upsertHouseFootprint(id, h.x, h.z, h.alive);
+    if (id === "house-0") {
+      this.houseModel?.moveTo(h.x, h.z);
+      if (!h.alive) this.houseModel?.hide(); // collapsed
+      else this.houseModel?.show();
+    } else if (hm.visual) {
+      hm.visual.position.x = h.x;
+      hm.visual.position.z = h.z;
+      hm.visual.setEnabled(h.alive);
+    }
   }
 
   removeHouse(id: string) {
     const hm = this.houses.get(id);
     if (!hm) return;
     this.hud.remove(id);
+    for (const mesh of hm.meshes ?? []) this.shadow.removeShadowCaster(mesh);
+    hm.visual?.dispose();
     hm.anchor.dispose();
     this.houses.delete(id);
-    this.houseModel?.hide(); // the house is gone — hide the model
+    this.footprints.remove("house", id);
+    if (id === "house-0") this.houseModel?.hide(); // the home is gone — hide the GLB
+  }
+
+  private buildDevHouseVisual(id: string, h: House): { root: TransformNode; meshes: AbstractMesh[] } {
+    const scene = this.camera.getScene();
+    const root = new TransformNode(`devHouse-${id}`, scene);
+    root.position.set(h.x, 0, h.z);
+    root.metadata = { entityId: id, kind: "house" };
+
+    const wallMat = new StandardMaterial(`devHouseWall-${id}`, scene);
+    wallMat.diffuseColor = new Color3(0.48, 0.36, 0.24);
+    wallMat.specularColor = new Color3(0.08, 0.06, 0.04);
+    const roofMat = new StandardMaterial(`devHouseRoof-${id}`, scene);
+    roofMat.diffuseColor = new Color3(0.34, 0.13, 0.11);
+    roofMat.specularColor = new Color3(0.06, 0.03, 0.02);
+
+    const base = MeshBuilder.CreateBox(`devHouseBase-${id}`, { width: 4.8, height: 2.6, depth: 4 }, scene);
+    base.position.y = 1.3;
+    base.material = wallMat;
+    const roof = MeshBuilder.CreateBox(`devHouseRoof-${id}`, { width: 5.6, height: 0.7, depth: 4.8 }, scene);
+    roof.position.y = 2.95;
+    roof.material = roofMat;
+    const meshes = [base, roof];
+    for (const mesh of meshes) {
+      mesh.parent = root;
+      mesh.metadata = { entityId: id, kind: "house" };
+      mesh.isPickable = this.housePickable;
+      this.castAndReceive(mesh);
+    }
+    return { root, meshes };
   }
 
   // ---- stone callbacks ----
@@ -512,12 +743,22 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(0.12) : undefined,
     });
+    this.upsertCircleFootprint("stone", id, s.x, s.z, STONE_PICK_RADIUS, PICK_PRIORITY.collectible);
+  }
+
+  changeStone(s: Stone, id: string) {
+    const st = this.stones.get(id);
+    if (!st) return;
+    st.root.position.x = s.x;
+    st.root.position.z = s.z;
+    this.upsertCircleFootprint("stone", id, s.x, s.z, STONE_PICK_RADIUS, PICK_PRIORITY.collectible);
   }
 
   removeStone(id: string) {
     const st = this.stones.get(id);
     if (!st) return;
     this.stones.delete(id);
+    this.footprints.remove("stone", id);
     this.startCollect(st);
   }
 
@@ -552,13 +793,120 @@ export class Game {
     // A freshly dropped banana pops into the air; one handed off from a thrown
     // banana already arced through flight, so it just appears where it landed.
     if (!claimed && this.dropsEnabled) ban.drop = startDrop(0.25);
+    this.upsertCircleFootprint("banana", id, b.x, b.z, BANANA_PICK_RADIUS, PICK_PRIORITY.collectible, !claimed);
+  }
+
+  changeBanana(b: Banana, id: string) {
+    const ban = this.bananas.get(id);
+    if (!ban) return;
+    ban.root.position.x = b.x;
+    ban.root.position.z = b.z;
+    this.upsertCircleFootprint("banana", id, b.x, b.z, BANANA_PICK_RADIUS, PICK_PRIORITY.collectible);
   }
 
   removeBanana(id: string) {
     const b = this.bananas.get(id);
     if (!b) return;
     this.bananas.delete(id);
+    this.footprints.remove("banana", id);
     this.startCollect(b);
+  }
+
+  // ---- generic dev-authored item callbacks ----
+  addItem(item: Item, id: string) {
+    if (this.items.has(id) || this.pendingItems.has(id)) return;
+    this.removedItems.delete(id);
+    this.pendingItems.add(id);
+    void this.createItem(item, id);
+  }
+
+  private async createItem(item: Item, id: string) {
+    let model: CollectibleModel;
+    try {
+      model = await this.buildGenericItemModel(item.itemId);
+    } catch (err) {
+      console.warn(`[items] failed to load ${item.itemId}, using fallback`, err);
+      model = this.buildFallbackItemModel(item.itemId);
+    } finally {
+      this.pendingItems.delete(id);
+    }
+    if (this.removedItems.has(id) || this.items.has(id)) {
+      model.dispose();
+      return;
+    }
+    const restY = Math.max(0.12, model.root.position.y || 0.18);
+    model.root.name = `item-${item.itemId}-${id}`;
+    model.root.position.set(item.x, restY, item.z);
+    model.root.metadata = { entityId: id, kind: "item" };
+    for (const mesh of model.meshes) {
+      mesh.metadata = { entityId: id, kind: "item" };
+      mesh.isPickable = false;
+      this.castAndReceive(mesh);
+    }
+    this.items.set(id, {
+      ...model,
+      itemId: item.itemId,
+      restY,
+      bob: Math.random() * Math.PI * 2,
+      drop: this.dropsEnabled ? startDrop(restY) : undefined,
+    });
+    this.upsertCircleFootprint("item", id, item.x, item.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+  }
+
+  private async buildGenericItemModel(itemId: string): Promise<CollectibleModel> {
+    const scene = this.camera.getScene();
+    await loadItemDefs();
+    const def = itemDef(itemId);
+    if (!def?.model) return this.buildFallbackItemModel(itemId);
+    const model = await importModel(scene, def.model);
+    applyTransform(model, def.worldScale ?? 1.2, 0, 0, 0);
+    return model;
+  }
+
+  private buildFallbackItemModel(itemId: string): CollectibleModel {
+    const scene = this.camera.getScene();
+    const root = new TransformNode(`item-${itemId}`, scene);
+    const mat = new StandardMaterial(`itemMat-${itemId}-${Math.random().toString(36).slice(2)}`, scene);
+    mat.diffuseColor = colorFromId(itemId);
+    mat.specularColor = new Color3(0.08, 0.08, 0.08);
+    const body = MeshBuilder.CreateCylinder(
+      `itemToken-${itemId}`,
+      { height: 0.22, diameterTop: 0.65, diameterBottom: 0.65, tessellation: 6 },
+      scene,
+    );
+    body.parent = root;
+    body.position.y = 0.18;
+    body.rotation.y = Math.PI / 6;
+    body.material = mat;
+    return {
+      root,
+      meshes: [body],
+      dispose: () => {
+        body.dispose();
+        mat.dispose();
+        root.dispose();
+      },
+    };
+  }
+
+  changeItem(item: Item, id: string) {
+    const model = this.items.get(id);
+    if (!model) return;
+    model.itemId = item.itemId;
+    model.root.position.x = item.x;
+    model.root.position.z = item.z;
+    this.upsertCircleFootprint("item", id, item.x, item.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+  }
+
+  removeItem(id: string) {
+    const model = this.items.get(id);
+    if (!model) {
+      this.removedItems.add(id);
+      return;
+    }
+    this.items.delete(id);
+    this.footprints.remove("item", id);
+    this.startCollect(model);
   }
 
   /**
@@ -752,12 +1100,31 @@ export class Game {
       rocks: this.rocks.size,
       stones: this.stones.size,
       bananas: this.bananas.size,
+      items: this.items.size,
       houses: this.houses.size,
       thrown: this.thrown.length,
       particleFx: this.particleFx.length,
       collecting: this.collecting.length,
       lightnings: this.lightnings.length,
     };
+  }
+
+  /** Dev tool: clips available on the local player's animation rig. */
+  animationTestClips(): AnimationDebugClip[] {
+    const local = this.localId ? this.entities.get(this.localId) : null;
+    return local?.animationDebugClips() ?? [];
+  }
+
+  /** Dev tool: play a mapped clip only on the local player. */
+  playAnimationTestClip(state: AnimState): boolean {
+    const local = this.localId ? this.entities.get(this.localId) : null;
+    return local?.playAnimationDebugClip(state) ?? false;
+  }
+
+  /** Dev tool: restore the local player to server-driven animation. */
+  clearAnimationTestClip() {
+    const local = this.localId ? this.entities.get(this.localId) : null;
+    local?.clearAnimationDebugClip();
   }
 
   // ---- internals ----
@@ -779,6 +1146,7 @@ export class Game {
 
     if (entity.id === this.localId) this.camera.target.set(view.x, 1, view.z);
     this.refreshPickable(entity);
+    this.upsertCharacterFootprint(entity.id, entity);
   }
 
   /** A character is a click target only while it's a LIVING, non-local entity.
@@ -806,6 +1174,7 @@ export class Game {
     e.level = view.level;
     e.berserkerMs = view.berserkerMs ?? 0;
     this.refreshPickable(e); // dead → click-through, alive → targetable again
+    this.upsertCharacterFootprint(id, e);
   }
 
   /** Seconds until the local player respawns, or null if alive. */
@@ -818,54 +1187,12 @@ export class Game {
     const entity = this.entities.get(id);
     if (!entity) return;
     this.hud.remove(id);
+    const kind = (entity.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
+    this.footprints.remove(kind, id);
     entity.dispose();
     this.entities.delete(id);
     this.audio?.forget(id); // drop footstep/death bookkeeping for this entity
   }
-
-  /** Walk a picked mesh up to its world-object root and return its id + kind. The
-   *  local player is never a target (you can't click yourself). */
-  resolvePick = (mesh: Nullable<AbstractMesh>): PickResult | null => {
-    let node: Nullable<TransformNode> = mesh ?? null;
-    while (node) {
-      const md = node.metadata as { entityId?: string; kind?: string } | null;
-      if (md?.entityId) {
-        if (md.entityId === this.localId) return null; // never your own character
-        const ent = this.entities.get(md.entityId);
-        if (ent && ent.hp <= 0) return null; // dead → not clickable, no special cursor
-        return { id: md.entityId, kind: md.kind ?? "" };
-      }
-      node = node.parent as Nullable<TransformNode>;
-    }
-    return null;
-  };
-
-  /** Click-assist: the nearest clickable thing whose centre is within
-   *  CLICK_ASSIST_RADIUS of a world point — so a click NEAR a small/moving target
-   *  (a character or a collectible) still hits it. Big static props (trees, rocks)
-   *  are excluded so they don't hijack clicks meant for walking; so is the local
-   *  player. Returns the closest, or null. */
-  resolveNearby = (point: Vector3): PickResult | null => {
-    let best: PickResult | null = null;
-    let bestD2 = CLICK_ASSIST_RADIUS * CLICK_ASSIST_RADIUS;
-    const consider = (id: string, kind: string, x: number, z: number) => {
-      const d2 = (x - point.x) ** 2 + (z - point.z) ** 2;
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = { id, kind };
-      }
-    };
-    this.entities.forEach((e, id) => {
-      if (id === this.localId || e.hp <= 0) return; // not self, not a corpse
-      const kind = (e.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
-      consider(id, kind, e.root.position.x, e.root.position.z);
-    });
-    this.logs.forEach((m, id) => consider(id, "log", m.root.position.x, m.root.position.z));
-    this.stones.forEach((m, id) => consider(id, "stone", m.root.position.x, m.root.position.z));
-    this.potions.forEach((m, id) => consider(id, "potion", m.root.position.x, m.root.position.z));
-    this.bananas.forEach((m, id) => consider(id, "banana", m.root.position.x, m.root.position.z));
-    return best;
-  };
 
   /** Strike a lightning bolt at a spot (used for player respawns). */
   showLightning(x: number, z: number) {
@@ -931,6 +1258,15 @@ export class Game {
         ban.root.position.y = 0.25 + Math.sin(ban.spin * 2) * 0.05;
       }
     }
+    for (const item of this.items.values()) {
+      item.root.rotation.y += dt * 0.65;
+      if (item.drop && !item.drop.settled) {
+        item.root.position.y = updateDrop(item.drop, dt);
+      } else {
+        item.bob += dt;
+        item.root.position.y = item.restY + Math.sin(item.bob * 2) * 0.05;
+      }
+    }
 
     // thrown bananas: arc to the landing, then bounce in place (height ∝ speed),
     // puffing dust at each ground hit. A spark trail follows in flight. On settling
@@ -978,6 +1314,7 @@ export class Game {
             const col = b.collectibleId ? this.bananas.get(b.collectibleId) : undefined;
             if (col) {
               col.root.setEnabled(true);
+              this.upsertCircleFootprint("banana", b.collectibleId!, col.root.position.x, col.root.position.z, BANANA_PICK_RADIUS, PICK_PRIORITY.collectible);
               for (const m of b.model.meshes) this.shadow.removeShadowCaster(m);
               b.model.dispose();
               this.thrown.splice(i, 1);
@@ -1077,4 +1414,11 @@ export class Game {
 
     this.hud.update(dt);
   }
+}
+
+function colorFromId(id: string): Color3 {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return Color3.FromHSV(hue, 0.55, 0.95);
 }

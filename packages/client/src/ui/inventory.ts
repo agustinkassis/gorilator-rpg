@@ -1,13 +1,5 @@
 import { InventorySlot, ItemType, INV_SLOTS, INV_COLS } from "@rpg/shared";
-
-/** Emoji icons per item type. */
-const ICONS: Record<string, string> = {
-  log: "🪵",
-  potion: "🧪",
-  stone: "🪨",
-  banana: "🍌",
-  berserker_potion: "⚡",
-};
+import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
 /**
  * Diablo-style grid inventory (DOM). Toggle with the on-screen button or the E
@@ -54,6 +46,22 @@ export class InventoryUI {
         if (type) e.dataTransfer?.setData("text/itemtype", type);
         else e.preventDefault();
       });
+      cell.addEventListener("dragover", (e) => {
+        if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("text/charslot")) {
+          e.preventDefault();
+          cell.style.borderColor = "#f0d27a";
+        }
+      });
+      cell.addEventListener("dragleave", () => {
+        cell.style.borderColor = "";
+      });
+      cell.addEventListener("drop", (e) => {
+        const slotId = e.dataTransfer?.getData("text/charslot");
+        if (!slotId) return;
+        e.preventDefault();
+        cell.style.borderColor = "";
+        window.dispatchEvent(new CustomEvent("characterSheet:unequip", { detail: { slotId } }));
+      });
       cell.addEventListener("contextmenu", (e) => {
         e.preventDefault(); // right-click also consumes (no browser menu)
         this.onUse(i);
@@ -75,12 +83,25 @@ export class InventoryUI {
         this.cursor.style.top = `${e.clientY}px`;
       }
     });
+    window.addEventListener("inventory:consumeHeld", () => {
+      if (this.held === null) return;
+      this.drop();
+      this.render();
+    });
+    window.addEventListener("items:changed", () => this.render());
+    void loadItemDefs().then(() => this.render());
 
     this.render();
   }
 
   toggle() {
-    this.open = !this.open;
+    if (document.body.classList.contains("preGame")) return;
+    this.setOpen(!this.open);
+  }
+
+  private setOpen(open: boolean) {
+    if (this.open === open) return;
+    this.open = open;
     this.panel.style.display = this.open ? "flex" : "none";
     if (!this.open) {
       this.drop();
@@ -109,8 +130,6 @@ export class InventoryUI {
   /** Pickup feedback (local player only): the item flies from the player to the bag
    *  icon, zooming in mid-flight, then shrinks into the bag. */
   private flyToBag(type: ItemType) {
-    const icon = ICONS[type];
-    if (!icon) return;
     const bag = this.btn.getBoundingClientRect();
     const bx = bag.left + bag.width / 2;
     const by = bag.top + bag.height / 2;
@@ -120,10 +139,10 @@ export class InventoryUI {
     const my = (sy + by) / 2 - 70; // arc upward on the way to the bag
 
     const el = document.createElement("div");
-    el.textContent = icon;
     el.style.cssText =
       "position:fixed;left:0;top:0;z-index:80;pointer-events:none;font-size:30px;" +
       "filter:drop-shadow(0 2px 4px rgba(0,0,0,0.6));will-change:transform,opacity;";
+    renderItemIcon(el, type, 30);
     document.body.appendChild(el);
     const at = (x: number, y: number, s: number) => `translate(${x - 15}px,${y - 15}px) scale(${s})`;
     el.animate(
@@ -152,8 +171,9 @@ export class InventoryUI {
     if (this.held === null) {
       if (this.slots[i]?.type) {
         this.held = i;
-        this.cursor.textContent = ICONS[this.slots[i].type] ?? "❓";
+        renderItemIcon(this.cursor, this.slots[i].type, 28);
         this.cursor.style.display = "block";
+        this.emitHeld();
         this.render();
       }
     } else {
@@ -166,6 +186,14 @@ export class InventoryUI {
   private drop() {
     this.held = null;
     this.cursor.style.display = "none";
+    this.emitHeld();
+  }
+
+  private emitHeld() {
+    const type = this.held === null ? "" : (this.slots[this.held]?.type ?? "");
+    if (type) document.body.dataset.invHeldType = type;
+    else delete document.body.dataset.invHeldType;
+    window.dispatchEvent(new CustomEvent("inventory:heldChanged", { detail: { type } }));
   }
 
   private render() {
@@ -177,7 +205,7 @@ export class InventoryUI {
 
       if (slot.type && !lifted) {
         el.classList.add("filled");
-        el.textContent = ICONS[slot.type] ?? "❓";
+        renderItemIcon(el, slot.type, 28);
         if (slot.count > 1) {
           const count = document.createElement("span");
           count.className = "invCount";

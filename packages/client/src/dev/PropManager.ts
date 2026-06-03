@@ -118,6 +118,21 @@ export class PropManager {
     return null;
   }
 
+  /** Cheap Dev Mode ground-footprint pick used instead of ray-picking prop meshes. */
+  pickAt(point: { x: number; z: number }): PlacedProp | null {
+    let best: PlacedProp | null = null;
+    let bestD2 = Infinity;
+    for (const p of this.props.values()) {
+      const radius = Math.max(0.75, p.def.collisionRadius && p.def.collisionRadius > 0 ? p.def.collisionRadius : p.def.scale / 2);
+      const d2 = (point.x - p.def.x) ** 2 + (point.z - p.def.z) ** 2;
+      if (d2 <= radius * radius && d2 < bestD2) {
+        best = p;
+        bestD2 = d2;
+      }
+    }
+    return best;
+  }
+
   /** Persist the (edited) def back to props.json via the dev endpoint. */
   async persistUpdate(id: string): Promise<void> {
     const p = this.props.get(id);

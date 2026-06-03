@@ -13,9 +13,11 @@ import {
   ChatMessage,
   SprintMessage,
   DevGodMessage,
+  DevSpawnMessage,
   DevMoveMessage,
   DevDeleteMessage,
   DevSetMessage,
+  DevGiveItemMessage,
   DevTimeMessage,
   CHAT_MAX_LEN,
   InventorySlot,
@@ -81,8 +83,10 @@ import { loadPropObstacles } from "../systems/props";
 import { loadSpawners, spawnerSystem } from "../systems/spawners";
 import { loadResourceDrops } from "../systems/resourceDrops";
 import { loadStructureLoot } from "../systems/structureDrops";
+import { loadEntityFeatures } from "../systems/entityFeatures";
+import { loadAuthoredNpcs, syncAuthoredNpcs } from "../systems/npcs";
 import { setRockObstacles } from "../systems/pathfinding";
-import { devMove, devDelete, devSet } from "../systems/devEdit";
+import { devSpawn, devMove, devDelete, devSet } from "../systems/devEdit";
 import { perfTracker } from "../systems/perf";
 import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
 import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrSave";
@@ -147,6 +151,7 @@ export class GameRoom extends Room<GameState> {
   onCreate() {
     this.setState(new GameState());
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
+    loadEntityFeatures(() => applyResourceConfig(this.state));
     loadSpawners(); // dev-placed goblin spawners (+ live reload of spawners.json)
     // per-kind tree/rock drop config (+ live reload of resources.json). The callback
     // re-applies the configured HP to every existing tree/rock on each edit.
@@ -159,6 +164,7 @@ export class GameRoom extends Room<GameState> {
     this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
     spawnHouse(this.state);
+    loadAuthoredNpcs(this.state);
 
     this.onMessage("move", (client, msg: MoveMessage) => {
       const p = this.state.players.get(client.sessionId);
@@ -226,6 +232,11 @@ export class GameRoom extends Room<GameState> {
     // Dev Mode world edits — relocate / delete / retune a synced entity. They
     // mutate authoritative state and sync to every client. Runtime-only (the
     // world regenerates each restart); authored props persist via props.json.
+    this.onMessage("dev_spawn", (_client, msg: DevSpawnMessage) => {
+      if (!msg) return;
+      const spawned = devSpawn(this.state, msg.kind, msg.id, msg.x, msg.z);
+      if (spawned?.kind === "rock") this.refreshRockObstacles();
+    });
     this.onMessage("dev_move", (_client, msg: DevMoveMessage) => {
       if (!msg) return;
       devMove(this.state, msg.kind, msg.id, msg.x, msg.z);
@@ -238,6 +249,13 @@ export class GameRoom extends Room<GameState> {
     });
     this.onMessage("dev_set", (_client, msg: DevSetMessage) => {
       if (msg) devSet(this.state, msg.kind, msg.id, msg.field, msg.value);
+    });
+    this.onMessage("dev_give_item", (client, msg: DevGiveItemMessage) => {
+      const inv = this.inventories.get(client.sessionId);
+      const type = String(msg?.type || "").trim();
+      if (!inv || !/^[a-z0-9_-]{1,48}$/.test(type)) return;
+      addItem(inv, type, Math.max(1, Math.min(999, Math.round(Number(msg.amount) || 1))));
+      this.sendInventory(client.sessionId);
     });
     // Pause / set game speed: scales the simulation for everyone (0 = paused).
     this.onMessage("dev_time", (_client, msg: DevTimeMessage) => {
@@ -253,7 +271,8 @@ export class GameRoom extends Room<GameState> {
         this.state.logs.get(msg.id) ??
         this.state.stones.get(msg.id) ??
         this.state.potions.get(msg.id) ??
-        this.state.bananas.get(msg.id);
+        this.state.bananas.get(msg.id) ??
+        this.state.items.get(msg.id);
       if (!target) return;
       p.attackTargetId = "";
       p.pickupTargetId = msg.id;
@@ -607,11 +626,13 @@ export class GameRoom extends Room<GameState> {
     this.state.enemies.clear();
     this.state.potions.clear();
     this.state.bananas.clear();
+    this.state.items.clear();
     resetResources(this.state); // trees/rocks → full + alive; dropped logs/stones cleared
     spawnInitialPotions(this.state);
     spawnInitialBananas(this.state);
     this.refreshRockObstacles(); // rocks are alive again → their collision is back
     spawnHouse(this.state);
+    syncAuthoredNpcs(this.state);
     resetWaves(this.state);
     this.homeStanding = true;
     this.state.restartTimerMs = 0;
@@ -812,6 +833,7 @@ export class GameRoom extends Room<GameState> {
       s.stones.size +
       s.potions.size +
       s.bananas.size +
+      s.items.size +
       s.houses.size
     );
   }

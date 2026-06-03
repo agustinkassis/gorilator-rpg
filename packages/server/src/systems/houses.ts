@@ -5,6 +5,7 @@ import {
   HOUSE_COLLISION_RADIUS,
   HOUSE_CENTER,
 } from "@rpg/shared";
+import { entityHp } from "./entityFeatures";
 
 /** Stand La Crypta, the destructible home objective, at the map centre. */
 export function spawnHouse(state: GameState) {
@@ -13,8 +14,8 @@ export function spawnHouse(state: GameState) {
   h.x = HOUSE_CENTER.x;
   h.z = HOUSE_CENTER.z;
   h.radius = HOUSE_COLLISION_RADIUS;
-  h.hp = HOUSE_HP;
-  h.maxHp = HOUSE_HP;
+  h.maxHp = entityHp("house", h.id, undefined, HOUSE_HP);
+  h.hp = h.maxHp;
   h.alive = true;
   state.houses.set(h.id, h);
 }

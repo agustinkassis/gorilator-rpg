@@ -109,3 +109,74 @@ export interface BenchmarkResult {
   metrics: Record<string, MetricSummary>;
   meta: Record<string, unknown>; // env: app version + GPU/UA (client) or node/host (server)
 }
+
+/** One ranked contributor in a {@link PerfBreakdown} — a thing that costs resources.
+ *  `value` is in `unit` (ms for spans, a raw count for entities/draw calls, etc.);
+ *  the lists are sorted by `value` descending so the heaviest is always first. */
+export interface ResourceItem {
+  label: string;
+  value: number;
+  unit: string; // "ms" | "draws" | "tris" | "count" | "fx" | "MB"
+  note?: string; // optional context (e.g. "240 of 312 entities")
+}
+
+/** A ranked "what's consuming resources right now" snapshot, split four ways:
+ *  - reasons:  attributed COST — the perf spans/tags incl. the scene.render
+ *              sub-phases (render.shadows/particles/animations/…), why time goes
+ *  - render:   the scene render load attributed to each game-element KIND (goblin,
+ *              tree, house…) by triangles + mesh batches — what's heavy to draw
+ *  - elements: renderables — draw calls, particles, the biggest individual meshes
+ *  - entities: game-object counts by category (players, goblins, trees, drops…) */
+export interface PerfBreakdown {
+  reasons: ResourceItem[];
+  render: ResourceItem[];
+  elements: ResourceItem[];
+  entities: ResourceItem[];
+}
+
+/** Render load attributed to one game-element kind (grouped from the active meshes
+ *  by their `metadata.kind`). The triangle total is the best on-the-frame proxy for
+ *  "how expensive is this category to draw"; `draws` ≈ its sub-mesh batches. */
+export interface RenderCategory {
+  kind: string;
+  meshes: number;
+  draws: number;
+  triangles: number;
+}
+
+/** A deep one-shot render snapshot — the "save the details for later" artefact. It
+ *  pairs the engine sub-phase timings (where render time goes) with the per-element
+ *  load (what is heavy to draw) and the heaviest individual meshes, so a lag source
+ *  can be pinned down offline. Written to perf-logs/render-profile-<ts>.json. */
+export interface RenderProfile {
+  t: number;
+  fps: number;
+  frameMs: number | null;
+  gpuMs: number | null;
+  phases: Record<string, number>; // scene.render sub-phase ms (shadows, particles, main…)
+  totals: {
+    drawCalls: number;
+    activeMeshes: number;
+    totalMeshes: number;
+    triangles: number;
+    particleSystems: number;
+    activeParticles: number;
+    materials: number;
+    textures: number;
+  };
+  byCategory: RenderCategory[];
+  topMeshes: { name: string; triangles: number; vertices: number }[];
+  meta: Record<string, unknown>;
+}
+
+/** A captured frame-rate dip: when FPS falls below the slow threshold the tracker
+ *  snapshots WHY (the breakdown at that moment) so a stutter can be diagnosed after
+ *  the fact, even if nobody had the overlay open. `cause` is the single loudest
+ *  reason, for a one-line read. */
+export interface SlowEvent {
+  t: number; // epoch ms
+  fps: number;
+  frameMs: number | null;
+  cause: string;
+  breakdown: PerfBreakdown;
+}

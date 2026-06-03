@@ -9,8 +9,10 @@ export enum AnimState {
   DEAD = "DEAD",
 }
 
-// Item types that can sit in the inventory.
-export type ItemType = "log" | "potion" | "stone" | "banana" | "berserker_potion";
+// Item types that can sit in the inventory. Built-ins keep their special
+// gameplay behavior; dev-authored items use arbitrary safe string ids.
+export type BuiltinItemType = "log" | "potion" | "stone" | "banana" | "berserker_potion";
+export type ItemType = BuiltinItemType | (string & {});
 
 export interface InventorySlot {
   type: ItemType | "";
@@ -116,12 +118,26 @@ export interface DevDeleteMessage {
   id: string;
 }
 
+/** Create a synced world object near a ground point. */
+export interface DevSpawnMessage {
+  kind: string;
+  id: string;
+  x: number;
+  z: number;
+}
+
 /** Set a single editable field on a synced world object (e.g. rock.radius). */
 export interface DevSetMessage {
   kind: string;
   id: string;
   field: string;
   value: number | boolean | string;
+}
+
+/** Grant an inventory item to the sender (dev-authored item testing). */
+export interface DevGiveItemMessage {
+  type: string;
+  amount?: number;
 }
 
 /** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */
@@ -145,9 +161,11 @@ export type ClientMessages = {
   chat: ChatMessage;
   sprint: SprintMessage;
   dev_god: DevGodMessage;
+  dev_spawn: DevSpawnMessage;
   dev_move: DevMoveMessage;
   dev_delete: DevDeleteMessage;
   dev_set: DevSetMessage;
+  dev_give_item: DevGiveItemMessage;
   dev_time: DevTimeMessage;
 };
 

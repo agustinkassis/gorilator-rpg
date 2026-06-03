@@ -13,6 +13,7 @@ import { AnimState } from "@rpg/shared";
 import { AnimGroups, AnimSpeeds } from "./AnimationController";
 import { SpawnedCharacter, HIT_FLASH } from "./types";
 import { buildDummy } from "./models/dummy";
+import { assembleCharacter, type CharacterDef } from "./characterDef";
 
 const MODEL_URL = "/models/knight.glb";
 /** A separate clip (baseball pitch) retargeted onto the character rig for THROW.
@@ -113,15 +114,17 @@ export class CharacterFactory {
   private attackTemplate: AnimationGroup | null = null;
   /** The goblin enemy model (own clips), instanced per goblin. */
   private goblinContainer: AssetContainer | null = null;
+  private customDefs = new Map<string, CharacterDef>();
 
   constructor(private scene: Scene) {}
 
   /**
    * Try to load the real model once. Falls back to built-in models if it's
-   * missing. `playerOnly` skips the throw + goblin clips (the splash hero needs
-   * neither) so a throwaway preview scene loads just the player gorilla.
+   * missing. `playerOnly` skips non-player clips so a throwaway preview scene can
+   * stay light; `includeAttack` still loads the gameplay attack override for the
+   * splash launch pose.
    */
-  async preload(opts: { playerOnly?: boolean } = {}): Promise<void> {
+  async preload(opts: { playerOnly?: boolean; includeAttack?: boolean } = {}): Promise<void> {
     // Probe first so a missing model doesn't spam the console with loader errors.
     // Note: dev servers serve index.html (200, text/html) for missing paths, so a
     // 200 alone isn't enough — require a non-HTML (i.e. real asset) response.
@@ -174,13 +177,49 @@ export class CharacterFactory {
       this.container = null;
     }
 
-    if (opts.playerOnly) return; // splash preview: just the player gorilla
-
-    // The throw (pitch) + attack (swing) clips are separate files retargeted onto
+    // The attack (swing) + throw (pitch) clips are separate files retargeted onto
     // the rig at spawn.
+    if (this.container && (!opts.playerOnly || opts.includeAttack)) await this.loadAttackAnimation();
+    if (opts.playerOnly) return; // splash preview: no throw, goblin, or custom character assets
+
     if (this.container) await this.loadThrowAnimation();
-    if (this.container) await this.loadAttackAnimation();
     await this.loadGoblin();
+    await this.loadCustomDefs();
+  }
+
+  private async loadCustomDefs(): Promise<void> {
+    try {
+      const res = await fetch("/__char/defs", { cache: "no-store" });
+      const defs = res.ok ? ((await res.json()) as CharacterDef[]) : [];
+      this.customDefs.clear();
+      for (const d of defs) this.customDefs.set(d.id, d);
+    } catch {
+      this.customDefs.clear();
+    }
+  }
+
+  async spawnCustom(defId: string): Promise<SpawnedCharacter | null> {
+    if (!this.customDefs.has(defId)) await this.loadCustomDefs();
+    const def = this.customDefs.get(defId);
+    if (!def) return null;
+    const built = await assembleCharacter(this.scene, def);
+    for (const m of built.meshes) m.renderOverlay = false;
+    return {
+      root: built.root,
+      meshes: built.meshes,
+      groups: built.groups,
+      hasAnims: Object.keys(built.groups).length > 0,
+      speeds: {},
+      yawFix: built.yawFix,
+      flashHit: (on, color = HIT_FLASH) => {
+        for (const m of built.meshes) {
+          m.renderOverlay = on;
+          m.overlayColor = color;
+          m.overlayAlpha = on ? 0.6 : 0;
+        }
+      },
+      dispose: built.dispose,
+    };
   }
 
   /** Probe + load a glb into a container, matte its PBR materials, stop its clips. */

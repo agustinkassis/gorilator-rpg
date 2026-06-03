@@ -6,5 +6,57 @@
     "intervalMs": 15000,
     "cap": 2,
     "behavior": {}
+  },
+  {
+    "id": "meshy_ai_timberstone_tow_1780338285634_1780491249381-spawn-mpy2iy86",
+    "ownerId": "meshy_ai_timberstone_tow_1780338285634_1780491249381",
+    "type": "goblin",
+    "x": 17.1,
+    "z": 145.2,
+    "intervalMs": 33000,
+    "cap": 3,
+    "behavior": {
+      "brain": "attacks_home",
+      "stats": {}
+    }
+  },
+  {
+    "id": "meshy_ai_timberstone_tow_1780338285634_1780491200577-spawn-mpy2j7sp",
+    "ownerId": "meshy_ai_timberstone_tow_1780338285634_1780491200577",
+    "type": "goblin",
+    "x": 11.6,
+    "z": 144.6,
+    "intervalMs": 26000,
+    "cap": 3,
+    "behavior": {
+      "brain": "attacks_home",
+      "stats": {}
+    }
+  },
+  {
+    "id": "meshy_ai_timberstone_tow_1780338285634_1780491252333-spawn-mpy2jfgy",
+    "ownerId": "meshy_ai_timberstone_tow_1780338285634_1780491252333",
+    "type": "goblin",
+    "x": 4.9,
+    "z": 147.9,
+    "intervalMs": 17000,
+    "cap": 3,
+    "behavior": {
+      "brain": "attacks_home",
+      "stats": {}
+    }
+  },
+  {
+    "id": "meshy_ai_warrior_s_basti_1780338969291-spawn-mpy2n207",
+    "ownerId": "meshy_ai_warrior_s_basti_1780338969291",
+    "type": "goblin",
+    "x": 27.2,
+    "z": -5.9,
+    "intervalMs": 10000,
+    "cap": 3,
+    "behavior": {
+      "brain": "war_seeker",
+      "stats": {}
+    }
   }
 ]

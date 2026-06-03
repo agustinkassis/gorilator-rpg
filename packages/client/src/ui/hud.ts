@@ -251,9 +251,9 @@ export class HUD {
     this.createBar({
       id: entity.id,
       link: entity.root,
-      // float the name + level over the head, lowered ~35% from the old -176 so they
-      // sit closer to the character (the name is top-aligned, level circle beneath it).
-      linkOffsetY: -114,
+      // Float the name + level over the head, low enough that it reads as attached
+      // to the character after entering the arena.
+      linkOffsetY: -92,
       width: 240,
       height: 124,
       barWidth: BAR_WIDTH,
