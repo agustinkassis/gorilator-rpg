@@ -148,6 +148,20 @@ export class TopBar {
     void b.offsetWidth; // reflow so the animation restarts on a repeat wipe
     b.classList.add("hbbShow");
   }
+
+  /** Big center-screen wave callout when a new horde starts. */
+  flashWave(wave: number) {
+    let b = document.getElementById("waveBanner");
+    if (!b) {
+      b = document.createElement("div");
+      b.id = "waveBanner";
+      document.body.appendChild(b);
+    }
+    b.innerHTML = `<div class="wbTitle">WAVE ${Math.max(1, Math.round(wave))}</div><div class="wbSub">INCOMING</div>`;
+    b.classList.remove("wbShow");
+    void b.offsetWidth;
+    b.classList.add("wbShow");
+  }
 }
 
 let injected = false;
@@ -221,6 +235,30 @@ function injectStyles() {
     #hbBanner .hbbTitle { font: 800 38px system-ui, sans-serif; color: #ff6a4d; text-shadow: 0 2px 8px #000, 0 0 18px rgba(224,60,40,0.7); letter-spacing: 0.02em; }
     #hbBanner .hbbSub { margin-top: 8px; font: 600 16px system-ui, sans-serif; color: #ffe0a8; text-shadow: 0 2px 6px #000; }
     @keyframes hbbFlash { 0% { opacity: 0; transform: translate(-50%,-58%) scale(0.9); } 12% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
+    #waveBanner {
+      position: fixed; inset: 0; z-index: 58; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      pointer-events: none; user-select: none; opacity: 0; font-family: system-ui, sans-serif;
+    }
+    body.preGame #waveBanner { display: none !important; }
+    #waveBanner.wbShow { animation: wbWrap 3.2s ease-out forwards; }
+    #waveBanner .wbTitle {
+      font-size: clamp(56px, 11vw, 132px); line-height: 0.9; font-weight: 900;
+      color: #ffd166; text-shadow: 0 4px 0 #5b2116, 0 8px 22px #000, 0 0 28px rgba(255,95,46,0.9);
+      transform: skewX(-6deg);
+    }
+    #waveBanner .wbSub {
+      margin-top: 12px; text-align: center; font-size: clamp(18px, 3vw, 34px); line-height: 1;
+      font-weight: 900; color: #ff6b35; text-shadow: 0 2px 8px #000, 0 0 18px rgba(255,90,40,0.85);
+    }
+    @keyframes wbWrap {
+      0% { opacity: 0; transform: scale(1.35) translateY(-34px); filter: blur(6px); }
+      14% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+      24% { transform: scale(1.06) translateY(0); }
+      34% { transform: scale(1) translateY(0); }
+      78% { opacity: 1; }
+      100% { opacity: 0; transform: scale(0.92) translateY(28px); filter: blur(2px); }
+    }
   `;
   const style = document.createElement("style");
   style.textContent = css;

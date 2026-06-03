@@ -89,7 +89,12 @@ function matte(mesh: AbstractMesh) {
  */
 export async function assembleCharacter(scene: Scene, def: CharacterDef): Promise<AssembledCharacter> {
   const baseC = await loadContainer(scene, def.baseModel);
-  const inst = baseC.instantiateModelsToScene((n) => n, false);
+  // Use full mesh clones, not InstancedMesh. Instanced meshes share source-mesh
+  // overlay flags, so a hit flash on one imported character would flash every
+  // copy of that same character definition.
+  const inst = baseC.instantiateModelsToScene((n) => n, false, {
+    doNotInstantiate: true,
+  });
   inst.animationGroups.forEach((g) => g.stop()); // ignore any clips baked into the base
 
   const holder = new TransformNode(`char_${def.id}_${Date.now()}`, scene);

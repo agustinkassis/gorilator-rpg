@@ -80,6 +80,7 @@ export class SplashScreen {
   private launchAttackDuration = FALLBACK_ATTACK_SECONDS;
   private launchImpactAt = FALLBACK_ATTACK_SECONDS * ATTACK_IMPACT_FRACTION;
   private impactFxTimer?: number;
+  private launchAttackStart?: () => void;
 
   // DOM handles
   private readonly el: HTMLElement;
@@ -247,12 +248,13 @@ export class SplashScreen {
    * the flash's peak — under cover of the white-out — so the caller can swap the
    * render loop over to the game scene before the flash fades away.
    */
-  async playLaunch(onReveal?: () => void): Promise<void> {
+  async playLaunch(onReveal?: () => void, onAttackStart?: () => void): Promise<void> {
     this.spin = normalizeAngle(this.spin); // ease toward facing the camera (yaw 0)
     this.prepareLaunchTiming();
     this.launchT = 0;
     this.launching = true;
     this.attackPlayed = false;
+    this.launchAttackStart = onAttackStart;
     this.el.classList.add("launching");
     if (this.embers) this.embers.emitRate = 60;
 
@@ -341,9 +343,10 @@ export class SplashScreen {
       if (this.heroAnim) {
         if (!this.attackPlayed) {
           this.heroAnim.play(AnimState.ATTACK, true);
-          this.attackPlayed = true;
+          this.triggerLaunchAttackStart();
         }
       } else {
+        if (!this.attackPlayed) this.triggerLaunchAttackStart();
         this.hero.pose?.(AnimState.ATTACK, t);
       }
     }
@@ -369,6 +372,13 @@ export class SplashScreen {
 
     // A burst of embers off the floor hit.
     if (this.embers) this.embers.emitRate = 60 + impact * 440 + tremble * 220;
+  }
+
+  private triggerLaunchAttackStart() {
+    if (this.attackPlayed) return;
+    this.attackPlayed = true;
+    this.launchAttackStart?.();
+    this.launchAttackStart = undefined;
   }
 
   private prepareLaunchTiming() {

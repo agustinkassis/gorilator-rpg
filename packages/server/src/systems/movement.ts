@@ -42,10 +42,10 @@ export function placeAtFreeSpot(player: Player, x: number, z: number) {
  */
 /** Dev Mode "ghost" free-roam while the game is paused: glide every player
  *  straight toward its target, ignoring obstacles. Driven by REAL (unscaled) time
- *  so the player can roam while the rest of the world is frozen. Moves at 1.08×
- *  normal speed (the original 0.6× ghost speed bumped +80%) so dev navigation is
- *  snappy. Only players who set a fresh target (clicked) actually move. */
-const GHOST_SPEED_MULT = 1.08;
+ *  so the player can roam while the rest of the world is frozen. Moves at 3×
+ *  normal speed so dev navigation covers the map quickly. Only players who set a
+ *  fresh target (clicked) actually move. */
+const GHOST_SPEED_MULT = 3;
 export function ghostMovementSystem(state: GameState, dt: number) {
   const speed = MOVE_SPEED * GHOST_SPEED_MULT;
   state.players.forEach((p) => {

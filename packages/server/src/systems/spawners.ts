@@ -4,6 +4,7 @@ import { GameState, AnimState, Enemy, SpawnRuleConfig } from "@rpg/shared";
 import { makeGoblin } from "./goblins";
 import { configureEnemy } from "./enemyConfig";
 import { devSpawn } from "./devEdit";
+import { propPosition } from "./props";
 
 /**
  * Dev-placed spawners: objects (a house, a prop, …) that spawn goblins on a timer.
@@ -36,8 +37,8 @@ interface LegacySpawner {
   spawnType?: string;
   modelId?: string;
   label?: string;
-  x: number;
-  z: number;
+  x?: number;
+  z?: number;
   intervalMs: number;
   cap: number;
   behavior?: SpawnerBehavior;
@@ -58,7 +59,9 @@ let spawners: SpawnerRule[] = [];
 const timers = new Map<string, number>(); // ms until the next spawn, per spawner id
 let seq = 0;
 
-function normalizeSpawner(raw: LegacySpawner): SpawnerRule {
+function normalizeSpawner(raw: LegacySpawner): SpawnerRule | null {
+  const ownerId = String(raw.ownerId || raw.id || "");
+  if (!ownerId) return null;
   const modelId = raw.modelId || raw.behavior?.modelId;
   const type = String(raw.type || raw.spawnType || (modelId ? "npc" : "goblin"));
   const stats = {
@@ -69,33 +72,40 @@ function normalizeSpawner(raw: LegacySpawner): SpawnerRule {
   };
   return {
     id: String(raw.id || `spawner-${Date.now()}`),
-    ownerId: String(raw.ownerId || raw.id || ""),
+    ownerId,
     type,
     modelId,
     label: raw.label || raw.behavior?.label,
-    x: Number(raw.x) || 0,
-    z: Number(raw.z) || 0,
     intervalMs: Math.max(200, Number(raw.intervalMs) || 4000),
     cap: Math.max(0, Number(raw.cap) || 3),
     brain: raw.behavior?.brain,
-    stats,
+    stats: Object.keys(stats).length ? stats : undefined,
     aggroRadius: raw.behavior?.aggroRadius,
     attackCooldownMs: raw.behavior?.attackCooldownMs,
     houseDamage: raw.behavior?.houseDamage,
   };
 }
 
-function applyFrom(path: string): void {
+function applyFrom(path: string, resetTimers = false): void {
   try {
     if (!existsSync(path)) {
       spawners = [];
       return;
     }
     const arr = JSON.parse(readFileSync(path, "utf8"));
-    spawners = Array.isArray(arr) ? arr.map((s) => normalizeSpawner(s)) : [];
+    spawners = Array.isArray(arr)
+      ? arr.map((s) => normalizeSpawner(s)).filter((s): s is SpawnerRule => Boolean(s))
+      : [];
+    if (resetTimers) {
+      timers.clear();
+      seq = 0;
+    }
     const ids = new Set(spawners.map((s) => s.id));
     for (const id of [...timers.keys()]) if (!ids.has(id)) timers.delete(id); // drop removed
-    for (const s of spawners) if (!timers.has(s.id)) timers.set(s.id, 800); // new → spawn soon
+    for (const s of spawners) {
+      const current = timers.get(s.id);
+      timers.set(s.id, current === undefined ? s.intervalMs : Math.min(current, s.intervalMs));
+    }
     console.log(`[spawners] ${spawners.length} spawner(s) loaded`);
   } catch (e) {
     console.warn("[spawners] failed to read spawners.json", e);
@@ -106,7 +116,7 @@ function applyFrom(path: string): void {
 export function loadSpawners(): void {
   const path = spawnersFile();
   if (!path) return;
-  applyFrom(path);
+  applyFrom(path, true);
   watchFile(path, { interval: 1500 }, () => applyFrom(path)); // fires even when the file first appears
 }
 
@@ -114,23 +124,41 @@ export function loadSpawners(): void {
 export function resetSpawners(): void {
   timers.clear();
   seq = 0;
-  for (const s of spawners) timers.set(s.id, 800);
+  for (const s of spawners) timers.set(s.id, s.intervalMs);
 }
 
-/** Tick every spawner; spawn a goblin at its position when due + under its cap. */
+/** Tick every spawner; spawn at its owner structure when due + under its cap. */
 export function spawnerSystem(state: GameState, dt: number): void {
   if (!spawners.length || dt <= 0) return; // paused (dt 0) freezes spawning
   const dtMs = dt * 1000;
   for (const s of spawners) {
+    const pos = ownerPosition(state, s.ownerId);
+    if (!pos) {
+      timers.set(s.id, s.intervalMs);
+      continue;
+    }
     let t = (timers.get(s.id) ?? s.intervalMs) - dtMs;
     if (t <= 0) {
       let live = 0;
       live = liveCount(state, s);
-      if (live < s.cap) spawnFrom(state, s);
+      if (live < s.cap) spawnFrom(state, s, pos);
       t = s.intervalMs;
     }
     timers.set(s.id, t);
   }
+}
+
+function ownerPosition(state: GameState, ownerId: string): { x: number; z: number } | null {
+  const prop = propPosition(ownerId);
+  if (prop) return prop;
+
+  const house = state.houses.get(ownerId);
+  if (house) return { x: house.x, z: house.z };
+  const tree = state.trees.get(ownerId);
+  if (tree) return { x: tree.x, z: tree.z };
+  const rock = state.rocks.get(ownerId);
+  if (rock) return { x: rock.x, z: rock.z };
+  return null;
 }
 
 function liveCount(state: GameState, s: SpawnerRule): number {
@@ -141,10 +169,10 @@ function liveCount(state: GameState, s: SpawnerRule): number {
   return live;
 }
 
-function spawnFrom(state: GameState, s: SpawnerRule): void {
+function spawnFrom(state: GameState, s: SpawnerRule, pos: { x: number; z: number }): void {
   const type = String(s.type || "goblin");
   if (type === "goblin" && !s.modelId && !s.brain && !s.stats) {
-    const g = makeGoblin(state, s.x, s.z);
+    const g = makeGoblin(state, pos.x, pos.z);
     g.spawnerId = s.id;
     return;
   }
@@ -154,8 +182,8 @@ function spawnFrom(state: GameState, s: SpawnerRule): void {
     configureEnemy(e, {
       kind,
       id: `${s.id}-${seq++}`,
-      x: s.x,
-      z: s.z,
+      x: pos.x,
+      z: pos.z,
       modelId: s.modelId,
       displayName: s.label,
       brain: s.brain,
@@ -168,5 +196,5 @@ function spawnFrom(state: GameState, s: SpawnerRule): void {
     state.enemies.set(e.id, e);
     return;
   }
-  devSpawn(state, type, `${s.id}-${seq++}`, s.x, s.z);
+  devSpawn(state, type, `${s.id}-${seq++}`, pos.x, pos.z);
 }

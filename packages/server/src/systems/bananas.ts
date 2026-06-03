@@ -3,6 +3,8 @@ import {
   Banana,
   Player,
   Enemy,
+  Tree,
+  Rock,
   House,
   AnimState,
   DamageEvent,
@@ -30,10 +32,19 @@ import {
   GOBLIN_RESPAWN_MS,
   WORLD_SIZE,
   TREE_RADIUS,
+  ROCK_COLLISION_SCALE,
 } from "@rpg/shared";
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
-import { applyDamageDrops, dropEntityLoot, dropStructureLoot } from "./resources";
+import {
+  applyDamageDrops,
+  dropEntityLoot,
+  dropStructureLoot,
+  onTreeDamaged,
+  onTreeCut,
+  onRockDamaged,
+  onRockMined,
+} from "./resources";
 import type { EmitKill } from "./combat";
 import { devTuning } from "./devTuning";
 
@@ -52,6 +63,10 @@ interface BananaMeta {
   respawn: number;
   inFlight: InFlight[];
 }
+type StructureHit =
+  | { kind: "tree"; target: Tree }
+  | { kind: "rock"; target: Rock }
+  | { kind: "house"; target: House };
 const meta = new WeakMap<GameState, BananaMeta>();
 function getMeta(state: GameState): BananaMeta {
   let m = meta.get(state);
@@ -363,32 +378,77 @@ function landBanana(
       target.stateTimer = HIT_STATE_MS;
     }
   } else {
-    // No character at the landing — did the throw strike a house? (It clips at the
-    // wall via firstObstacleHit, so the landing sits on the house's edge.)
-    let house: House | undefined;
-    let hbest = Infinity;
-    state.houses.forEach((h) => {
-      if (!h.alive) return;
-      const reach = h.radius + BANANA_HIT_RADIUS;
-      const d2 = (h.x - f.x) ** 2 + (h.z - f.z) ** 2;
-      if (d2 <= reach * reach && d2 < hbest) {
-        hbest = d2;
-        house = h;
-      }
-    });
-    if (house && house.maxHp > 0) {
-      // maxHp 0 ⇒ dev-set indestructible: the throw lands but chips no HP.
-      const damage = Math.max(1, Math.round(Number.isFinite(f.dmg) ? f.dmg : 0));
-      house.hp = Math.max(0, house.hp - damage);
-      emitDamage({ targetId: house.id, amount: damage, crit: false });
-      if (house.hp <= 0) {
-        house.alive = false;
-        dropStructureLoot(state, "house", house.x, house.z); // spill its loot table on collapse
-        state.houses.delete(house.id); // collapsed — stops blocking throws; client hides it
-      }
-    }
+    damageStructureAtLanding(state, f, emitDamage, emitXp);
   }
 
   // a thrown banana drops to the floor as a collectible; a thrown stone shatters
   if (f.item === "banana") spawnBanana(state, f.x, f.z);
+}
+
+function damageStructureAtLanding(
+  state: GameState,
+  f: InFlight,
+  emitDamage: (ev: DamageEvent) => void,
+  emitXp: EmitXp,
+): void {
+  const hit = nearestStructureHit(state, f);
+  if (!hit) return;
+
+  const damage = Math.max(1, Math.round(Number.isFinite(f.dmg) ? f.dmg : 0));
+  hit.target.hp = Math.max(0, hit.target.hp - damage);
+  emitDamage({ targetId: hit.target.id, amount: damage, crit: false });
+
+  if (hit.kind === "tree") {
+    onTreeDamaged(state, hit.target, damage);
+    if (hit.target.hp <= 0) {
+      onTreeCut(state, hit.target);
+      grantThrowKillXp(state, f, hit.target.id, emitXp);
+    }
+    return;
+  }
+
+  if (hit.kind === "rock") {
+    onRockDamaged(state, hit.target, damage);
+    if (hit.target.hp <= 0) {
+      onRockMined(state, hit.target);
+      grantThrowKillXp(state, f, hit.target.id, emitXp);
+    }
+    return;
+  }
+
+  if (hit.target.hp <= 0) {
+    hit.target.alive = false;
+    dropStructureLoot(state, "house", hit.target.x, hit.target.z); // spill its loot table on collapse
+    state.houses.delete(hit.target.id); // collapsed — stops blocking throws; client hides it
+  }
+}
+
+function nearestStructureHit(state: GameState, f: InFlight): StructureHit | undefined {
+  let hit: StructureHit | undefined;
+  let best = Infinity;
+  const consider = (next: StructureHit, radius: number) => {
+    if (!next.target.alive || next.target.hp <= 0 || next.target.maxHp <= 0) return;
+    const reach = radius + BANANA_HIT_RADIUS;
+    const d2 = (next.target.x - f.x) ** 2 + (next.target.z - f.z) ** 2;
+    if (d2 <= reach * reach && d2 < best) {
+      best = d2;
+      hit = next;
+    }
+  };
+
+  // Preserve the old banana behavior: bananas can chip houses. Stones also damage
+  // the synced concrete/resource structures they visibly collide with.
+  state.houses.forEach((target) => consider({ kind: "house", target }, target.radius));
+  if (f.item === "stone") {
+    state.trees.forEach((target) => consider({ kind: "tree", target }, TREE_RADIUS));
+    state.rocks.forEach((target) =>
+      consider({ kind: "rock", target }, Math.max(0.1, target.radius * ROCK_COLLISION_SCALE)),
+    );
+  }
+  return hit;
+}
+
+function grantThrowKillXp(state: GameState, f: InFlight, targetId: string, emitXp: EmitXp): void {
+  const thrower = state.players.get(f.ownerId);
+  if (thrower) grantXp(thrower, killXp(state, targetId), emitXp);
 }

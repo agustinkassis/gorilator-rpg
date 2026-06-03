@@ -1026,14 +1026,13 @@ export class Game {
         ps: makeBloodBurst(this.camera.getScene(), e.root.position.x, 1.2, e.root.position.z, strength),
         ttl: 0.7,
       });
-      // the local player hurts (centered grunt + red flash + shake); everyone else
-      // gets a spatial impact thud. The death sting is fired separately on the
+      this.audio?.bodyHit({ x: e.root.position.x, z: e.root.position.z });
+      // the local player also gets centered hurt feedback + red flash + shake.
+      // The death sting is fired separately on the
       // DEAD state transition (see update()).
       if (e.id === this.localId) {
         this.audio?.hurt();
         this.damageFx?.onHit(ev.amount / Math.max(1, e.maxHp)); // ∝ fraction of max HP lost
-      } else {
-        this.audio?.hit({ x: e.root.position.x, z: e.root.position.z });
       }
       return;
     }
@@ -1041,13 +1040,15 @@ export class Game {
     if (tree) {
       this.hud.showDamage(tree.root, ev.targetId, ev.amount, ev.crit);
       tree.shake();
-      this.audio?.chop({ x: tree.root.position.x, z: tree.root.position.z });
+      this.audio?.bodyHit({ x: tree.root.position.x, z: tree.root.position.z });
+      this.audio?.treeChop({ x: tree.root.position.x, z: tree.root.position.z });
       return;
     }
     const rock = this.rocks.get(ev.targetId);
     if (rock) {
       this.hud.showDamage(rock.root, ev.targetId, ev.amount, ev.crit);
       rock.shake();
+      this.audio?.bodyHit({ x: rock.root.position.x, z: rock.root.position.z });
       this.audio?.mine({ x: rock.root.position.x, z: rock.root.position.z });
       return;
     }
@@ -1055,6 +1056,7 @@ export class Game {
     if (house) {
       this.hud.showDamage(house.anchor, ev.targetId, ev.amount, ev.crit);
       if (ev.targetId === "house-0") this.onCryptaDamage(ev.amount, house.anchor);
+      this.audio?.bodyHit({ x: house.anchor.position.x, z: house.anchor.position.z });
       this.audio?.mine({ x: house.anchor.position.x, z: house.anchor.position.z });
     }
   }
@@ -1191,6 +1193,8 @@ export class Game {
   private apply(id: string, view: ServerView) {
     const e = this.entities.get(id);
     if (!e) return;
+    const nextBerserkerMs = view.berserkerMs ?? 0;
+    const localBerserkerStarted = id === this.localId && e.berserkerMs <= 0 && nextBerserkerMs > 0;
     if (id === this.localId) {
       // track the local player's death window for the respawn countdown
       if (view.state === AnimState.DEAD) {
@@ -1201,7 +1205,8 @@ export class Game {
     }
     e.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
     e.level = view.level;
-    e.berserkerMs = view.berserkerMs ?? 0;
+    e.berserkerMs = nextBerserkerMs;
+    if (localBerserkerStarted) this.audio?.berserker();
     this.refreshPickable(e); // dead → click-through, alive → targetable again
     this.upsertCharacterFootprint(id, e);
   }
@@ -1239,7 +1244,8 @@ export class Game {
       const px = entity.root.position.x;
       const pz = entity.root.position.z;
       const pos = { x: px, z: pz };
-      audio.entityState(entity.id, entity.animState, pos); // death sting on the DEAD transition
+      const kind = (entity.root.metadata as { kind?: string } | null)?.kind;
+      audio.entityState(entity.id, entity.animState, pos, { gorillaAttack: kind === "player" });
       // footsteps: the local player always; others only when near — so a distant
       // goblin pack doesn't clatter (and we don't build inaudible voices for them).
       const near =

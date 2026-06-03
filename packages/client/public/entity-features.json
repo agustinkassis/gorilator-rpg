@@ -82,5 +82,22 @@
       "drops": []
     }
   },
-  "instances": {}
+  "instances": {
+    "goblin_house_1780338969291-spawn-mpy2n207-32": {
+      "drops": [
+        {
+          "item": "potion",
+          "quantity": 1,
+          "probability": 0.07,
+          "trigger": "kill"
+        },
+        {
+          "item": "berserker_potion",
+          "quantity": 1,
+          "probability": 0.03,
+          "trigger": "kill"
+        }
+      ]
+    }
+  }
 }

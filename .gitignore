@@ -21,6 +21,7 @@ perf-logs/
 
 # User-imported 3D models (large binaries; imported locally via Dev Mode)
 packages/client/public/models/*.glb
+!packages/client/public/models/goblin_house.glb
 packages/client/public/models/characters/
 
 # Local agent/tooling state (not for the public repo)

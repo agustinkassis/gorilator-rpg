@@ -575,6 +575,10 @@
       body.preGame #charImportBtn,
       body.preGame #charImporterPanel { display: none !important; }
 
+      body.devMode #healthGlobe,
+      body.devMode #xpBar,
+      body.devMode #xpLevelUp { display: none !important; }
+
       /* Tiny always-on version tag, pinned to the bottom-right corner — above the
          splash + HUD, and never intercepts clicks. */
       #versionTag {
@@ -2157,7 +2161,7 @@
       <div id="splashFlash"></div>
     </div>
     <div id="status">connecting…</div>
-    <!-- Tiny build version, always visible in the bottom-right (set in main.ts). -->
+    <!-- Tiny footer labels are filled by vite.config.ts. -->
     <div id="versionTag"></div>
     <!-- Current linked worktree, always visible in the lower-left during local dev. -->
     <div id="worktreePanel" hidden></div>

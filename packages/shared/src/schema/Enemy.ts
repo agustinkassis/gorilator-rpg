@@ -26,6 +26,7 @@ export class Enemy extends Schema {
   @type("number") maxHp = DUMMY_MAX_HP;
   @type("number") level = 1; // shown on the name label; sets the XP it drops
   @type("number") xp = 0;
+  @type("number") waveNumber = 0; // 0 = not spawned by a tower-defense wave
   @type("string") state: AnimState = AnimState.IDLE;
 
   // combat stats

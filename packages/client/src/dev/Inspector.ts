@@ -1,6 +1,7 @@
 /**
  * The Dev Mode properties panel. Given a title + field descriptors it renders a
- * compact grouped form; editable fields fire `onChange` live as you drag/type.
+ * compact grouped form. Most editable fields fire live; number fields commit on
+ * Enter/blur so multi-digit direct typing does not get interrupted by re-renders.
  * DevMode decides which fields a selection exposes and what each change does.
  */
 
@@ -226,7 +227,26 @@ export class Inspector {
     input.step = String(f.step ?? 1);
     input.value = String(f.value);
     input.style.cssText = controlCss() + "text-align:right;";
-    input.oninput = () => f.onChange(+input.value);
+    const commit = () => {
+      const value = input.valueAsNumber;
+      if (!Number.isFinite(value)) {
+        input.value = String(f.value);
+        return;
+      }
+      const min = f.min ?? -Infinity;
+      const max = f.max ?? Infinity;
+      const next = Math.max(min, Math.min(max, value));
+      input.value = trim(next);
+      f.onChange(next);
+    };
+    input.onchange = commit;
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit();
+        input.blur();
+      }
+    };
     row.appendChild(input);
     return row;
   }

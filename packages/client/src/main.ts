@@ -144,7 +144,7 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
 }
 
 function maybePromptForWorktreeName(meta: Partial<WorktreeMeta>) {
-  if (!worktreeEl || !meta.root || meta.name || meta.isMain) return;
+  if (!worktreeEl || !meta.root || !meta.isLinked || meta.name || meta.isMain) return;
   const key = `gorilator.worktreeTag.prompted:${meta.root}`;
   try {
     if (window.sessionStorage.getItem(key)) return;
@@ -1113,6 +1113,7 @@ const debugStats = new DebugStats(engine, scene);
 // (the splash "ENTER" click), so it's safe to build up-front.
 const audio = new AudioManager();
 game.setAudio(audio);
+void audio.ready.then(() => audio.startSplashMusic());
 const net = new NetworkClient();
 
 // Performance tracking: Babylon probes feed the tracker each frame (FPS, draw
@@ -1196,6 +1197,8 @@ const splash = new SplashScreen(engine);
 // homeMaxHp is kept so the home bar can still read "fallen" after the house is
 // removed from state on collapse.
 let homeMaxHp = 0;
+let lastAnnouncedWave: number | null = null;
+let activeMusicWave: number | null = null;
 
 interface AssetTask {
   label: string;
@@ -1296,6 +1299,7 @@ async function start() {
     onConnected: (id) => {
       game.setLocalId(id);
       statusEl.textContent = "connected";
+      lastAnnouncedWave = null;
     },
     onPlayerAdd: (p, id) => {
       game.addPlayer(p, id);
@@ -1393,7 +1397,8 @@ async function start() {
 
     // Cinematic hand-off: the splash hero snaps into its attack animation, the camera
     // punches in, and a white flash masks the cut into the live game world.
-    await splash.playLaunch();
+    await splash.playLaunch(undefined, () => audio.splashRoar());
+    audio.stopSplashMusic();
     splash.dispose();
 
     // The world is live: show the music/mute widget and start the ambient bed.
@@ -1440,6 +1445,7 @@ if (import.meta.env.DEV) {
     clearClip: () => game.clearAnimationTestClip(),
   });
   devMode?.onVisibilityChange((on) => {
+    document.body.classList.toggle("devMode", on);
     characterImporter.setVisible(on);
     propImporter.setVisible(on);
     animationTester.setVisible(on);
@@ -1518,7 +1524,23 @@ engine.runRenderLoop(() => {
     } else if (homeMaxHp > 0) {
       topBar.setHouse(0, homeMaxHp, false);
     }
-    topBar.setWave(st.waveNumber, st.waveTimerMs);
+    const wave = st.waveNumber;
+    topBar.setWave(wave, st.waveTimerMs);
+    if (wave > 0 && st.waveActive && activeMusicWave !== wave) {
+      audio.startWaveMusic();
+      activeMusicWave = wave;
+    } else if (activeMusicWave !== null && (!st.waveActive || wave < activeMusicWave)) {
+      audio.startMusic(true); // restart the normal theme from the beginning
+      activeMusicWave = null;
+    }
+    if (lastAnnouncedWave === null) {
+      lastAnnouncedWave = wave;
+    } else if (wave > lastAnnouncedWave) {
+      topBar.flashWave(wave);
+      lastAnnouncedWave = wave;
+    } else if (wave < lastAnnouncedWave) {
+      lastAnnouncedWave = wave;
+    }
   }
 
   // Realm-over intermission (La Crypta fell): the whole-screen "next realm in N"

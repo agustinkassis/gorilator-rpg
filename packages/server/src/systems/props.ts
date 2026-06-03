@@ -11,12 +11,23 @@ const CANDIDATES = [
 ];
 
 interface PropDef {
+  id?: string;
   name: string;
   x: number;
   z: number;
   model?: string; // path under public/, e.g. "/models/house.glb"
   scale?: number; // uniform model scale
   collisionRadius?: number; // present + > 0 ⇒ concrete (blocks movement / bananas)
+}
+
+const propPositions = new Map<string, { x: number; z: number }>();
+
+function propKeys(p: PropDef): string[] {
+  return [p.id, p.model].filter((key): key is string => Boolean(key));
+}
+
+export function propPosition(id: string): { x: number; z: number } | null {
+  return propPositions.get(id) ?? null;
 }
 
 function manifestPath(): string | null {
@@ -60,6 +71,11 @@ function applyFrom(path: string): void {
   try {
     const props: PropDef[] = JSON.parse(readFileSync(path, "utf8"));
     const dir = dirname(path); // .../client/public — models live under here
+    propPositions.clear();
+    for (const p of props) {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) continue;
+      for (const key of propKeys(p)) propPositions.set(key, { x: p.x, z: p.z });
+    }
     const circles = props
       .filter((p) => typeof p.collisionRadius === "number" && p.collisionRadius > 0)
       .map((p) => {

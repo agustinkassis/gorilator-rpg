@@ -1,8 +1,8 @@
 import { ArcRotateCamera, Camera, Scene, Vector3 } from "@babylonjs/core";
 
 /** Half-height of the orthographic view, in world units. Smaller = more zoomed in.
- *  6.3 ≈ 8.5 / 1.35 — i.e. 35% more zoomed-in than the previous 8.5. */
-const ORTHO_HALF_HEIGHT = 6.3;
+ *  7.56 = 6.3 × 1.2, so gameplay is 20% farther out than before. */
+const ORTHO_HALF_HEIGHT = 7.56;
 
 /** Dev Mode can pull the camera back up to this many × the normal play zoom. */
 export const MAX_DEV_ZOOM = 6;
