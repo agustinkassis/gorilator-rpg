@@ -768,9 +768,11 @@ function renderWorktreePanel() {
     pendingSection.append(createWorktreeNode("div", "wtEmpty", `No pending commits into ${targetBranch}.`));
   } else {
     pendingCommits.forEach((commit, index) => {
+      const hasConflict = Boolean(commit.conflict);
       const previewed = worktreeMergePreviewIndex === index;
       const hovered = worktreeMergePreviewIndex === index;
-      const row = createWorktreeNode("div", previewed ? "wtCommitRow wtPendingRow mergePreview" : "wtCommitRow wtPendingRow");
+      const rowClass = `${previewed ? "wtCommitRow wtPendingRow mergePreview" : "wtCommitRow wtPendingRow"}${hasConflict ? " conflict" : ""}`;
+      const row = createWorktreeNode("div", rowClass);
       row.dataset.mergeIndex = String(index);
       row.classList.toggle("mergeHover", hovered);
       row.append(
@@ -781,20 +783,23 @@ function renderWorktreePanel() {
 
       const mergeBtn = createWorktreeNode(
         "button",
-        hovered ? "wtMergeBtn preview" : "wtMergeBtn",
-        worktreeMergeBusy ? "Merging" : "Merge into target",
+        hasConflict ? "wtMergeBtn conflict" : hovered ? "wtMergeBtn preview" : "wtMergeBtn",
+        hasConflict ? "Conflict" : worktreeMergeBusy ? "Merging" : "Merge into target",
       );
       mergeBtn.type = "button";
-      mergeBtn.title = `Merge ${commit.hash} into ${targetBranch}`;
-      mergeBtn.disabled = worktreeMergeBusy;
+      mergeBtn.title = hasConflict ? (commit.conflictReason ?? `Cannot merge ${commit.hash} into ${targetBranch}`) : `Merge ${commit.hash} into ${targetBranch}`;
+      mergeBtn.disabled = worktreeMergeBusy || hasConflict;
       mergeBtn.addEventListener("mouseenter", () => {
+        if (hasConflict) return;
         setWorktreeMergePreview(index);
       });
       mergeBtn.addEventListener("mouseleave", () => {
+        if (hasConflict) return;
         setWorktreeMergePreview(null);
       });
       mergeBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        if (hasConflict) return;
         worktreeMergeBusy = true;
         worktreeMergeMessage = `Merging ${commit.hash} into ${targetBranch}...`;
         renderWorktreePanel();

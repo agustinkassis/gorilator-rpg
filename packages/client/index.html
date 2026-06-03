@@ -941,6 +941,9 @@
       #worktreePanel .wtIncomingRow.mergePreview {
         background: rgba(255, 236, 190, 0.18);
       }
+      #worktreePanel .wtPendingRow.conflict {
+        background: rgba(255, 106, 77, 0.055);
+      }
       #worktreePanel .wtChangeStatus,
       #worktreePanel .wtCommitHash {
         color: #ffd479;
@@ -1002,6 +1005,13 @@
       #worktreePanel .wtMergeBtn:disabled {
         opacity: 0.55;
         cursor: progress;
+      }
+      #worktreePanel .wtMergeBtn.conflict:disabled {
+        border-color: rgba(255, 106, 77, 0.38);
+        background: rgba(255, 106, 77, 0.11);
+        color: #ffad7a;
+        cursor: not-allowed;
+        opacity: 1;
       }
       #worktreePanel .wtMergeLabel {
         box-sizing: border-box;

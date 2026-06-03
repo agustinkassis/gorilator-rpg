@@ -37,6 +37,10 @@ function captureGit(args: string[], cwd?: string, trim = true): string | null {
   }
 }
 
+function execGit(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
+}
+
 interface WorktreeCommit {
   hash: string;
   subject: string;
@@ -262,17 +266,26 @@ function pendingGitCommits(root: string, targetBranch: string, current: string):
     "--cherry-pick",
     "--right-only",
     "--max-count=20",
-    "--pretty=format:%h%x1f%s%x1f%cr",
+    "--pretty=format:%H%x1f%h%x1f%s%x1f%cr",
     `${base}...HEAD`,
   ], root);
   if (!raw) return [];
-  return raw
+  const commits = raw
     .split("\n")
     .map((line) => {
-      const [hash = "", subject = "", age = ""] = line.split("\x1f");
-      return { hash, subject, age };
+      const [ref = "", hash = "", subject = "", age = ""] = line.split("\x1f");
+      return { ref, hash, subject, age };
     })
-    .filter((commit) => commit.hash && commit.subject);
+    .filter((commit) => commit.ref && commit.hash && commit.subject);
+  const conflictReasons = pendingTargetConflictReasons(
+    root,
+    targetBranch,
+    commits.map((commit) => commit.ref),
+  );
+  return commits.map(({ ref, hash, subject, age }) => {
+    const conflictReason = conflictReasons.get(ref) ?? "";
+    return { hash, subject, age, conflict: Boolean(conflictReason), conflictReason };
+  });
 }
 
 function mergeConflictReason(root: string, commit: string): string {
@@ -447,7 +460,7 @@ function ensureLocalTargetBranch(root: string, targetBranch: string) {
   if (gitCommitRef(root, targetBranch)) return;
   const remoteRef = `origin/${targetBranch}`;
   if (!gitCommitRef(root, remoteRef)) throw new Error(`Target branch ${targetBranch} was not found`);
-  execFileSync("git", ["branch", targetBranch, remoteRef], { cwd: root, encoding: "utf8" });
+  execGit(["branch", targetBranch, remoteRef], root);
 }
 
 function worktreePathForBranch(root: string, branch: string): string {
@@ -479,13 +492,13 @@ function targetMergeWorktree(root: string, targetBranch: string): TargetMergeWor
   const parent = resolve(root, ".gorilator");
   mkdirSync(parent, { recursive: true });
   const tmp = mkdtempSync(resolve(parent, "merge-"));
-  execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
+  execGit(["worktree", "add", "--quiet", tmp, targetBranch], root);
   return { cwd: tmp, temporary: true, checkedOutTarget: false };
 }
 
 function removeTemporaryWorktree(root: string, cwd: string) {
   try {
-    execFileSync("git", ["worktree", "remove", "--force", cwd], { cwd: root, encoding: "utf8" });
+    execGit(["worktree", "remove", "--force", cwd], root);
   } catch {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -496,36 +509,104 @@ function gitErrorMessage(err: unknown): string {
   return out || (err instanceof Error ? err.message : String(err));
 }
 
+function conflictSummaryFromMessage(message: string): string {
+  const paths = Array.from(
+    new Set(
+      message
+        .split("\n")
+        .map((line) => line.match(/CONFLICT \([^)]+\): .* in (.+)$/)?.[1] ?? line.match(/^[0-9]{6} [0-9a-f]{40} [123]\t(.+)$/)?.[1])
+        .filter((path): path is string => Boolean(path)),
+    ),
+  );
+  if (paths.length) {
+    const shown = paths.slice(0, 3).join(", ");
+    return paths.length > 3 ? `Conflicts: ${shown}, ...` : `Conflicts: ${shown}`;
+  }
+  return message.split("\n").find(Boolean)?.trim() || "Conflict";
+}
+
 function latestStashSha(cwd: string): string {
   return captureGit(["rev-parse", "-q", "--verify", "stash@{0}"], cwd) ?? "";
+}
+
+function targetTrackedSnapshot(cwd: string): string {
+  return captureGit(["stash", "create", "gorilator preflight target merge"], cwd) ?? "";
+}
+
+function targetUntrackedPaths(cwd: string): string[] {
+  const raw = captureGit(["status", "--porcelain=v1", "--untracked-files=all"], cwd, false);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .filter((line) => line.startsWith("?? "))
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+}
+
+function pendingTargetConflictReasons(root: string, targetBranch: string, sources: string[]): Map<string, string> {
+  const reasons = new Map<string, string>();
+  if (!sources.length) return reasons;
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) {
+    for (const source of sources) reasons.set(source, `Target branch ${targetBranch} was not found`);
+    return reasons;
+  }
+  const existingTarget = worktreePathForBranch(root, targetBranch);
+  const trackedSnapshot = existingTarget ? targetTrackedSnapshot(existingTarget) : "";
+  const untrackedPaths = existingTarget ? targetUntrackedPaths(existingTarget) : [];
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-preflight-"));
+  try {
+    execGit(["worktree", "add", "--quiet", "--detach", tmp, base], root);
+    for (const source of sources) {
+      try {
+        execGit(["reset", "--hard", base], tmp);
+        execGit(["clean", "-fd"], tmp);
+        cherryPickCommit(tmp, source);
+        for (const path of untrackedPaths) {
+          if (existsSync(resolve(tmp, path))) {
+            reasons.set(source, `Untracked target file would be overwritten: ${path}`);
+            break;
+          }
+        }
+        if (!reasons.has(source) && trackedSnapshot) execGit(["stash", "apply", "--index", trackedSnapshot], tmp);
+      } catch (err) {
+        reasons.set(source, conflictSummaryFromMessage(gitErrorMessage(err)));
+      }
+    }
+  } catch (err) {
+    const reason = conflictSummaryFromMessage(gitErrorMessage(err));
+    for (const source of sources) reasons.set(source, reason);
+  } finally {
+    removeTemporaryWorktree(root, tmp);
+  }
+  return reasons;
 }
 
 function stashTargetChanges(cwd: string): string {
   const status = execFileSync("git", ["status", "--porcelain=v1"], { cwd, encoding: "utf8" }).trim();
   if (!status) return "";
   const before = latestStashSha(cwd);
-  execFileSync("git", ["stash", "push", "--include-untracked", "-m", "gorilator autostash before target merge"], {
-    cwd,
-    encoding: "utf8",
-  });
+  execGit(["stash", "push", "--include-untracked", "-m", "gorilator autostash before target merge"], cwd);
   const after = latestStashSha(cwd);
   return after && after !== before ? after : "";
 }
 
 function dropAutostash(cwd: string, stashSha: string) {
   if (!stashSha || latestStashSha(cwd) !== stashSha) return;
-  execFileSync("git", ["stash", "drop", "stash@{0}"], { cwd, encoding: "utf8" });
+  execGit(["stash", "drop", "stash@{0}"], cwd);
 }
 
 function restoreAutostash(cwd: string, stashSha: string) {
   if (!stashSha) return;
-  execFileSync("git", ["stash", "apply", "--index", stashSha], { cwd, encoding: "utf8" });
+  execGit(["stash", "apply", "--index", stashSha], cwd);
   dropAutostash(cwd, stashSha);
 }
 
 function abortCherryPick(cwd: string) {
   try {
-    execFileSync("git", ["cherry-pick", "--abort"], { cwd, encoding: "utf8" });
+    execGit(["cherry-pick", "--abort"], cwd);
   } catch {
     // The pick may not have started.
   }
@@ -533,7 +614,7 @@ function abortCherryPick(cwd: string) {
 
 function cherryPickCommit(cwd: string, source: string) {
   try {
-    execFileSync("git", ["cherry-pick", source], { cwd, encoding: "utf8" });
+    execGit(["cherry-pick", source], cwd);
   } catch (err) {
     abortCherryPick(cwd);
     throw err;
@@ -545,9 +626,9 @@ function preflightTargetAutostash(root: string, targetBranch: string, source: st
   mkdirSync(parent, { recursive: true });
   const tmp = mkdtempSync(resolve(parent, "merge-check-"));
   try {
-    execFileSync("git", ["worktree", "add", "--detach", tmp, targetBranch], { cwd: root, encoding: "utf8" });
+    execGit(["worktree", "add", "--quiet", "--detach", tmp, targetBranch], root);
     cherryPickCommit(tmp, source);
-    if (stashSha) execFileSync("git", ["stash", "apply", "--index", stashSha], { cwd: tmp, encoding: "utf8" });
+    if (stashSha) execGit(["stash", "apply", "--index", stashSha], tmp);
   } catch (err) {
     throw new Error(
       `Local changes in the checked-out ${targetBranch} worktree would conflict with ${source.slice(0, 7)}. ${gitErrorMessage(err)}`,
