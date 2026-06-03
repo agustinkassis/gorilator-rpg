@@ -4,12 +4,14 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   unlinkSync,
   statSync,
 } from "fs";
-import { basename, resolve } from "path";
+import { basename, relative, resolve } from "path";
 import { execFileSync } from "child_process";
 
 /** The app version shown in-game (the tiny footer tag), read from this package's
@@ -24,12 +26,29 @@ function appVersion(): string {
   }
 }
 
-function captureGit(args: string[]): string | null {
+function captureGit(args: string[], cwd?: string, trim = true): string | null {
   try {
-    return execFileSync("git", args, { encoding: "utf8" }).trim() || null;
+    const raw = execFileSync("git", args, { cwd, encoding: "utf8" });
+    const text = trim ? raw.trim() : raw.replace(/\r?\n$/, "");
+    return text || null;
   } catch {
     return null;
   }
+}
+
+interface WorktreeCommit {
+  hash: string;
+  subject: string;
+  age: string;
+}
+
+interface WorktreeChange {
+  status: string;
+  path: string;
+  label: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
 }
 
 interface WorktreeInfo {
@@ -39,6 +58,21 @@ interface WorktreeInfo {
   defaultLabel: string;
   label: string;
   fullLabel: string;
+  branch: string;
+  targetBranch: string;
+  pendingBase: string;
+  branches: string[];
+  isMain: boolean;
+  isLinked: boolean;
+  pendingCommits: WorktreeCommit[];
+  commits: WorktreeCommit[];
+  changes: WorktreeChange[];
+}
+
+interface WorktreeFilePayload {
+  path: string;
+  content: string;
+  baseContent: string;
 }
 
 const emptyWorktreeInfo = (): WorktreeInfo => ({
@@ -48,9 +82,19 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   defaultLabel: "",
   label: "",
   fullLabel: "",
+  branch: "",
+  targetBranch: "main",
+  pendingBase: "",
+  branches: [],
+  isMain: false,
+  isLinked: false,
+  pendingCommits: [],
+  commits: [],
+  changes: [],
 });
 
 const worktreeNamePathFor = (root: string) => resolve(root, ".gorilator/worktree-name");
+const workflowSettingsPathFor = (root: string) => resolve(root, "codex-workflow.json");
 
 function sanitizeWorktreeName(raw: unknown): string {
   return String(raw ?? "")
@@ -79,24 +123,272 @@ function writeWorktreeName(root: string, raw: unknown): string {
   return name;
 }
 
-function formatWorktreeInfo(root: string, name = readWorktreeName(root)): WorktreeInfo {
-  const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
-  const id = codexMatch?.[1] ?? basename(root);
-  const defaultLabel = `worktree ${id}`;
-  const label = name ? `${name} · ${id}` : defaultLabel;
-  const fullLabel = name ? `${name} · ${defaultLabel} · ${root}` : `${defaultLabel} · ${root}`;
-  return { root, id, name, defaultLabel, label, fullLabel };
+function sanitizeBranchName(raw: unknown): string {
+  const branch = String(raw ?? "")
+    .replace(/[\r\n\t\s]+/g, "")
+    .trim();
+  if (
+    !branch ||
+    branch.startsWith("/") ||
+    branch.endsWith("/") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("\\") ||
+    !/^[A-Za-z0-9._/-]+$/.test(branch)
+  ) {
+    return "main";
+  }
+  return branch;
 }
 
-/** The linked worktree currently serving this client during local dev. */
+function readTargetBranch(root: string): string {
+  try {
+    const raw = JSON.parse(readFileSync(workflowSettingsPathFor(root), "utf8")) as { targetBranch?: unknown };
+    return sanitizeBranchName(raw.targetBranch);
+  } catch {
+    return "main";
+  }
+}
+
+function writeTargetBranch(root: string, raw: unknown): string {
+  const targetBranch = sanitizeBranchName(raw);
+  let prev: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(readFileSync(workflowSettingsPathFor(root), "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) prev = parsed as Record<string, unknown>;
+  } catch {
+    prev = {};
+  }
+  writeFileSync(workflowSettingsPathFor(root), JSON.stringify({ ...prev, targetBranch }, null, 2) + "\n");
+  return targetBranch;
+}
+
+function splitGitLines(raw: string | null): string[] {
+  return raw
+    ? raw
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function currentBranch(root: string): string {
+  const branch = captureGit(["branch", "--show-current"], root);
+  if (branch) return branch;
+  const pointedBranches = splitGitLines(captureGit(["branch", "--points-at", "HEAD", "--format=%(refname:short)"], root))
+    .filter((name) => !name.includes("HEAD"));
+  return (
+    pointedBranches.find((name) => name.startsWith("codex/")) ??
+    pointedBranches.find((name) => name !== "main") ??
+    pointedBranches[0] ??
+    ""
+  );
+}
+
+function branchOptions(root: string): string[] {
+  const branches = new Set<string>(["main"]);
+  for (const branch of splitGitLines(captureGit(["branch", "--format=%(refname:short)"], root))) {
+    if (branch.startsWith("(") || branch.includes("HEAD")) continue;
+    branches.add(branch);
+  }
+  for (const raw of splitGitLines(captureGit(["branch", "-r", "--format=%(refname:short)"], root))) {
+    if (raw.startsWith("(") || raw.includes("HEAD")) continue;
+    branches.add(raw.startsWith("origin/") ? raw.slice("origin/".length) : raw);
+  }
+  return [...branches].sort((a, b) => {
+    if (a === "main") return -1;
+    if (b === "main") return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function gitCommitRef(root: string, ref: string): string | null {
+  return captureGit(["rev-parse", "--verify", `${ref}^{commit}`], root);
+}
+
+function pendingBaseRef(root: string, targetBranch: string): string {
+  if (gitCommitRef(root, targetBranch)) return targetBranch;
+  const remoteRef = `origin/${targetBranch}`;
+  if (gitCommitRef(root, remoteRef)) return remoteRef;
+  return "";
+}
+
+function recentGitCommits(root: string): WorktreeCommit[] {
+  const raw = captureGit(["log", "--max-count=8", "--pretty=format:%h%x1f%s%x1f%cr"], root);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      const [hash = "", subject = "", age = ""] = line.split("\x1f");
+      return { hash, subject, age };
+    })
+    .filter((commit) => commit.hash && commit.subject);
+}
+
+function pendingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
+  if (current === targetBranch) return [];
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) return [];
+  const raw = captureGit(["log", "--max-count=20", "--pretty=format:%h%x1f%s%x1f%cr", `${base}..HEAD`], root);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      const [hash = "", subject = "", age = ""] = line.split("\x1f");
+      return { hash, subject, age };
+    })
+    .filter((commit) => commit.hash && commit.subject);
+}
+
+function gitStatusLabel(status: string): string {
+  if (status === "??") return "untracked";
+  const staged = status[0] !== " " && status[0] !== "?";
+  const unstaged = status[1] !== " ";
+  if (staged && unstaged) return "staged + unstaged";
+  if (staged) return "staged";
+  if (unstaged) return "unstaged";
+  return "changed";
+}
+
+function currentGitChanges(root: string): WorktreeChange[] {
+  const raw = captureGit(["status", "--porcelain=v1"], root, false);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      const status = line.slice(0, 2);
+      let path = line.slice(2).trimStart();
+      const renameAt = path.indexOf(" -> ");
+      if (renameAt >= 0) path = path.slice(renameAt + 4);
+      const untracked = status === "??";
+      const staged = status[0] !== " " && status[0] !== "?";
+      const unstaged = untracked || status[1] !== " ";
+      return {
+        status,
+        path,
+        label: gitStatusLabel(status),
+        staged,
+        unstaged,
+        untracked,
+      };
+    })
+    .filter((change) => change.path);
+}
+
+function repoJsonPath(root: string, rawPath: unknown): { abs: string; rel: string } {
+  const requested = String(rawPath ?? "").replace(/\\/g, "/");
+  const abs = resolve(root, requested);
+  const rel = relative(root, abs).replace(/\\/g, "/");
+  if (!rel || rel.startsWith("../") || rel === ".." || resolve(root, rel) !== abs) {
+    throw new Error("file must be inside the repository");
+  }
+  if (!rel.toLowerCase().endsWith(".json")) throw new Error("only JSON files can be edited here");
+  return { abs, rel };
+}
+
+function readWorktreeFile(root: string, rawPath: unknown): WorktreeFilePayload {
+  const file = repoJsonPath(root, rawPath);
+  const content = existsSync(file.abs) ? readFileSync(file.abs, "utf8") : "";
+  const baseContent = captureGit(["show", `HEAD:${file.rel}`], root, false) ?? "";
+  return { path: file.rel, content, baseContent };
+}
+
+function writeWorktreeFile(root: string, rawPath: unknown, rawContent: unknown): WorktreeFilePayload {
+  const file = repoJsonPath(root, rawPath);
+  const content = String(rawContent ?? "");
+  JSON.parse(content);
+  writeFileSync(file.abs, content.endsWith("\n") ? content : `${content}\n`);
+  return readWorktreeFile(root, file.rel);
+}
+
+function ensureLocalTargetBranch(root: string, targetBranch: string) {
+  if (gitCommitRef(root, targetBranch)) return;
+  const remoteRef = `origin/${targetBranch}`;
+  if (!gitCommitRef(root, remoteRef)) throw new Error(`Target branch ${targetBranch} was not found`);
+  execFileSync("git", ["branch", targetBranch, remoteRef], { cwd: root, encoding: "utf8" });
+}
+
+function mergeIntoTargetBranch(root: string): WorktreeInfo {
+  const targetBranch = readTargetBranch(root);
+  const current = currentBranch(root);
+  if (current === targetBranch) return worktreeInfo();
+  const source = captureGit(["rev-parse", "HEAD"], root);
+  if (!source) throw new Error("Could not resolve current HEAD");
+  ensureLocalTargetBranch(root, targetBranch);
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-"));
+  try {
+    execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
+    execFileSync("git", ["merge", "--no-edit", source], { cwd: tmp, encoding: "utf8" });
+  } catch (err) {
+    try {
+      execFileSync("git", ["merge", "--abort"], { cwd: tmp, encoding: "utf8" });
+    } catch {
+      // The merge may not have started; removal below still cleans the temp worktree.
+    }
+    throw err;
+  } finally {
+    try {
+      execFileSync("git", ["worktree", "remove", "--force", tmp], { cwd: root, encoding: "utf8" });
+    } catch {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  return worktreeInfo();
+}
+
+function formatWorktreeInfo(
+  root: string,
+  name = readWorktreeName(root),
+  options: { branch?: string; isLinked?: boolean } = {},
+): WorktreeInfo {
+  const branch = options.branch ?? currentBranch(root);
+  const detachedHash = branch ? "" : captureGit(["rev-parse", "--short", "HEAD"], root) ?? "";
+  const branchLabel = branch || (detachedHash ? `detached ${detachedHash}` : "");
+  const targetBranch = readTargetBranch(root);
+  const pendingBase = pendingBaseRef(root, targetBranch);
+  const isMain = branch === "main";
+  const isLinked = Boolean(options.isLinked);
+  const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
+  const id = codexMatch?.[1] ?? (branchLabel || basename(root));
+  const defaultLabel = branchLabel || (isLinked ? `worktree ${id}` : basename(root));
+  const label = isMain ? "main" : name ? `${name} · ${defaultLabel}` : defaultLabel;
+  const fullLabel = isMain
+    ? `main -> ${targetBranch} · ${root}`
+    : name
+      ? `${name} · ${defaultLabel} -> ${targetBranch} · ${root}`
+      : `${defaultLabel} -> ${targetBranch} · ${root}`;
+  return {
+    root,
+    id,
+    name,
+    defaultLabel,
+    label,
+    fullLabel,
+    branch,
+    targetBranch,
+    pendingBase,
+    branches: branchOptions(root),
+    isMain,
+    isLinked,
+    pendingCommits: pendingGitCommits(root, targetBranch, branch),
+    commits: recentGitCommits(root),
+    changes: currentGitChanges(root),
+  };
+}
+
+/** The repo/worktree currently serving this client during local dev. */
 function worktreeInfo(): WorktreeInfo {
   const root = captureGit(["rev-parse", "--show-toplevel"]);
   const gitDir = captureGit(["rev-parse", "--git-dir"]);
   const commonDir = captureGit(["rev-parse", "--git-common-dir"]);
-  if (!root || !gitDir || !commonDir || resolve(gitDir) === resolve(commonDir)) {
+  if (!root || !gitDir || !commonDir) {
     return emptyWorktreeInfo();
   }
-  return formatWorktreeInfo(root);
+  const isLinked = resolve(root, gitDir) !== resolve(root, commonDir);
+  const branch = currentBranch(root);
+  return formatWorktreeInfo(root, readWorktreeName(root), { branch, isLinked });
 }
 
 interface PropEntry {
@@ -981,13 +1273,46 @@ function perfLogs(): Plugin {
  * Dev-only endpoint for naming the active linked worktree. The name lives in the
  * ignored repo-local `.gorilator/worktree-name` file.
  *   GET  /__worktree       → current label/name/path metadata
- *   POST /__worktree {name} → set name, or clear it with an empty string
+ *   POST /__worktree {name,targetBranch} → set name/target branch
  */
 function worktreeTagger(): Plugin {
   return {
     name: "rpg-worktree-tagger",
     apply: "serve",
     configureServer(server: ViteDevServer) {
+      server.middlewares.use("/__worktree/file", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method === "GET") {
+          try {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            return sendJson(res, { ok: true, ...readWorktreeFile(info.root, url.searchParams.get("path")) });
+          } catch (e) {
+            return fail(res, 400, String(e));
+          }
+        }
+        if (req.method !== "POST") return fail(res, 405, "GET or POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { path?: unknown; content?: unknown };
+            sendJson(res, { ok: true, ...writeWorktreeFile(info.root, body.path, body.content) });
+          } catch (e) {
+            fail(res, 400, String(e));
+          }
+        });
+      });
+
+      server.middlewares.use("/__worktree/merge", (req, res) => {
+        const info = worktreeInfo();
+        if (!info.root) return fail(res, 404, "not a git worktree");
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        try {
+          sendJson(res, { ok: true, ...mergeIntoTargetBranch(info.root) });
+        } catch (e) {
+          fail(res, 409, String(e));
+        }
+      });
+
       server.middlewares.use("/__worktree", (req, res) => {
         const info = worktreeInfo();
         if (!info.root) return fail(res, 404, "not a linked worktree");
@@ -995,8 +1320,11 @@ function worktreeTagger(): Plugin {
         if (req.method !== "POST") return fail(res, 405, "GET or POST only");
         void collectBody(req).then((buf) => {
           try {
-            const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown };
-            const name = writeWorktreeName(info.root, body.name);
+            const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown; targetBranch?: unknown };
+            const hasName = Object.prototype.hasOwnProperty.call(body, "name");
+            const hasTarget = Object.prototype.hasOwnProperty.call(body, "targetBranch");
+            const name = hasName ? writeWorktreeName(info.root, body.name) : readWorktreeName(info.root);
+            if (hasTarget) writeTargetBranch(info.root, body.targetBranch);
             sendJson(res, { ok: true, ...formatWorktreeInfo(info.root, name) });
           } catch (e) {
             fail(res, 500, String(e));

@@ -64,7 +64,6 @@ export class DevMode {
   private explorer: LibraryExplorer;
   private itemLibrary: ItemLibrary;
   private btn: HTMLButtonElement;
-  private addBtn: HTMLButtonElement;
   private itemsBtn: HTMLButtonElement;
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
@@ -172,18 +171,6 @@ export class DevMode {
     document.body.appendChild(btn);
     this.btn = btn;
 
-    // "New entity" opens the entity library directly on the placement tab.
-    const addBtn = document.createElement("button");
-    addBtn.id = "devAddModelBtn";
-    addBtn.textContent = "＋ New entity";
-    addBtn.style.cssText =
-      "position:fixed; right:16px; bottom:240px; z-index:40; cursor:pointer; display:none;" +
-      "background:#283; color:#fff; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
-    addBtn.onclick = () => this.explorer.openNew();
-    document.body.appendChild(addBtn);
-    this.addBtn = addBtn;
-
     // Custom inventory/gameplay items: create definitions and test-give/drop them.
     const itemsBtn = document.createElement("button");
     itemsBtn.id = "devItemsBtn";
@@ -210,14 +197,16 @@ export class DevMode {
 
     const gameplayBtn = document.createElement("button");
     gameplayBtn.id = "devGameplayBtn";
-    gameplayBtn.textContent = "⚙ Gameplay";
+    gameplayBtn.textContent = "⚙ Gameplay Options";
     gameplayBtn.style.cssText =
-      "position:fixed; right:16px; bottom:384px; z-index:40; cursor:pointer; display:none;" +
-      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
+      "position:fixed; left:50%; top:104px; transform:translateX(-50%); z-index:61; cursor:pointer; display:none;" +
+      "background:linear-gradient(180deg,#345044,#1f332c); color:#d9ffd9; border:2px solid #72c979; border-radius:8px;" +
+      "padding:10px 18px; font:bold 15px system-ui,sans-serif; letter-spacing:0.2px;" +
+      "box-shadow:0 8px 24px #0009, inset 0 0 10px #0005;";
     gameplayBtn.onclick = () => this.toggleGameplayPanel();
     document.body.appendChild(gameplayBtn);
     this.gameplayBtn = gameplayBtn;
+    window.addEventListener("resize", () => this.updateGameplayButtonPosition());
 
     const gameplayPanel = document.createElement("div");
     gameplayPanel.id = "devGameplayPanel";
@@ -328,6 +317,7 @@ export class DevMode {
     this.active = true;
     this.net.sendGodMode(true);
     this.setScale(0); // entering Dev Mode freezes authoritative gameplay for everyone
+    this.updateGameplayButtonPosition();
     void this.loadSpawners(); // reflect existing spawners in object inspectors
     void this.loadFeatures(); // generic HP/drop/brain/stat feature config
     void this.loadCharacterDefs(); // custom spawn targets for spawner rules
@@ -335,7 +325,6 @@ export class DevMode {
     void this.loadStructures(); // reflect existing structure loot tables
     this.btn.style.background = "#3a7a40";
     this.btn.style.color = "#fff";
-    this.addBtn.style.display = "block";
     this.itemsBtn.style.display = "block";
     this.entitiesBtn.style.display = "block";
     this.gameplayBtn.style.display = "block";
@@ -357,7 +346,6 @@ export class DevMode {
     this.selection.clear();
     this.btn.style.background = "#2a3242";
     this.btn.style.color = "#9fe0a0";
-    this.addBtn.style.display = "none";
     this.itemsBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
     this.gameplayBtn.style.display = "none";
@@ -404,8 +392,16 @@ export class DevMode {
   private toggleGameplayPanel() {
     this.gameplayOpen = !this.gameplayOpen;
     this.gameplayPanel.style.display = this.gameplayOpen ? "block" : "none";
-    this.gameplayBtn.style.background = this.gameplayOpen ? "#3a7a40" : "#2a3242";
-    this.gameplayBtn.style.color = this.gameplayOpen ? "#fff" : "#9fe0a0";
+    this.gameplayBtn.style.background = this.gameplayOpen
+      ? "linear-gradient(180deg,#4a8f4f,#2f6f37)"
+      : "linear-gradient(180deg,#345044,#1f332c)";
+    this.gameplayBtn.style.color = this.gameplayOpen ? "#fff" : "#d9ffd9";
+  }
+
+  private updateGameplayButtonPosition() {
+    const topBar = document.getElementById("topBar");
+    const bottom = topBar?.getBoundingClientRect().bottom ?? 92;
+    this.gameplayBtn.style.top = `${Math.ceil(bottom + 10)}px`;
   }
 
   private renderGameplayPanel() {
