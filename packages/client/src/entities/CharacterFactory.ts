@@ -19,7 +19,7 @@ const MODEL_URL = "/models/knight.glb";
 /** A separate clip (baseball pitch) retargeted onto the character rig for THROW.
  *  Its skeleton is identical to knight.glb (same 24 bones), so it maps 1:1. */
 const THROW_MODEL_URL = "/models/throw.glb";
-/** The default attack swing — a separate Crimson Gorilla clip on the same 24-bone
+/** The default attack swing — a separate player-rig clip on the same 24-bone
  *  rig, retargeted onto the character to OVERRIDE the bundled knight.glb Attack. */
 const ATTACK_MODEL_URL = "/models/attack.glb";
 /** The goblin enemy — same 24-bone skeleton, its own clips (see GOBLIN_ANIM_MAP). */
@@ -44,7 +44,7 @@ interface ModelConfig {
 }
 
 /**
- * Clip-name → state map for the bundled knight.glb (Meshy "Crimson Gorilla").
+ * Clip-name → state map for the bundled knight.glb player rig.
  * The clips were renamed to match their real motion (Meshy's auto-export had
  * scrambled the names vs the animation baked into each). Spares: `Walking`/`Hit_2`.
  * A different model still resolves via the generic `matchState` keyword fallback.

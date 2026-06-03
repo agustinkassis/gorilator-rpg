@@ -3,7 +3,7 @@
     "id": "goblin_house",
     "ownerId": "goblin_house",
     "type": "goblin",
-    "intervalMs": 40000,
+    "intervalMs": 45000,
     "cap": 2,
     "behavior": {
       "stats": {}
@@ -55,7 +55,7 @@
     "id": "goblin_house_1780338969291-spawn-mpy2n207",
     "ownerId": "goblin_house_1780338969291",
     "type": "goblin",
-    "intervalMs": 30000,
+    "intervalMs": 50000,
     "cap": 3,
     "behavior": {
       "brain": "war_seeker",

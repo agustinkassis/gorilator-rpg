@@ -170,10 +170,10 @@ export const GOBLIN_SPAWN_NEAR_MAX = 34; // ...and at most this far (just beyond
 // the way. The REST between waves grows each wave (more time to rebuild as it escalates):
 // after wave N the gap is BASE + STEP·(N-1), capped at MAX.
 export const WAVE_INTERVAL_BASE_MS = 150000; // rest after wave 1 (1.8 min)
-export const WAVE_INTERVAL_STEP_MS = 12000; // each successive rest grows by this (0.2 min)
-export const WAVE_INTERVAL_MAX_MS = 240000; // cap the growth here (4 min); raise/remove for unbounded
+export const WAVE_INTERVAL_STEP_MS = 30000; // each successive rest grows by this (0.2 min)
+export const WAVE_INTERVAL_MAX_MS = 300000; // cap the growth here (4 min); raise/remove for unbounded
 export const WAVE_FIRST_DELAY_MS = 60000; // the very first wave lands at 24s
-export const WAVE_SPAWN_SPREAD_MS = 40000; // a wave drips in over this window (first → last)
+export const WAVE_SPAWN_SPREAD_MS = 30000; // a wave drips in over this window (first → last)
 export const WAVE_MARCH_SECONDS = 30; // a wave spawns this many seconds' walk from home...
 export const WAVE_SPAWN_DISTANCE = GOBLIN_CHASE_SPEED * WAVE_MARCH_SECONDS; // ...i.e. this far out (≈108u)
 export const WAVE_SPAWN_ARC = Math.PI * 0.7; // the horde fans out across this arc (approaches from ~one side)
