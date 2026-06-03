@@ -26,7 +26,7 @@ import { DebugStats } from "./ui/debugStats";
 import { Game } from "./game/Game";
 import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
-import { HomeBar } from "./ui/homeBar";
+import { TopBar } from "./ui/topBar";
 import { GameMenu } from "./ui/gameMenu";
 import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
 import { preloadMouseCursors, setupClickToMove } from "./input/ClickToMove";
@@ -49,6 +49,90 @@ const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivEle
 // time by Vite with the package.json version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
 if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
+const worktreeEl = document.getElementById("worktreeTag");
+interface WorktreeMeta {
+  root: string;
+  id: string;
+  name: string;
+  defaultLabel: string;
+  label: string;
+  fullLabel: string;
+}
+
+function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
+  if (!worktreeEl) return;
+  const label = meta.label ?? "";
+  const fullLabel = meta.fullLabel ?? label;
+  worktreeEl.textContent = label;
+  worktreeEl.title = fullLabel;
+  worktreeEl.dataset.fullLabel = fullLabel;
+  worktreeEl.dataset.name = meta.name ?? "";
+  worktreeEl.dataset.root = meta.root ?? "";
+  worktreeEl.hidden = label === "";
+}
+
+function maybePromptForWorktreeName(meta: Partial<WorktreeMeta>) {
+  if (!worktreeEl || !meta.root || meta.name) return;
+  const key = `gorilator.worktreeTag.prompted:${meta.root}`;
+  try {
+    if (window.sessionStorage.getItem(key)) return;
+    window.sessionStorage.setItem(key, "1");
+  } catch {
+    return;
+  }
+  window.setTimeout(() => {
+    if (!worktreeEl.dataset.name) void editWorktreeName();
+  }, 700);
+}
+
+async function saveWorktreeName(name: string): Promise<WorktreeMeta> {
+  const res = await fetch("/__worktree", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as WorktreeMeta;
+}
+
+async function editWorktreeName() {
+  if (!worktreeEl) return;
+  const current = worktreeEl.dataset.name ?? "";
+  const next = window.prompt("Name this worktree", current);
+  if (next === null) return;
+  try {
+    setWorktreeMeta(await saveWorktreeName(next));
+  } catch (err) {
+    console.warn("Could not save worktree name", err);
+    window.alert("Could not save worktree name.");
+  }
+}
+
+if (worktreeEl) {
+  setWorktreeMeta({ label: __WORKTREE_LABEL__, fullLabel: __WORKTREE_FULL_LABEL__ });
+  if (import.meta.env.DEV && __WORKTREE_LABEL__) {
+    worktreeEl.tabIndex = 0;
+    worktreeEl.setAttribute("role", "button");
+    worktreeEl.setAttribute("aria-label", "Edit worktree name");
+    worktreeEl.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void editWorktreeName();
+    });
+    worktreeEl.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      void editWorktreeName();
+    });
+    void fetch("/__worktree")
+      .then((res) => (res.ok ? res.json() : undefined))
+      .then((meta: WorktreeMeta | undefined) => {
+        if (!meta) return;
+        setWorktreeMeta(meta);
+        maybePromptForWorktreeName(meta);
+      })
+      .catch((err) => console.warn("Could not load worktree name", err));
+  }
+}
 
 // DEV-only: `?mocknostr=gen|nsec1…|<hex>` installs a fake NIP-07 signer so the
 // Nostr login flow can be tested without a browser extension. Installed up-front
@@ -68,7 +152,7 @@ const xpBar = new XpBar();
 const staminaBar = new StaminaBar();
 const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
-const homeBar = new HomeBar(); // siege objective HUD (home HP + wave); hidden on the splash via CSS
+const topBar = new TopBar(); // top HUD (La Crypta HP + wave); hidden on the splash via CSS
 const game = new Game(camera, factory, hud, shadow);
 const debugStats = new DebugStats(engine, scene);
 // Sound system: spatial SFX + music. Unlocks itself on the first user gesture
@@ -303,7 +387,7 @@ async function start() {
       inventory.setInventory(slots);
       hotkeyBar.setInventory(slots);
     },
-    onWipe: (ev) => homeBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
+    onWipe: (ev) => topBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
     onError: (message) => {
       statusEl.textContent = message;
       console.warn("[net]", message);
@@ -458,22 +542,22 @@ engine.runRenderLoop(() => {
   // Keep the audio listener on the player so spatial SFX pan + attenuate correctly.
   audio.updateListener(camera, me ? { x: me.x, z: me.z } : null);
 
-  // Siege objective HUD: every player always sees the home (first house) HP + wave
+  // TopBar: every player always sees the home (first house) HP + wave
   // state. Once the house is destroyed it's removed from state, so fall back to a
   // "fallen" reading using the last-known max HP.
   const st = net.room?.state;
-  if (homeBar && st) {
+  if (topBar && st) {
     let home: { hp: number; maxHp: number; alive: boolean } | undefined;
     st.houses.forEach((h) => {
       if (!home) home = h;
     });
     if (home) {
       homeMaxHp = home.maxHp;
-      homeBar.setHouse(home.hp, home.maxHp, home.alive);
+      topBar.setHouse(home.hp, home.maxHp, home.alive);
     } else if (homeMaxHp > 0) {
-      homeBar.setHouse(0, homeMaxHp, false);
+      topBar.setHouse(0, homeMaxHp, false);
     }
-    homeBar.setWave(st.waveNumber, st.waveTimerMs);
+    topBar.setWave(st.waveNumber, st.waveTimerMs);
   }
 
   // Realm-over intermission (La Crypta fell): the whole-screen "next realm in N"
