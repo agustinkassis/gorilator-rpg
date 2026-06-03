@@ -781,12 +781,28 @@
         color: #ffad7a;
       }
       #worktreePanel .wtChangesList,
+      #worktreePanel .wtPending,
       #worktreePanel .wtCommits {
         margin-top: 9px;
+      }
+      #worktreePanel .wtPending {
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 212, 121, 0.16);
       }
       #worktreePanel .wtCommits {
         padding-top: 10px;
         border-top: 1px solid rgba(255, 212, 121, 0.16);
+      }
+      #worktreePanel .wtSectionLine {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      #worktreePanel .wtSectionMeta {
+        margin-top: 3px;
+        color: rgba(255, 230, 168, 0.5);
+        overflow-wrap: anywhere;
       }
       #worktreePanel .wtChangeRow,
       #worktreePanel .wtCommitRow {

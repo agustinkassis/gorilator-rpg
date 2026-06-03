@@ -73,9 +73,11 @@ interface WorktreeMeta {
   fullLabel: string;
   branch: string;
   targetBranch: string;
+  pendingBase: string;
   branches: string[];
   isMain: boolean;
   isLinked: boolean;
+  pendingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
   changes: WorktreeChange[];
 }
@@ -88,6 +90,7 @@ function setWorktreeMeta(meta: Partial<WorktreeMeta>) {
   worktreeMeta = {
     ...worktreeMeta,
     ...meta,
+    pendingCommits: meta.pendingCommits ?? worktreeMeta.pendingCommits ?? [],
     commits: meta.commits ?? worktreeMeta.commits ?? [],
     changes: meta.changes ?? worktreeMeta.changes ?? [],
     branches: meta.branches ?? worktreeMeta.branches ?? [],
@@ -175,10 +178,12 @@ function createWorktreeNode<K extends keyof HTMLElementTagNameMap>(
 function renderWorktreePanel() {
   if (!worktreePanelEl || !worktreeEl) return;
   const label = worktreeMeta.label ?? "";
+  const pendingCommits = worktreeMeta.pendingCommits ?? [];
   const commits = worktreeMeta.commits ?? [];
   const changes = worktreeMeta.changes ?? [];
   const branch = worktreeMeta.branch || "detached";
   const targetBranch = worktreeMeta.targetBranch || "main";
+  const pendingBase = worktreeMeta.pendingBase || targetBranch;
   const branches = Array.from(new Set(["main", targetBranch, ...(worktreeMeta.branches ?? [])])).filter(Boolean);
   if (!label) {
     worktreePanelEl.hidden = true;
@@ -234,6 +239,34 @@ function renderWorktreePanel() {
   targetWrap.append(targetLabel, targetSelect);
   branchBar.append(currentBranchEl, targetWrap);
 
+  const pendingSection = createWorktreeNode("div", "wtPending");
+  const pendingHead = createWorktreeNode("div", "wtSectionLine");
+  pendingHead.append(
+    createWorktreeNode("span", "wtSectionTitle", `Pending into ${targetBranch}`),
+    createWorktreeNode(
+      "span",
+      pendingCommits.length ? "wtSectionPill dirty" : "wtSectionPill",
+      `${pendingCommits.length} commit${pendingCommits.length === 1 ? "" : "s"}`,
+    ),
+  );
+  pendingSection.append(
+    pendingHead,
+    createWorktreeNode("div", "wtSectionMeta", pendingBase ? `Compared with ${pendingBase}` : "Target branch not found locally"),
+  );
+  if (!pendingCommits.length) {
+    pendingSection.append(createWorktreeNode("div", "wtEmpty", `No pending commits into ${targetBranch}.`));
+  } else {
+    for (const commit of pendingCommits) {
+      const row = createWorktreeNode("div", "wtCommitRow");
+      row.append(
+        createWorktreeNode("span", "wtCommitHash", commit.hash),
+        createWorktreeNode("span", "wtCommitSubject", commit.subject),
+        createWorktreeNode("span", "wtCommitAge", commit.age),
+      );
+      pendingSection.append(row);
+    }
+  }
+
   const changesBtn = createWorktreeNode("button", "wtChangesToggle");
   changesBtn.type = "button";
   changesBtn.setAttribute("aria-expanded", String(worktreeChangesOpen));
@@ -284,7 +317,7 @@ function renderWorktreePanel() {
     }
   }
 
-  worktreePanelEl.append(head, branchBar, changesBtn, changesList, commitsSection);
+  worktreePanelEl.append(head, branchBar, pendingSection, changesBtn, changesList, commitsSection);
   worktreePanelEl.hidden = !worktreePanelOpen;
 }
 

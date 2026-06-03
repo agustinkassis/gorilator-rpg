@@ -58,9 +58,11 @@ interface WorktreeInfo {
   fullLabel: string;
   branch: string;
   targetBranch: string;
+  pendingBase: string;
   branches: string[];
   isMain: boolean;
   isLinked: boolean;
+  pendingCommits: WorktreeCommit[];
   commits: WorktreeCommit[];
   changes: WorktreeChange[];
 }
@@ -74,9 +76,11 @@ const emptyWorktreeInfo = (): WorktreeInfo => ({
   fullLabel: "",
   branch: "",
   targetBranch: "main",
+  pendingBase: "",
   branches: [],
   isMain: false,
   isLinked: false,
+  pendingCommits: [],
   commits: [],
   changes: [],
 });
@@ -190,8 +194,34 @@ function branchOptions(root: string): string[] {
   });
 }
 
+function gitCommitRef(root: string, ref: string): string | null {
+  return captureGit(["rev-parse", "--verify", `${ref}^{commit}`], root);
+}
+
+function pendingBaseRef(root: string, targetBranch: string): string {
+  const remoteRef = `origin/${targetBranch}`;
+  if (gitCommitRef(root, remoteRef)) return remoteRef;
+  if (gitCommitRef(root, targetBranch)) return targetBranch;
+  return "";
+}
+
 function recentGitCommits(root: string): WorktreeCommit[] {
   const raw = captureGit(["log", "--max-count=8", "--pretty=format:%h%x1f%s%x1f%cr"], root);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      const [hash = "", subject = "", age = ""] = line.split("\x1f");
+      return { hash, subject, age };
+    })
+    .filter((commit) => commit.hash && commit.subject);
+}
+
+function pendingGitCommits(root: string, targetBranch: string, current: string): WorktreeCommit[] {
+  if (current === targetBranch) return [];
+  const base = pendingBaseRef(root, targetBranch);
+  if (!base) return [];
+  const raw = captureGit(["log", "--max-count=20", "--pretty=format:%h%x1f%s%x1f%cr", `${base}..HEAD`], root);
   if (!raw) return [];
   return raw
     .split("\n")
@@ -246,6 +276,7 @@ function formatWorktreeInfo(
   const detachedHash = branch ? "" : captureGit(["rev-parse", "--short", "HEAD"], root) ?? "";
   const branchLabel = branch || (detachedHash ? `detached ${detachedHash}` : "");
   const targetBranch = readTargetBranch(root);
+  const pendingBase = pendingBaseRef(root, targetBranch);
   const isMain = branch === "main";
   const isLinked = Boolean(options.isLinked);
   const codexMatch = root.match(/[\\/]\.codex[\\/]worktrees[\\/]([^\\/]+)/);
@@ -266,9 +297,11 @@ function formatWorktreeInfo(
     fullLabel,
     branch,
     targetBranch,
+    pendingBase,
     branches: branchOptions(root),
     isMain,
     isLinked,
+    pendingCommits: pendingGitCommits(root, targetBranch, branch),
     commits: recentGitCommits(root),
     changes: currentGitChanges(root),
   };
