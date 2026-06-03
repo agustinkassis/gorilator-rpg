@@ -323,6 +323,42 @@ function ensureLocalTargetBranch(root: string, targetBranch: string) {
   execFileSync("git", ["branch", targetBranch, remoteRef], { cwd: root, encoding: "utf8" });
 }
 
+function worktreePathForBranch(root: string, branch: string): string {
+  const raw = captureGit(["worktree", "list", "--porcelain"], root, false);
+  if (!raw) return "";
+  let path = "";
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) {
+      path = "";
+      continue;
+    }
+    if (line.startsWith("worktree ")) path = line.slice("worktree ".length).trim();
+    else if (line === `branch refs/heads/${branch}` && path) return path;
+  }
+  return "";
+}
+
+function ensureCleanWorktree(root: string, targetBranch: string) {
+  const status = execFileSync("git", ["status", "--porcelain=v1"], { cwd: root, encoding: "utf8" }).trim();
+  if (!status) return;
+  throw new Error(
+    `Target branch ${targetBranch} is checked out at ${root} and has uncommitted changes. Commit or stash them before merging from the game.`,
+  );
+}
+
+function targetMergeWorktree(root: string, targetBranch: string): { cwd: string; temporary: boolean } {
+  const existing = worktreePathForBranch(root, targetBranch);
+  if (existing) {
+    ensureCleanWorktree(existing, targetBranch);
+    return { cwd: existing, temporary: false };
+  }
+  const parent = resolve(root, ".gorilator");
+  mkdirSync(parent, { recursive: true });
+  const tmp = mkdtempSync(resolve(parent, "merge-"));
+  execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
+  return { cwd: tmp, temporary: true };
+}
+
 function pendingCommitRef(root: string, targetBranch: string, rawCommit: unknown): string {
   const commit = String(rawCommit ?? "").trim();
   if (!commit) throw new Error("Missing commit to merge");
@@ -342,24 +378,23 @@ function mergeCommitIntoTargetBranch(root: string, rawCommit: unknown): Worktree
   if (current === targetBranch) return worktreeInfo();
   const source = pendingCommitRef(root, targetBranch, rawCommit);
   ensureLocalTargetBranch(root, targetBranch);
-  const parent = resolve(root, ".gorilator");
-  mkdirSync(parent, { recursive: true });
-  const tmp = mkdtempSync(resolve(parent, "merge-"));
+  const target = targetMergeWorktree(root, targetBranch);
   try {
-    execFileSync("git", ["worktree", "add", tmp, targetBranch], { cwd: root, encoding: "utf8" });
-    execFileSync("git", ["cherry-pick", source], { cwd: tmp, encoding: "utf8" });
+    execFileSync("git", ["cherry-pick", source], { cwd: target.cwd, encoding: "utf8" });
   } catch (err) {
     try {
-      execFileSync("git", ["cherry-pick", "--abort"], { cwd: tmp, encoding: "utf8" });
+      execFileSync("git", ["cherry-pick", "--abort"], { cwd: target.cwd, encoding: "utf8" });
     } catch {
-      // The pick may not have started; removal below still cleans the temp worktree.
+      // The pick may not have started; temp worktree cleanup still runs below.
     }
     throw err;
   } finally {
-    try {
-      execFileSync("git", ["worktree", "remove", "--force", tmp], { cwd: root, encoding: "utf8" });
-    } catch {
-      rmSync(tmp, { recursive: true, force: true });
+    if (target.temporary) {
+      try {
+        execFileSync("git", ["worktree", "remove", "--force", target.cwd], { cwd: root, encoding: "utf8" });
+      } catch {
+        rmSync(target.cwd, { recursive: true, force: true });
+      }
     }
   }
   return worktreeInfo();
