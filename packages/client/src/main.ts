@@ -458,6 +458,7 @@ function renderWorktreePanel() {
   } else {
     pendingCommits.forEach((commit, index) => {
       const previewed = worktreeMergePreviewIndex !== null && index <= worktreeMergePreviewIndex;
+      const hovered = worktreeMergePreviewIndex === index;
       const row = createWorktreeNode("div", previewed ? "wtCommitRow wtPendingRow mergePreview" : "wtCommitRow wtPendingRow");
       row.addEventListener("mouseenter", () => {
         if (worktreeMergePreviewIndex === index) return;
@@ -474,7 +475,13 @@ function renderWorktreePanel() {
         createWorktreeNode("span", "wtCommitSubject", commit.subject),
         createWorktreeNode("span", "wtCommitAge", commit.age),
       );
-      const mergeBtn = createWorktreeNode("button", previewed ? "wtMergeBtn preview" : "wtMergeBtn", worktreeMergeBusy ? "Merging" : previewed ? "merge" : "Merge");
+      if (previewed && !hovered) {
+        row.append(createWorktreeNode("span", "wtMergePassive", "merge"));
+        pendingSection.append(row);
+        return;
+      }
+
+      const mergeBtn = createWorktreeNode("button", hovered ? "wtMergeBtn preview" : "wtMergeBtn", worktreeMergeBusy ? "Merging" : "Merge");
       mergeBtn.type = "button";
       mergeBtn.title = `Merge current branch into ${targetBranch}`;
       mergeBtn.disabled = worktreeMergeBusy;
