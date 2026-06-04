@@ -334,3 +334,131 @@ export function useProfiles(pubkeys: string[]): Record<string, Profile> {
 
   return profiles;
 }
+
+/** The hostname of a play URL, or "" if it can't be parsed. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+const PING_PATH = "/healthz"; // tiny "ok" response, CORS-open (see REALMS.md)
+const PING_INTERVAL_MS = 20_000;
+const PING_TIMEOUT_MS = 6_000;
+
+export interface Ping {
+  ms: number; // round-trip to /healthz
+  at: number; // when we measured it
+}
+
+/**
+ * Active latency probe: round-trips `<url>/healthz` for each reachable server on a
+ * 20s interval and records the measured ms. A failed/timed-out probe records null.
+ * Keyed by play URL. (The first probe per origin includes TLS setup, so it reads a
+ * little high; subsequent ones reuse the connection.)
+ */
+export function useServerPings(urls: string[]): Record<string, Ping | null> {
+  const [pings, setPings] = useState<Record<string, Ping | null>>({});
+  const key = useMemo(
+    () => Array.from(new Set(urls.filter(Boolean))).sort().join("\n"),
+    [urls],
+  );
+
+  useEffect(() => {
+    const list = key ? key.split("\n") : [];
+    if (list.length === 0) return;
+    let cancelled = false;
+
+    const ping = async (url: string) => {
+      let endpoint: string;
+      try {
+        endpoint = new URL(PING_PATH, url).toString();
+      } catch {
+        return;
+      }
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS);
+      const start = performance.now();
+      try {
+        const res = await fetch(endpoint, { signal: ctrl.signal, cache: "no-store" });
+        if (!res.ok) throw new Error("bad status");
+        const ms = Math.round(performance.now() - start);
+        if (!cancelled) setPings((prev) => ({ ...prev, [url]: { ms, at: Date.now() } }));
+      } catch {
+        if (!cancelled) setPings((prev) => ({ ...prev, [url]: null }));
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    const run = () => list.forEach((url) => void ping(url));
+    run();
+    const id = setInterval(run, PING_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [key]);
+
+  return pings;
+}
+
+/** ISO 3166-1 alpha-2 (e.g. "AR") → its regional-indicator flag emoji 🇦🇷. */
+export function flagEmoji(cc: string): string {
+  if (!/^[A-Za-z]{2}$/.test(cc)) return "";
+  return String.fromCodePoint(
+    ...[...cc.toUpperCase()].map((c) => 0x1f1e6 + (c.charCodeAt(0) - 65)),
+  );
+}
+
+// Module-level cache so a host is geolocated once per page load, shared across renders.
+const geoCache = new Map<string, string>(); // hostname -> flag emoji ("" = unknown)
+
+/**
+ * Resolve a country flag for each server from its play URL's host. Uses ipwho.is
+ * (free, no key, resolves domains → geo) and caches per host. Returns a map keyed
+ * by the original play URL, so the table can look it up directly.
+ */
+export function useServerFlags(urls: string[]): Record<string, string> {
+  const [flags, setFlags] = useState<Record<string, string>>({});
+  const key = useMemo(
+    () => Array.from(new Set(urls.filter(Boolean))).sort().join("\n"),
+    [urls],
+  );
+
+  useEffect(() => {
+    const list = key ? key.split("\n") : [];
+    if (list.length === 0) return;
+    let cancelled = false;
+
+    for (const url of list) {
+      const host = hostOf(url);
+      if (!host) continue;
+      const cached = geoCache.get(host);
+      if (cached !== undefined) {
+        if (cached) setFlags((prev) => ({ ...prev, [url]: cached }));
+        continue;
+      }
+      void (async () => {
+        let flag = "";
+        try {
+          const res = await fetch(`https://ipwho.is/${host}?fields=success,country_code`);
+          const j = (await res.json()) as { success?: boolean; country_code?: string };
+          if (j && j.success !== false && j.country_code) flag = flagEmoji(j.country_code);
+        } catch {
+          /* offline / rate-limited → leave unknown */
+        }
+        geoCache.set(host, flag); // cache even "" so we don't retry every render
+        if (!cancelled && flag) setFlags((prev) => ({ ...prev, [url]: flag }));
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+
+  return flags;
+}

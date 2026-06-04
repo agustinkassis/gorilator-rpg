@@ -376,17 +376,43 @@
   color: #ffd479;
 }
 
+.colServer .srvFlag {
+  margin-right: 7px;
+  font-size: 18px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .colServer .srvName {
-  display: block;
-  max-width: 240px;
+  display: inline-block;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
   font-family: var(--display);
   font-weight: 950;
   font-size: 16px;
   text-transform: uppercase;
   color: #ffe2a0;
+}
+
+.colPing {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.pingGood {
+  color: #6fd66f;
+}
+
+.pingOk {
+  color: #ffd479;
+}
+
+.pingBad {
+  color: #ff7a6b;
 }
 
 .colServer .small {

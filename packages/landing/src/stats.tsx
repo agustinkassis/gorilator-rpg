@@ -7,7 +7,10 @@ import {
   dedupeByUrl,
   useGorilatorServers,
   useProfiles,
+  useServerFlags,
   useServerHealth,
+  useServerPings,
+  type Ping,
   type Profile,
   type ServerStatus,
 } from "./realms";
@@ -95,14 +98,31 @@ function StatCard({ value, label, sub }: { value: number | string; label: string
   );
 }
 
+/** Latency cell: round-trip ms to /healthz, colour-coded; em-dash when unknown. */
+function PingCell({ ping, offline }: { ping?: Ping | null; offline: boolean }) {
+  if (offline) return <span className="muted small">—</span>;
+  if (ping === undefined) return <span className="muted small">…</span>;
+  if (ping === null) return <span className="pingBad" title="No response">timeout</span>;
+  const cls = ping.ms < 80 ? "pingGood" : ping.ms < 200 ? "pingOk" : "pingBad";
+  return (
+    <span className={cls} title="Round-trip to /healthz">
+      {ping.ms} ms
+    </span>
+  );
+}
+
 function ServerRow({
   server,
   profiles,
   now,
+  ping,
+  flag,
 }: {
   server: ServerStatus & { fetchedAt?: number; offline?: boolean };
   profiles: Record<string, Profile>;
   now: number;
+  ping?: Ping | null;
+  flag?: string;
 }) {
   const offline = !!server.offline;
   const r = offline ? null : server.currentRealm;
@@ -112,6 +132,11 @@ function ServerRow({
   return (
     <tr className={offline ? "offline" : r ? "playing" : ""}>
       <td className="colServer">
+        {flag && (
+          <span className="srvFlag" aria-hidden>
+            {flag}
+          </span>
+        )}
         <span className="srvName">{server.name}</span>
         {offline ? (
           <span className="offlineTag">● offline</span>
@@ -131,6 +156,9 @@ function ServerRow({
       <td className="num">{server.totalRealms}</td>
       <td className="num">{server.maxRounds}</td>
       <td className="num">{r ? r.wave : "—"}</td>
+      <td className="num colPing">
+        {server.url ? <PingCell ping={ping} offline={offline} /> : <span className="muted small">—</span>}
+      </td>
       <td className="colPlayers">
         {r ? (
           <div className="playersCell">
@@ -225,6 +253,11 @@ function Stats() {
   }, [active]);
 
   const profiles = useProfiles(allPubkeys);
+
+  // Live latency + country flag for every server that advertises a play URL.
+  const serverUrls = useMemo(() => active.map((s) => s.url).filter(Boolean), [active]);
+  const pings = useServerPings(serverUrls);
+  const flags = useServerFlags(serverUrls);
 
   const sortedServers = useMemo(
     () =>
@@ -342,13 +375,21 @@ function Stats() {
                   <th className="num">Realms</th>
                   <th className="num">Best wave</th>
                   <th className="num">Wave</th>
+                  <th className="num">Ping</th>
                   <th>Players</th>
                   <th aria-label="Join" />
                 </tr>
               </thead>
               <tbody>
                 {sortedServers.map((s) => (
-                  <ServerRow key={s.pubkey} server={s} profiles={profiles} now={now} />
+                  <ServerRow
+                    key={s.pubkey}
+                    server={s}
+                    profiles={profiles}
+                    now={now}
+                    ping={s.url ? pings[s.url] : undefined}
+                    flag={s.url ? flags[s.url] : undefined}
+                  />
                 ))}
               </tbody>
             </table>
