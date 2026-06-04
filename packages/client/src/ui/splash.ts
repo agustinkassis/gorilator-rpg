@@ -194,6 +194,40 @@ export class SplashScreen {
     });
   }
 
+  /**
+   * Poll the daemon's `/api/update` and, when a newer release than the running
+   * server exists, reveal the splash's dismissible "update available" banner
+   * (a link to the GitHub release). Silent on any error — offline, not
+   * configured, or already up to date all simply leave the banner hidden.
+   */
+  async showUpdateBanner(httpBase: string): Promise<void> {
+    const banner = document.getElementById("updateBanner") as HTMLElement | null;
+    if (!banner) return;
+    try {
+      const res = await fetch(`${httpBase}/api/update`, { cache: "no-store" });
+      if (!res.ok) return;
+      const s = (await res.json()) as {
+        updateAvailable?: boolean;
+        latest?: { tag?: string; name?: string; url?: string } | null;
+      };
+      if (!s.updateAvailable || !s.latest) return;
+
+      const link = document.getElementById("updateBannerLink") as HTMLAnchorElement | null;
+      if (link) {
+        link.textContent = `Update available — ${s.latest.tag ?? "new release"}`;
+        if (s.latest.url) link.href = s.latest.url;
+      }
+      banner.hidden = false;
+      banner.classList.add("show");
+      document.getElementById("updateBannerClose")?.addEventListener("click", () => {
+        banner.classList.remove("show");
+        banner.hidden = true;
+      });
+    } catch {
+      /* offline / not configured / up to date — leave the banner hidden */
+    }
+  }
+
   /** Restore the name/join controls after a failed room join. */
   showJoinError(message: string) {
     this.el.classList.remove("connecting", "nameCommitted", "impacting");

@@ -613,6 +613,64 @@
       body.devMode #xpBar,
       body.devMode #xpLevelUp { display: none !important; }
 
+      /* "Update available" banner — a small pill near the top of the splash,
+         revealed only when the daemon's /api/update check finds a new release. */
+      #updateBanner {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-12px);
+        z-index: 10001;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
+        padding: 7px 10px 7px 12px;
+        border: 1px solid rgba(255, 212, 121, 0.6);
+        border-radius: 999px;
+        background: rgba(18, 12, 6, 0.92);
+        color: #ffd479;
+        font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.4s ease, transform 0.4s ease;
+      }
+      #updateBanner.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+        pointer-events: auto;
+      }
+      #updateBannerIcon {
+        font-size: 13px;
+        line-height: 1;
+      }
+      #updateBannerLink {
+        color: #ffe6a8;
+        text-decoration: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #updateBannerLink:hover {
+        text-decoration: underline;
+      }
+      #updateBannerClose {
+        margin-left: 2px;
+        padding: 0 4px;
+        border: none;
+        background: transparent;
+        color: #ffd479;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0.7;
+      }
+      #updateBannerClose:hover {
+        opacity: 1;
+      }
+
       /* Tiny always-on version tag, pinned to the bottom-right corner — above the
          splash + HUD, and never intercepts clicks. */
       #versionTag {
@@ -2138,6 +2196,13 @@
       <div id="splashTop">
         <div id="splashTitle">GORILATOR</div>
         <div id="splashSub">Defend La Crypta</div>
+      </div>
+      <!-- Daemon "update available" banner. Hidden unless the server's
+           /api/update auto-check reports a newer GitHub release. -->
+      <div id="updateBanner" hidden>
+        <span id="updateBannerIcon">⬆</span>
+        <a id="updateBannerLink" href="#" target="_blank" rel="noopener noreferrer">Update available</a>
+        <button id="updateBannerClose" type="button" aria-label="Dismiss update notice">×</button>
       </div>
       <div id="assetLoad">
         <div id="assetLoadHead">

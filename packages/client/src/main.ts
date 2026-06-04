@@ -1202,6 +1202,9 @@ setupSprint(net);
 // same engine while the player picks a name; the main render loop below draws it
 // instead of the game world until `splash.active` flips during the launch.
 const splash = new SplashScreen(engine);
+// Surface a daemon "update available" banner on the splash (best-effort, silent
+// when offline / up to date). Fed by the server's /api/update auto-check.
+void splash.showUpdateBanner(net.httpBase());
 
 // homeMaxHp is kept so the home bar can still read "fallen" after the house is
 // removed from state on collapse.

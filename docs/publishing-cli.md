@@ -49,6 +49,35 @@ You can trigger the workflow by hand from **Actions → Publish CLI to npm → R
 Only do this when `package.json` already has a fresh, unpublished version — otherwise the
 `npm publish` step fails with "version already exists".
 
+## Auto-update check
+
+A self-hosted daemon (`gorilator install`) **automatically checks GitHub for new
+releases** and surfaces an alert so operators know when to run `gorilator update`.
+
+**How it works**
+
+- The game server (the supervised daemon process) runs a periodic check
+  ([`packages/server/src/systems/updateCheck.ts`](../packages/server/src/systems/updateCheck.ts)).
+  It calls the GitHub Releases API for the repo and compares the latest release's
+  publish date against the local git `HEAD` commit date — i.e. "was a release cut
+  after the code I'm running?".
+- The verdict is cached and exposed at **`GET /api/update`**.
+- **Game splash:** on load, the client polls `/api/update` and, if an update
+  exists, shows a small dismissible "⬆ Update available — &lt;tag&gt;" banner
+  linking to the GitHub release (see `packages/client/src/ui/splash.ts`).
+- **CLI:** `gorilator status` (and the interactive menu's *Status*) prints an
+  `Update:` line — `⬆ <tag> available — run 'gorilator update'` — when the daemon
+  reports one.
+
+**Configuring the interval**
+
+In `gorilator setup → Server settings → Auto-update check interval`, enter the
+check interval in hours (`0` disables it). This writes `UPDATE_CHECK_HOURS` to the
+install's `.env` and restarts the daemon. Default is **every 1 hour**.
+
+Related env vars (see [configuration.md](configuration.md#2-environment-variables-envexample)):
+`UPDATE_CHECK_HOURS`, `UPDATE_REPO`, `GITHUB_TOKEN` (optional, lifts the API rate limit).
+
 ## Notes
 
 - `packages/cli` is intentionally **excluded from the pnpm workspace** and uses plain

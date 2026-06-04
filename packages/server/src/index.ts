@@ -13,6 +13,7 @@ import { issueChallenge } from "./systems/nostr";
 import { getServerIdentity } from "./systems/nostrIdentity";
 import { realmTracker } from "./systems/realms";
 import { perfTracker } from "./systems/perf";
+import { updateChecker } from "./systems/updateCheck";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -83,6 +84,11 @@ app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
 // docs/performance.md.
 app.get("/api/perf", (_req, res) => res.json(perfTracker.snapshot()));
 
+// Auto-update status: the daemon's cached verdict on whether a newer GitHub
+// release exists. The game splash polls this to show an "update available"
+// banner; the `gorilator` CLI surfaces it in `status`. See systems/updateCheck.
+app.get("/api/update", (_req, res) => res.json(updateChecker.snapshot()));
+
 // SPA fallback (single-service only): unmatched GETs return index.html so the
 // client renders, but never shadow the monitor or Colyseus matchmaking routes.
 if (clientDist) {
@@ -126,6 +132,7 @@ gameServer
     console.log(`[server] monitor:  http://localhost:${port}/colyseus`);
     realmTracker.init(); // realm/stats tracking + Nostr discovery event + /api/* (see REALMS.md)
     perfTracker.init(); // CPU/memory/tick sampling + /api/perf (+ JSONL when PERF_LOG=1)
+    updateChecker.init(); // periodic GitHub release check → /api/update (UPDATE_CHECK_HOURS)
   })
   .catch((err) => {
     console.error("[server] failed to start", err);

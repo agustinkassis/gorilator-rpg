@@ -48,6 +48,9 @@ the section comments in the file:
 | `SERVER_NAME` | display name in the realm event + `/api/*` |
 | `PLAY_URL` | public URL players join at (defaults to `https://$SERVER_HOSTNAME`) |
 | `SERVER_STATS_FILE` | where realm lifetime totals persist (default `./.server-realms.json`) |
+| `UPDATE_CHECK_HOURS` | how often the daemon checks GitHub for a newer release (default `1`; `0` disables). Configure via `gorilator setup → Server settings`. See [publishing-cli.md](publishing-cli.md#auto-update-check). |
+| `UPDATE_REPO` | `owner/repo` the auto-update check queries (default `agustinkassis/gorilator-rpg`) |
+| `GITHUB_TOKEN` | optional — raises the GitHub API rate limit for the auto-update check |
 
 ## 3. Runtime content files (live-reloaded JSON)
 

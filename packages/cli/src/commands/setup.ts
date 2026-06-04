@@ -164,14 +164,52 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
       { label: "Update server port", hint: String(port) },
       { label: "Update optional client port", hint: clientPort ? String(clientPort) : "disabled" },
       { label: "Use one-port mode", hint: "client + WebSocket + monitor on server port" },
+      { label: "Auto-update check interval", hint: updateCheckHint(ctx.env.UPDATE_CHECK_HOURS) },
       { label: "Back" },
     ]);
 
     if (choice === 0) await updateServerPort(opts, port);
     else if (choice === 1) await updateClientPort(opts, clientPort);
     else if (choice === 2) await setOnePortMode(opts);
+    else if (choice === 3) updateAutoUpdateInterval(opts);
     else return;
   }
+}
+
+/** Hint for the auto-update menu row: the current interval (1h default, 0=off). */
+function updateCheckHint(raw: string | undefined): string {
+  if (raw === undefined || raw.trim() === "") return "every 1h (default)";
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return "disabled";
+  return `every ${n}h`;
+}
+
+/** Prompt for the daemon's release-check interval in hours (0 disables) and
+ *  persist it as UPDATE_CHECK_HOURS, then restart so the server picks it up. */
+function updateAutoUpdateInterval(opts: Options): void {
+  const ctx = requireInstall(opts);
+  const current = ctx.env.UPDATE_CHECK_HOURS?.trim() || "1";
+  process.stdout.write(
+    "How often should the daemon check GitHub for a new release?\n" +
+      "  Enter hours (e.g. 1, 6, 24). Enter 0 to disable auto-update checks.\n",
+  );
+  const raw = ask(`Check interval in hours [${current}]: `).trim() || current;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    log.warn("Enter a non-negative number of hours. No change made.");
+    pause();
+    return;
+  }
+  const value = String(Math.floor(n));
+  writeEnvPatch(
+    ctx,
+    { UPDATE_CHECK_HOURS: value },
+    n === 0
+      ? "Disabled the daemon auto-update check."
+      : `Set the daemon auto-update check to every ${value}h.`,
+  );
+  restartDaemon();
+  pause();
 }
 
 async function updateServerPort(opts: Options, current: number): Promise<void> {
