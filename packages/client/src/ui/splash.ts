@@ -229,9 +229,14 @@ export class SplashScreen {
       if (link && s.latest.url) link.href = s.latest.url;
       banner.hidden = false;
       banner.classList.add("show");
+      // Slide the splash title down so the alert sits in clear space above it.
+      this.el.classList.add("has-update");
+      this.setTitleShift(true);
       document.getElementById("updateBannerClose")?.addEventListener("click", () => {
         banner.classList.remove("show");
         banner.hidden = true;
+        this.el.classList.remove("has-update");
+        this.setTitleShift(false);
         document.getElementById("updateActions")?.setAttribute("hidden", "");
       });
 
@@ -240,6 +245,27 @@ export class SplashScreen {
       void this.refreshUpdateActions();
     } catch {
       /* offline / not configured / up to date — leave the banner hidden */
+    }
+  }
+
+  /**
+   * Slide the splash title + subtitle down (or restore them) so the update
+   * banner + actions have clear space above the giant title. The title carries
+   * a decorative rotate/skew transform, so we compose the downward translate
+   * onto its current transform and apply it inline with `!important` — which
+   * reliably wins the cascade (a stylesheet rule gets overridden here).
+   */
+  private setTitleShift(on: boolean): void {
+    const px = window.innerHeight < 620 ? 80 : 108;
+    for (const id of ["splashTitle", "splashSub"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.style.removeProperty("transform");
+      if (on) {
+        const base = getComputedStyle(el).transform;
+        const composed = `translateY(${px}px)` + (base && base !== "none" ? ` ${base}` : "");
+        el.style.setProperty("transform", composed, "important");
+      }
     }
   }
 

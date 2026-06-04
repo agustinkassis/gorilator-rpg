@@ -620,22 +620,30 @@
         top: 14px;
         left: 50%;
         transform: translateX(-50%) translateY(-12px);
-        z-index: 10001;
+        z-index: 10050;
         display: flex;
         align-items: center;
         gap: 8px;
         max-width: calc(100vw - 24px);
         box-sizing: border-box;
-        padding: 7px 10px 7px 12px;
-        border: 1px solid rgba(255, 212, 121, 0.6);
+        padding: 8px 12px 8px 14px;
+        border: 1.5px solid rgba(255, 206, 110, 0.95);
         border-radius: 999px;
-        background: rgba(18, 12, 6, 0.92);
-        color: #ffd479;
-        font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        background: rgba(46, 30, 10, 0.97);
+        color: #ffe1a3;
+        font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        box-shadow:
+          0 10px 28px rgba(0, 0, 0, 0.55),
+          0 0 0 3px rgba(255, 200, 90, 0.14),
+          0 0 22px rgba(255, 176, 60, 0.45);
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.4s ease, transform 0.4s ease;
+        animation: updateBannerPulse 2.6s ease-in-out infinite;
+      }
+      @keyframes updateBannerPulse {
+        0%, 100% { box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 0 3px rgba(255,200,90,0.14), 0 0 18px rgba(255,176,60,0.35); }
+        50% { box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 0 3px rgba(255,200,90,0.22), 0 0 30px rgba(255,176,60,0.6); }
       }
       #updateBanner.show {
         opacity: 1;
@@ -679,10 +687,10 @@
          self-update progress bar). Pinned just below the banner pill. */
       #updateActions {
         position: fixed;
-        top: 56px;
+        top: 58px;
         left: 50%;
         transform: translateX(-50%);
-        z-index: 10001;
+        z-index: 10050;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -690,6 +698,12 @@
         max-width: calc(100vw - 24px);
         text-align: center;
       }
+      /* When the update alert is showing, the splash title + subtitle are slid
+         down (so the banner + actions sit in clear space above them) by composing
+         a downward translate onto their existing transform — applied inline from
+         splash.ts (setTitleShift), which reliably wins the cascade. Applied
+         without a transform transition (transform-list interpolation from the
+         title's skew doesn't settle reliably), so the shift is instant. */
       #updateAdminBtn {
         padding: 8px 18px;
         border: 1px solid rgba(255, 212, 121, 0.85);
