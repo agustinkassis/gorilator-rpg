@@ -424,6 +424,20 @@
   margin-top: 2px;
 }
 
+.colServer .srvNpub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(255, 212, 121, 0.55);
+  text-decoration: none;
+}
+
+.colServer .srvNpub:hover {
+  color: var(--gold, #ffd479);
+  text-decoration: underline;
+}
+
 .freshTag {
   display: block;
   margin-top: 2px;

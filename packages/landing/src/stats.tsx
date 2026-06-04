@@ -129,10 +129,20 @@ function ServerRow({
   const npubs = r?.npubs ?? [];
   const shown = npubs.slice(0, 4);
   const extra = npubs.length - shown.length;
+  const npub = useMemo(() => npubEncode(server.pubkey), [server.pubkey]);
   return (
     <tr className={offline ? "offline" : r ? "playing" : ""}>
       <td className="colServer">
         <span className="srvName">{server.name}</span>
+        <a
+          className="srvNpub"
+          href={`https://njump.me/${npub}`}
+          target="_blank"
+          rel="noreferrer"
+          title={npub}
+        >
+          {shortNpub(npub)}
+        </a>
         {offline ? (
           <span className="offlineTag">● offline</span>
         ) : server.fetchedAt ? (
