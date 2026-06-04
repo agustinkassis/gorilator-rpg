@@ -340,7 +340,7 @@ function Stats() {
       </section>
 
       <section className="statsSection">
-        <h2>Players captured</h2>
+        <h2>Players</h2>
         <p className="muted sectionSub">
           Every npub seen across these servers ({capturedPlayers.length}) — others defend anonymously.
         </p>
