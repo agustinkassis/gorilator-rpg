@@ -132,11 +132,6 @@ function ServerRow({
   return (
     <tr className={offline ? "offline" : r ? "playing" : ""}>
       <td className="colServer">
-        {flag && (
-          <span className="srvFlag" aria-hidden>
-            {flag}
-          </span>
-        )}
         <span className="srvName">{server.name}</span>
         {offline ? (
           <span className="offlineTag">● offline</span>
@@ -157,7 +152,18 @@ function ServerRow({
       <td className="num">{server.maxRounds}</td>
       <td className="num">{r ? r.wave : "—"}</td>
       <td className="num colPing">
-        {server.url ? <PingCell ping={ping} offline={offline} /> : <span className="muted small">—</span>}
+        {server.url ? (
+          <span className="pingWrap">
+            {flag && (
+              <span className="pingFlag" title="Server location" aria-hidden>
+                {flag}
+              </span>
+            )}
+            <PingCell ping={ping} offline={offline} />
+          </span>
+        ) : (
+          <span className="muted small">—</span>
+        )}
       </td>
       <td className="colPlayers">
         {r ? (
