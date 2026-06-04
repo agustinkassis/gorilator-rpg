@@ -212,11 +212,11 @@ export class SplashScreen {
       };
       if (!s.updateAvailable || !s.latest) return;
 
+      const text = document.getElementById("updateBannerText");
+      if (text) text.textContent = `Update available — ${s.latest.tag ?? "new release"}`;
+      // The banner links straight to the GitHub release page for this update.
       const link = document.getElementById("updateBannerLink") as HTMLAnchorElement | null;
-      if (link) {
-        link.textContent = `Update available — ${s.latest.tag ?? "new release"}`;
-        if (s.latest.url) link.href = s.latest.url;
-      }
+      if (link && s.latest.url) link.href = s.latest.url;
       banner.hidden = false;
       banner.classList.add("show");
       document.getElementById("updateBannerClose")?.addEventListener("click", () => {

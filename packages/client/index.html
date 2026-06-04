@@ -646,14 +646,18 @@
         font-size: 13px;
         line-height: 1;
       }
+      /* The icon + label together are one link to the GitHub release page. */
       #updateBannerLink {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
         color: #ffe6a8;
         text-decoration: none;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      #updateBannerLink:hover {
+      #updateBannerLink:hover #updateBannerText {
         text-decoration: underline;
       }
       #updateBannerClose {
@@ -2200,8 +2204,10 @@
       <!-- Daemon "update available" banner. Hidden unless the server's
            /api/update auto-check reports a newer GitHub release. -->
       <div id="updateBanner" hidden>
-        <span id="updateBannerIcon">⬆</span>
-        <a id="updateBannerLink" href="#" target="_blank" rel="noopener noreferrer">Update available</a>
+        <a id="updateBannerLink" href="https://github.com/agustinkassis/gorilator-rpg/releases" target="_blank" rel="noopener noreferrer">
+          <span id="updateBannerIcon">⬆</span>
+          <span id="updateBannerText">Update available</span>
+        </a>
         <button id="updateBannerClose" type="button" aria-label="Dismiss update notice">×</button>
       </div>
       <div id="assetLoad">
