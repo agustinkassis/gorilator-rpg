@@ -20,7 +20,14 @@ import {
   statusService,
   stopService,
 } from "../lib/service.js";
-import { printPackageVersions, printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
+import {
+  printField,
+  printPackageVersions,
+  printPorts,
+  printPublic,
+  printSection,
+  readEnvInfo,
+} from "../lib/summary.js";
 
 export async function startCmd(ctx?: RuntimeContext, opts?: Options): Promise<void> {
   if (ctx?.kind === "project") {
@@ -98,16 +105,24 @@ export async function statusCmd(ctx?: RuntimeContext, opts?: Options): Promise<v
   const cfg = loadConfig();
   const s = statusService();
   const state = s.active ? log.green("active") : log.yellow("inactive");
-  process.stdout.write(`${log.bold("Service")} (${manager()}): ${state}\n`);
+  printSection("Gorilator Status");
+  printField("Mode", "system install");
+  printField("Manager", manager());
+  printField("State", state);
   if (cfg) {
     const info = readEnvInfo(cfg.appDir, cfg.port, cfg.clientPort);
     const healthy = await probeHealth(info.port);
+    printField("Files", cfg.appDir);
+    printField("Ref", cfg.ref);
+    process.stdout.write("\n");
+    printSection("Local URLs");
     printPorts(info, healthy);
-    process.stdout.write(`  Files  : ${cfg.appDir}  (ref ${cfg.ref})\n`);
-    printPackageVersions(cfg.appDir);
-    printPublic(info);
+    process.stdout.write("\n");
+    printPackageVersions(cfg.appDir, { heading: true });
+    printPublic(info, { heading: true });
   } else {
-    printPackageVersions(process.cwd());
+    process.stdout.write("\n");
+    printPackageVersions(process.cwd(), { heading: true });
     log.warn("No install record found — run 'gorilator install' first.");
   }
   if (s.raw) process.stdout.write(`\n${log.dim(s.raw)}\n`);

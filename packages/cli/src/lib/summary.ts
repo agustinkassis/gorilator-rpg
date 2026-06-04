@@ -15,12 +15,14 @@ export interface SummaryInfo {
   serverHost?: string; // public game host (or legacy api.*)
 }
 
-interface PackageVersion {
+export interface PackageVersion {
   label: string;
   version: string;
 }
 
-const VERSION_FILES: Array<{ label: string; path: string }> = [
+const FIELD_LABEL_WIDTH = 11;
+
+export const PACKAGE_VERSION_FILES: Array<{ label: string; path: string }> = [
   { label: "app", path: "package.json" },
   { label: "cli", path: "packages/cli/package.json" },
   { label: "client", path: "packages/client/package.json" },
@@ -40,18 +42,40 @@ function readPackageVersion(appDir: string, path: string): string | null {
   }
 }
 
+export function printSection(title: string): void {
+  process.stdout.write(`${log.bold(title)}\n`);
+}
+
+export function printField(label: string, value: string): void {
+  process.stdout.write(`  ${label.padEnd(FIELD_LABEL_WIDTH)}: ${value}\n`);
+}
+
 export function readPackageVersions(appDir: string): PackageVersion[] {
-  return VERSION_FILES.flatMap(({ label, path }) => {
+  return PACKAGE_VERSION_FILES.flatMap(({ label, path }) => {
     const version = readPackageVersion(appDir, path);
     return version ? [{ label, version }] : [];
   });
 }
 
-export function printPackageVersions(appDir: string): void {
+export interface PrintPackageVersionsOptions {
+  heading?: string | boolean;
+}
+
+export function printPackageVersions(
+  appDir: string,
+  opts: PrintPackageVersionsOptions = {},
+): void {
   const versions = readPackageVersions(appDir);
   if (versions.length === 0) return;
+  if (opts.heading) {
+    printSection(typeof opts.heading === "string" ? opts.heading : "Package Versions");
+    for (const { label, version } of versions) {
+      printField(label, `v${version}`);
+    }
+    return;
+  }
   const summary = versions.map(({ label, version }) => `${label} v${version}`).join(" / ");
-  process.stdout.write(`  Packages: ${summary}\n`);
+  printField("Packages", summary);
 }
 
 /** Read the listen port + monitor creds + public hostnames out of the install's
@@ -80,37 +104,45 @@ export function readEnvInfo(
  *  share it). Pass `healthy` to also show the /healthz result. */
 export function printPorts(info: SummaryInfo, healthy?: boolean): void {
   if (info.clientPort && info.clientPort !== info.port) {
-    process.stdout.write(`  Client : http://localhost:${info.clientPort}  (game page)\n`);
-    process.stdout.write(`  Server : http://localhost:${info.port}  (WebSocket + monitor + API)\n`);
+    printField("Client", `http://localhost:${info.clientPort}  (game page)`);
+    printField("Server", `http://localhost:${info.port}  (WebSocket + monitor + API)`);
   } else {
-    process.stdout.write(`  Local  : http://localhost:${info.port}  (game client + WebSocket)\n`);
+    printField("Local", `http://localhost:${info.port}  (game client + WebSocket)`);
   }
   if (healthy !== undefined) {
     const tag = healthy ? log.green("(ok)") : log.yellow("(starting…)");
-    process.stdout.write(`  Health : http://localhost:${info.port}/healthz  ${tag}\n`);
+    printField("Health", `http://localhost:${info.port}/healthz  ${tag}`);
   }
   const creds = info.monitorUser
     ? `  (user ${info.monitorUser}${info.monitorPass ? ` · pass ${info.monitorPass}` : ""})`
     : "";
-  process.stdout.write(`  Monitor: http://localhost:${info.port}/colyseus${creds}\n`);
+  printField("Monitor", `http://localhost:${info.port}/colyseus${creds}`);
 }
 
 /** Print the public Cloudflare URLs when a tunnel has been configured. New
  *  setups use one host for play + WSS + monitor; old split-host setups are
  *  still displayed as split for clarity. Returns whether anything was printed. */
-export function printPublic(info: SummaryInfo): boolean {
+export interface PrintPublicOptions {
+  heading?: string | boolean;
+  leadingBlank?: boolean;
+}
+
+export function printPublic(info: SummaryInfo, opts: PrintPublicOptions = {}): boolean {
   if (!info.clientHost && !info.serverHost) return false;
-  process.stdout.write("\n");
+  if (opts.leadingBlank !== false) process.stdout.write("\n");
+  if (opts.heading) {
+    printSection(typeof opts.heading === "string" ? opts.heading : "Public URLs");
+  }
   const creds = info.monitorUser ? `  (user ${info.monitorUser})` : "";
   if (info.clientHost && info.serverHost && info.clientHost !== info.serverHost) {
-    process.stdout.write(`  Play   : ${log.green(`https://${info.clientHost}`)}\n`);
-    process.stdout.write(`  Server : wss://${info.serverHost}\n`);
-    process.stdout.write(`  Monitor: https://${info.serverHost}/colyseus${creds}\n`);
+    printField("Play", log.green(`https://${info.clientHost}`));
+    printField("Server", `wss://${info.serverHost}`);
+    printField("Monitor", `https://${info.serverHost}/colyseus${creds}`);
   } else {
     const host = info.serverHost || info.clientHost;
-    process.stdout.write(`  Play   : ${log.green(`https://${host}`)}\n`);
-    process.stdout.write(`  Server : wss://${host}\n`);
-    process.stdout.write(`  Monitor: https://${host}/colyseus${creds}\n`);
+    printField("Play", log.green(`https://${host}`));
+    printField("Server", `wss://${host}`);
+    printField("Monitor", `https://${host}/colyseus${creds}`);
   }
   return true;
 }

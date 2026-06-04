@@ -64,6 +64,7 @@ gorilator stop        # stop the service
 gorilator restart     # restart the service
 gorilator logs -f     # follow logs
 gorilator update      # git pull, rebuild, restart
+gorilator remote      # compare local package versions against remote/latest
 gorilator setup       # ports, server NSEC, Cloudflare tunnel, env
 ```
 
