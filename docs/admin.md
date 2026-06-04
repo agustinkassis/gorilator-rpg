@@ -4,7 +4,8 @@ The server has an **admin list** of Nostr identities that may call protected
 `/api/admin/*` endpoints and trigger a self-update from the game splash. Auth uses
 **[NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md)** (HTTP Auth):
 the caller signs a short-lived event with their Nostr key and sends it as an
-`Authorization: Nostr …` header. No passwords, no sessions.
+`Authorization: Nostr …` header. No passwords, no sessions. For how the auth itself
+works (and the player login flow), see [nostr-auth.md](nostr-auth.md).
 
 ## Configuring admins
 

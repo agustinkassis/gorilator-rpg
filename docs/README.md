@@ -32,6 +32,7 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [performance.md](performance.md) | The perf pipeline: the F3 overlay, tagging any work, recording benchmarks, the JSONL data format, and the `pnpm perf` analyzer (FPS / CPU / GPU / memory) |
 | [performance-research.md](performance-research.md) | The living benchmarking **process**, standard scenarios, dated **findings log**, and the prioritized **optimization backlog** (continuous perf research) |
 | [nostr.md](nostr.md) | All Nostr events: login challenge, server-signed player saves, and the server/realm **discovery** event (+ the public HTTP API) |
+| [nostr-auth.md](nostr-auth.md) | **Authentication** with Nostr keys: player login (NIP-42 kind 22242) and admin HTTP auth (NIP-98 kind 27235), the trust model, and how to call protected endpoints |
 | [publishing-cli.md](publishing-cli.md) | How the `gorilator` CLI is auto-published to npm on each GitHub Release via CI (OIDC Trusted Publishing, no token), plus the release checklist |
 | [admin.md](admin.md) | The admin list (`ADMIN_NPUBS`) + NIP-98-protected `/api/admin/*` API, and the admin "Update now" self-update button on the splash |
 
