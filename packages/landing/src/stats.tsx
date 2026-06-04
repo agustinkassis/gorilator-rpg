@@ -275,8 +275,14 @@ function Stats() {
     [active],
   );
 
-  // Players currently in a live realm — that's who we surface in the wall.
-  const onlinePlayers = useMemo(() => [...livePubkeys], [livePubkeys]);
+  // Every npub captured across servers (current + last realms), live ones first.
+  const capturedPlayers = useMemo(
+    () =>
+      [...allPubkeys].sort(
+        (a, b) => (livePubkeys.has(b) ? 1 : 0) - (livePubkeys.has(a) ? 1 : 0),
+      ),
+    [allPubkeys, livePubkeys],
+  );
 
   return (
     <main className="stats">
@@ -334,23 +340,26 @@ function Stats() {
       </section>
 
       <section className="statsSection">
-        <h2>Online players</h2>
+        <h2>Players captured</h2>
         <p className="muted sectionSub">
-          Defenders currently in a live realm with Nostr — others defend anonymously.
+          Every npub seen across these servers ({capturedPlayers.length}) — others defend anonymously.
         </p>
-        {onlinePlayers.length === 0 ? (
+        {capturedPlayers.length === 0 ? (
           <p className="muted">
-            {status === "live" ? "No identified players online right now." : "Listening for players…"}
+            {status === "live" ? "No identified players captured yet." : "Listening for players…"}
           </p>
         ) : (
           <div className="avatarWall">
-            {onlinePlayers.map((pk) => (
-              <div className="playerChip live" key={pk}>
-                <Avatar pubkey={pk} profile={profiles[pk]} live />
-                <span className="playerName">{profiles[pk]?.name || shortNpub(npubEncode(pk))}</span>
-                <span className="liveTag">in play</span>
-              </div>
-            ))}
+            {capturedPlayers.map((pk) => {
+              const live = livePubkeys.has(pk);
+              return (
+                <div className={`playerChip ${live ? "live" : ""}`} key={pk}>
+                  <Avatar pubkey={pk} profile={profiles[pk]} live={live} />
+                  <span className="playerName">{profiles[pk]?.name || shortNpub(npubEncode(pk))}</span>
+                  {live && <span className="liveTag">in play</span>}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
