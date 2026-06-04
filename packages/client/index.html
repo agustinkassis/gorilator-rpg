@@ -713,6 +713,9 @@
          without a transform transition (transform-list interpolation from the
          title's skew doesn't settle reliably), so the shift is instant. */
       #updateAdminBtn {
+        /* The splash overlay is pointer-events:none (clicks pass through); the
+           button must opt back in to be clickable. */
+        pointer-events: auto;
         padding: 8px 18px;
         border: 1px solid rgba(255, 212, 121, 0.85);
         border-radius: 999px;
