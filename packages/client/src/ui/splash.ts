@@ -337,7 +337,10 @@ export class SplashScreen {
     const setFill = (pct: number) => fill && (fill.style.width = `${Math.min(100, pct)}%`);
 
     this.updateRunning = true;
-    if (btn) btn.disabled = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.hidden = true; // only the progress shows while updating
+    }
     if (hint) hint.hidden = true;
     if (prog) prog.hidden = false;
     setStatus("Authorizing…");
@@ -353,7 +356,11 @@ export class SplashScreen {
     } catch (err) {
       setStatus(`Couldn't start update: ${err instanceof Error ? err.message : "error"}`);
       this.updateRunning = false;
-      if (btn) btn.disabled = false;
+      if (prog) prog.hidden = true;
+      if (btn) {
+        btn.disabled = false;
+        btn.hidden = false; // let the admin retry
+      }
       return;
     }
 
@@ -392,7 +399,10 @@ export class SplashScreen {
       if (elapsed > MAX_MS) {
         setStatus("Update is taking longer than expected — check 'gorilator logs'.");
         this.updateRunning = false;
-        if (btn) btn.disabled = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.hidden = false;
+        }
         return;
       }
     }

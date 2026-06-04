@@ -698,6 +698,14 @@
         max-width: calc(100vw - 24px);
         text-align: center;
       }
+      /* The `display: flex` on #updateActions / #updateProgress would otherwise
+         override the `hidden` attribute (UA `[hidden]{display:none}`), leaving the
+         progress UI visible before any click. An id+attribute selector out-specifies
+         the plain id rule, so `hidden` is respected without !important. */
+      #updateActions[hidden],
+      #updateProgress[hidden] {
+        display: none;
+      }
       /* When the update alert is showing, the splash title + subtitle are slid
          down (so the banner + actions sit in clear space above them) by composing
          a downward translate onto their existing transform — applied inline from
