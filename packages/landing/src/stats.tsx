@@ -207,15 +207,15 @@ function Stats() {
   // and flag the ones a check found offline. HTTP wins when reachable; we keep the
   // relay-proven pubkey as the identity.
   const health = useServerHealth(servers);
+  // One row per server: collapse same-play-URL keys to the latest version FIRST
+  // (by discovery-event time), then enrich the survivor with its live health.
   const merged = useMemo<(ServerStatus & { fetchedAt?: number; offline?: boolean })[]>(
     () =>
-      dedupeByUrl(
-        servers.map((s) => {
-          const h = s.url ? health[s.url] : undefined;
-          const base = h?.data ? { ...h.data, pubkey: s.pubkey } : s;
-          return { ...base, offline: h?.offline ?? false };
-        }),
-      ),
+      dedupeByUrl(servers).map((s) => {
+        const h = s.url ? health[s.url] : undefined;
+        const base = h?.data ? { ...h.data, pubkey: s.pubkey } : s;
+        return { ...base, offline: h?.offline ?? false };
+      }),
     [servers, health],
   );
 

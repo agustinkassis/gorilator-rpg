@@ -164,24 +164,46 @@ export function useGorilatorServers(): { servers: ServerStatus[]; status: LiveSt
 }
 
 /**
- * Collapse servers that advertise the same play URL into one entry (different server
- * keys can point at the same game link). Keeps the most recently updated of each,
- * preserving order. Servers without a URL are always kept (no link to dedupe on).
+ * Canonical form of a play URL so trivially-different links (trailing slash, host
+ * case, default port, scheme case) collapse to the same key. Returns the raw string
+ * if it can't be parsed.
+ */
+export function canonicalUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const scheme = u.protocol.toLowerCase();
+    let host = u.host.toLowerCase(); // host includes a non-default port
+    if ((scheme === "https:" && u.port === "443") || (scheme === "http:" && u.port === "80")) {
+      host = u.hostname.toLowerCase();
+    }
+    const path = u.pathname.replace(/\/+$/, ""); // drop trailing slashes
+    return `${scheme}//${host}${path}`;
+  } catch {
+    return raw.trim();
+  }
+}
+
+/**
+ * Collapse servers that advertise the same play URL into ONE server (different server
+ * keys can point at the same game link — e.g. a redeploy that minted a new identity).
+ * Keeps the latest version of that server (highest `updatedAt`) and preserves order.
+ * Servers without a URL can't be matched, so each is kept as-is.
  */
 export function dedupeByUrl<T extends { url: string; updatedAt: number }>(servers: T[]): T[] {
-  const indexByUrl = new Map<string, number>();
+  const indexByKey = new Map<string, number>();
   const out: T[] = [];
   for (const s of servers) {
     if (!s.url) {
       out.push(s);
       continue;
     }
-    const at = indexByUrl.get(s.url);
+    const key = canonicalUrl(s.url);
+    const at = indexByKey.get(key);
     if (at === undefined) {
-      indexByUrl.set(s.url, out.length);
+      indexByKey.set(key, out.length);
       out.push(s);
     } else if (s.updatedAt > out[at].updatedAt) {
-      out[at] = s; // newer status for the same link wins
+      out[at] = s; // newer version of the same server wins
     }
   }
   return out;
