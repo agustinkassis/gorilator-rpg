@@ -716,6 +716,10 @@
         /* The splash overlay is pointer-events:none (clicks pass through); the
            button must opt back in to be clickable. */
         pointer-events: auto;
+        /* Fill the actions column, which is sized to match the banner pill width
+           (set in splash.ts when the banner is shown). */
+        width: 100%;
+        box-sizing: border-box;
         padding: 8px 18px;
         border: 1px solid rgba(255, 212, 121, 0.85);
         border-radius: 999px;
@@ -747,7 +751,7 @@
         border-radius: 5px;
       }
       #updateProgress {
-        width: min(320px, calc(100vw - 32px));
+        width: 100%;
         display: flex;
         flex-direction: column;
         gap: 6px;

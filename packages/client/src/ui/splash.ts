@@ -229,6 +229,10 @@ export class SplashScreen {
       if (link && s.latest.url) link.href = s.latest.url;
       banner.hidden = false;
       banner.classList.add("show");
+      // Size the actions column (button / hint / progress) to the banner pill's
+      // width so the "Update now" button spans the full width of the alert.
+      const actions = document.getElementById("updateActions");
+      if (actions) actions.style.width = `${Math.round(banner.getBoundingClientRect().width)}px`;
       // Slide the splash title down so the alert sits in clear space above it.
       this.el.classList.add("has-update");
       this.setTitleShift(true);
