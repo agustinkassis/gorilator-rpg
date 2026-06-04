@@ -5,6 +5,8 @@
   "description": "Multiplayer isometric low-poly RPG demo — Babylon.js + Colyseus",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "wt:launch": "node scripts/wt-launch.mjs",
+    "wt:launch:all": "node scripts/wt-launch.mjs --all",
     "dev:server": "pnpm --filter @rpg/shared build && pnpm --filter @rpg/server dev",
     "dev:client": "pnpm --filter @rpg/shared build && pnpm --filter @rpg/client dev",
     "dev:landing": "pnpm --filter @gorilator/landing dev",
