@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ArrowLeft, Github, Play, Radio } from "lucide-react";
 import { npubEncode } from "nostr-tools/nip19";
 import {
+  ACTIVITY_WINDOWS,
   dedupeByUrl,
   useGorilatorServers,
   useProfiles,
@@ -161,9 +162,18 @@ function ServerRow({
   );
 }
 
+/** Most recent sign of life from a server: a live /api/status poll or its newest event. */
+function lastActivity(s: { updatedAt: number; fetchedAt?: number }): number {
+  return Math.max(s.updatedAt, s.fetchedAt ?? 0);
+}
+
 function Stats() {
   const { servers, status } = useGorilatorServers();
   const now = useNow(1000);
+
+  // "Active in the last…" filter — default to 48h. Index into ACTIVITY_WINDOWS.
+  const [windowIdx, setWindowIdx] = useState(3);
+  const windowMs = ACTIVITY_WINDOWS[windowIdx].ms;
 
   // Health-check servers that advertise a play URL: enrich with their live /api/status
   // and flag the ones a check found offline. HTTP wins when reachable; we keep the
@@ -181,17 +191,23 @@ function Stats() {
     [servers, health],
   );
 
-  const playing = useMemo(() => merged.filter((s) => s.currentRealm && !s.offline), [merged]);
+  // Keep only servers whose last activity falls inside the selected window.
+  const active = useMemo(
+    () => merged.filter((s) => now - lastActivity(s) <= windowMs),
+    [merged, now, windowMs],
+  );
+
+  const playing = useMemo(() => active.filter((s) => s.currentRealm && !s.offline), [active]);
 
   const totals = useMemo(() => {
-    const totalRealms = merged.reduce((n, s) => n + s.totalRealms, 0);
-    const bestWave = merged.reduce((n, s) => Math.max(n, s.maxRounds), 0);
+    const totalRealms = active.reduce((n, s) => n + s.totalRealms, 0);
+    const bestWave = active.reduce((n, s) => Math.max(n, s.maxRounds), 0);
     const livePlayers = playing.reduce(
       (n, s) => n + (s.currentRealm?.players ?? s.currentRealm?.npubs.length ?? 0),
       0,
     );
     return { totalRealms, bestWave, livePlayers };
-  }, [merged, playing]);
+  }, [active, playing]);
 
   const livePubkeys = useMemo(() => {
     const set = new Set<string>();
@@ -201,18 +217,18 @@ function Stats() {
 
   const allPubkeys = useMemo(() => {
     const set = new Set<string>();
-    merged.forEach((s) => {
+    active.forEach((s) => {
       s.currentRealm?.npubs.forEach((p) => set.add(p));
       s.lastRealm?.npubs.forEach((p) => set.add(p));
     });
     return [...set];
-  }, [merged]);
+  }, [active]);
 
   const profiles = useProfiles(allPubkeys);
 
   const sortedServers = useMemo(
     () =>
-      [...merged].sort((a, b) => {
+      [...active].sort((a, b) => {
         // Offline servers sink to the bottom; joinable (Play button) on top; then
         // most recently updated first.
         const ao = a.offline ? 1 : 0;
@@ -223,7 +239,7 @@ function Stats() {
         if (au !== bu) return bu - au;
         return b.updatedAt - a.updatedAt;
       }),
-    [merged],
+    [active],
   );
 
   // Players currently in a live realm — that's who we surface in the wall.
@@ -258,8 +274,25 @@ function Stats() {
         </p>
       </section>
 
+      <section className="activityFilter" aria-label="Filter by last activity">
+        <span className="filterLabel">Active in the last</span>
+        <div className="filterSeg" role="tablist">
+          {ACTIVITY_WINDOWS.map((w, i) => (
+            <button
+              key={w.label}
+              role="tab"
+              aria-selected={i === windowIdx}
+              className={`segBtn ${i === windowIdx ? "active" : ""}`}
+              onClick={() => setWindowIdx(i)}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="statGrid">
-        <StatCard value={merged.length} label="Servers" sub={`${playing.length} playing`} />
+        <StatCard value={active.length} label="Servers" sub={`${playing.length} playing`} />
         <StatCard value={playing.length} label="Live realms" />
         <StatCard value={totals.livePlayers} label="Players in play" />
         <StatCard value={totals.totalRealms} label="Realms played" sub="all time" />
@@ -291,11 +324,13 @@ function Stats() {
 
       <section className="statsSection">
         <h2>Servers</h2>
-        {merged.length === 0 ? (
+        {active.length === 0 ? (
           <p className="muted">
-            {status === "live"
-              ? "No Gorilator servers are broadcasting right now."
-              : "Searching relays…"}
+            {status !== "live"
+              ? "Searching relays…"
+              : merged.length === 0
+                ? "No Gorilator servers are broadcasting right now."
+                : `No servers active in the last ${ACTIVITY_WINDOWS[windowIdx].label}.`}
           </p>
         ) : (
           <div className="serverTableWrap">

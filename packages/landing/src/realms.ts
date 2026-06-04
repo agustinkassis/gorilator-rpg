@@ -13,8 +13,17 @@ const DISCOVERY_KIND = 30078;
 const DISCOVERY_D = "gorilator-server";
 const PROFILE_KIND = 0;
 
-/** Only surface servers whose discovery event is at most this old. */
-const DISCOVERY_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+/** Selectable "active in the last…" windows for the stats page, widest last. */
+export const ACTIVITY_WINDOWS = [
+  { label: "1h", ms: 1 * 60 * 60 * 1000 },
+  { label: "6h", ms: 6 * 60 * 60 * 1000 },
+  { label: "24h", ms: 24 * 60 * 60 * 1000 },
+  { label: "48h", ms: 48 * 60 * 60 * 1000 },
+  { label: "Week", ms: 7 * 24 * 60 * 60 * 1000 },
+] as const;
+
+/** We ingest up to the widest window; the UI filters down to a tighter one. */
+const DISCOVERY_WINDOW_MS = ACTIVITY_WINDOWS[ACTIVITY_WINDOWS.length - 1].ms; // 1 week
 
 /** Just the event fields we read — keeps us decoupled from nostr-tools' Event type. */
 interface RawEvent {

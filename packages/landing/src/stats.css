@@ -107,6 +107,56 @@
 }
 
 /* aggregate stat cards */
+.activityFilter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: clamp(18px, 3vh, 28px);
+}
+
+.activityFilter .filterLabel {
+  color: rgba(255, 226, 160, 0.7);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.filterSeg {
+  display: inline-flex;
+  padding: 4px;
+  gap: 2px;
+  border-radius: 999px;
+  background: rgba(13, 11, 9, 0.8);
+  border: 1px solid rgba(255, 212, 121, 0.18);
+}
+
+.segBtn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  padding: 7px 15px;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 226, 160, 0.65);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.segBtn:hover {
+  color: #ffe8ac;
+}
+
+.segBtn.active {
+  color: #1c0d07;
+  background: linear-gradient(180deg, #ffe09a, #f0902e);
+  box-shadow: 0 4px 12px rgba(240, 144, 46, 0.35);
+}
+
 .statGrid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
