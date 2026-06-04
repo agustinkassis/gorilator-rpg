@@ -195,6 +195,21 @@ function lastActivity(s: { updatedAt: number; fetchedAt?: number }): number {
   return Math.max(s.updatedAt, s.fetchedAt ?? 0);
 }
 
+/**
+ * A server is online only if we can actually reach it now. Offline when: a health
+ * check already failed, it advertises no play URL (nothing to reach from the browser),
+ * or its latest ping timed out. An unmeasured ping (undefined) stays pending — we
+ * don't flip a freshly-discovered server to Offline before the first probe lands.
+ */
+function deriveOffline(
+  s: { url: string; offline?: boolean },
+  ping: Ping | null | undefined,
+): boolean {
+  if (s.offline) return true;
+  if (!s.url) return true;
+  return ping === null;
+}
+
 function Stats() {
   const { servers, status } = useGorilatorServers();
   const now = useNow(1000);
@@ -225,17 +240,32 @@ function Stats() {
     [merged, now, windowMs],
   );
 
-  const playing = useMemo(() => active.filter((s) => s.currentRealm && !s.offline), [active]);
+  // Live latency + country flag for every server that advertises a play URL.
+  const serverUrls = useMemo(() => active.map((s) => s.url).filter(Boolean), [active]);
+  const pings = useServerPings(serverUrls);
+  const flags = useServerFlags(serverUrls);
+
+  // Resolve each server's online/offline status from whether we can reach it now.
+  const withStatus = useMemo(
+    () =>
+      active.map((s) => ({ ...s, offline: deriveOffline(s, s.url ? pings[s.url] : undefined) })),
+    [active, pings],
+  );
+
+  const playing = useMemo(
+    () => withStatus.filter((s) => s.currentRealm && !s.offline),
+    [withStatus],
+  );
 
   const totals = useMemo(() => {
-    const totalRealms = active.reduce((n, s) => n + s.totalRealms, 0);
-    const bestWave = active.reduce((n, s) => Math.max(n, s.maxRounds), 0);
+    const totalRealms = withStatus.reduce((n, s) => n + s.totalRealms, 0);
+    const bestWave = withStatus.reduce((n, s) => Math.max(n, s.maxRounds), 0);
     const livePlayers = playing.reduce(
       (n, s) => n + (s.currentRealm?.players ?? s.currentRealm?.npubs.length ?? 0),
       0,
     );
     return { totalRealms, bestWave, livePlayers };
-  }, [active, playing]);
+  }, [withStatus, playing]);
 
   const livePubkeys = useMemo(() => {
     const set = new Set<string>();
@@ -245,23 +275,18 @@ function Stats() {
 
   const allPubkeys = useMemo(() => {
     const set = new Set<string>();
-    active.forEach((s) => {
+    withStatus.forEach((s) => {
       s.currentRealm?.npubs.forEach((p) => set.add(p));
       s.lastRealm?.npubs.forEach((p) => set.add(p));
     });
     return [...set];
-  }, [active]);
+  }, [withStatus]);
 
   const profiles = useProfiles(allPubkeys);
 
-  // Live latency + country flag for every server that advertises a play URL.
-  const serverUrls = useMemo(() => active.map((s) => s.url).filter(Boolean), [active]);
-  const pings = useServerPings(serverUrls);
-  const flags = useServerFlags(serverUrls);
-
   const sortedServers = useMemo(
     () =>
-      [...active].sort((a, b) => {
+      [...withStatus].sort((a, b) => {
         // Offline servers sink to the bottom; joinable (Play button) on top; then
         // most recently updated first.
         const ao = a.offline ? 1 : 0;
@@ -272,7 +297,7 @@ function Stats() {
         if (au !== bu) return bu - au;
         return b.updatedAt - a.updatedAt;
       }),
-    [active],
+    [withStatus],
   );
 
   // Every npub captured across servers (current + last realms), live ones first.
