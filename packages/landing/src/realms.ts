@@ -13,6 +13,18 @@ const DISCOVERY_KIND = 30078;
 const DISCOVERY_D = "gorilator-server";
 const PROFILE_KIND = 0;
 
+/** Selectable "active in the last…" windows for the stats page, widest last. */
+export const ACTIVITY_WINDOWS = [
+  { label: "1h", ms: 1 * 60 * 60 * 1000 },
+  { label: "6h", ms: 6 * 60 * 60 * 1000 },
+  { label: "24h", ms: 24 * 60 * 60 * 1000 },
+  { label: "48h", ms: 48 * 60 * 60 * 1000 },
+  { label: "Week", ms: 7 * 24 * 60 * 60 * 1000 },
+] as const;
+
+/** We ingest up to the widest window; the UI filters down to a tighter one. */
+const DISCOVERY_WINDOW_MS = ACTIVITY_WINDOWS[ACTIVITY_WINDOWS.length - 1].ms; // 1 week
+
 /** Just the event fields we read — keeps us decoupled from nostr-tools' Event type. */
 interface RawEvent {
   content: string;
@@ -123,8 +135,12 @@ export function useGorilatorServers(): { servers: ServerStatus[]; status: LiveSt
 
   useEffect(() => {
     const pool = new SimplePool();
-    const sub = pool.subscribeMany(RELAYS, { kinds: [DISCOVERY_KIND], "#t": ["gorilator"] }, {
+    // Ask relays for discovery events from the last 48h only…
+    const since = Math.floor((Date.now() - DISCOVERY_WINDOW_MS) / 1000);
+    const sub = pool.subscribeMany(RELAYS, { kinds: [DISCOVERY_KIND], "#t": ["gorilator"], since }, {
       onevent(ev) {
+        // …and defend against relays that ignore `since`.
+        if (ev.created_at * 1000 < Date.now() - DISCOVERY_WINDOW_MS) return;
         const parsed = parseServer(ev);
         if (!parsed) return;
         setByPubkey((prev) => {
@@ -145,6 +161,52 @@ export function useGorilatorServers(): { servers: ServerStatus[]; status: LiveSt
 
   const servers = useMemo(() => Object.values(byPubkey), [byPubkey]);
   return { servers, status };
+}
+
+/**
+ * Canonical form of a play URL so trivially-different links (trailing slash, host
+ * case, default port, scheme case) collapse to the same key. Returns the raw string
+ * if it can't be parsed.
+ */
+export function canonicalUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const scheme = u.protocol.toLowerCase();
+    let host = u.host.toLowerCase(); // host includes a non-default port
+    if ((scheme === "https:" && u.port === "443") || (scheme === "http:" && u.port === "80")) {
+      host = u.hostname.toLowerCase();
+    }
+    const path = u.pathname.replace(/\/+$/, ""); // drop trailing slashes
+    return `${scheme}//${host}${path}`;
+  } catch {
+    return raw.trim();
+  }
+}
+
+/**
+ * Collapse servers that advertise the same play URL into ONE server (different server
+ * keys can point at the same game link — e.g. a redeploy that minted a new identity).
+ * Keeps the latest version of that server (highest `updatedAt`) and preserves order.
+ * Servers without a URL can't be matched, so each is kept as-is.
+ */
+export function dedupeByUrl<T extends { url: string; updatedAt: number }>(servers: T[]): T[] {
+  const indexByKey = new Map<string, number>();
+  const out: T[] = [];
+  for (const s of servers) {
+    if (!s.url) {
+      out.push(s);
+      continue;
+    }
+    const key = canonicalUrl(s.url);
+    const at = indexByKey.get(key);
+    if (at === undefined) {
+      indexByKey.set(key, out.length);
+      out.push(s);
+    } else if (s.updatedAt > out[at].updatedAt) {
+      out[at] = s; // newer version of the same server wins
+    }
+  }
+  return out;
 }
 
 /** Health of a server we can reach over HTTP (those advertising a play URL). */
@@ -293,4 +355,132 @@ export function useProfiles(pubkeys: string[]): Record<string, Profile> {
   }, [key]);
 
   return profiles;
+}
+
+/** The hostname of a play URL, or "" if it can't be parsed. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+const PING_PATH = "/healthz"; // tiny "ok" response, CORS-open (see REALMS.md)
+const PING_INTERVAL_MS = 20_000;
+const PING_TIMEOUT_MS = 6_000;
+
+export interface Ping {
+  ms: number; // round-trip to /healthz
+  at: number; // when we measured it
+}
+
+/**
+ * Active latency probe: round-trips `<url>/healthz` for each reachable server on a
+ * 20s interval and records the measured ms. A failed/timed-out probe records null.
+ * Keyed by play URL. (The first probe per origin includes TLS setup, so it reads a
+ * little high; subsequent ones reuse the connection.)
+ */
+export function useServerPings(urls: string[]): Record<string, Ping | null> {
+  const [pings, setPings] = useState<Record<string, Ping | null>>({});
+  const key = useMemo(
+    () => Array.from(new Set(urls.filter(Boolean))).sort().join("\n"),
+    [urls],
+  );
+
+  useEffect(() => {
+    const list = key ? key.split("\n") : [];
+    if (list.length === 0) return;
+    let cancelled = false;
+
+    const ping = async (url: string) => {
+      let endpoint: string;
+      try {
+        endpoint = new URL(PING_PATH, url).toString();
+      } catch {
+        return;
+      }
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS);
+      const start = performance.now();
+      try {
+        const res = await fetch(endpoint, { signal: ctrl.signal, cache: "no-store" });
+        if (!res.ok) throw new Error("bad status");
+        const ms = Math.round(performance.now() - start);
+        if (!cancelled) setPings((prev) => ({ ...prev, [url]: { ms, at: Date.now() } }));
+      } catch {
+        if (!cancelled) setPings((prev) => ({ ...prev, [url]: null }));
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    const run = () => list.forEach((url) => void ping(url));
+    run();
+    const id = setInterval(run, PING_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [key]);
+
+  return pings;
+}
+
+/** ISO 3166-1 alpha-2 (e.g. "AR") → its regional-indicator flag emoji 🇦🇷. */
+export function flagEmoji(cc: string): string {
+  if (!/^[A-Za-z]{2}$/.test(cc)) return "";
+  return String.fromCodePoint(
+    ...[...cc.toUpperCase()].map((c) => 0x1f1e6 + (c.charCodeAt(0) - 65)),
+  );
+}
+
+// Module-level cache so a host is geolocated once per page load, shared across renders.
+const geoCache = new Map<string, string>(); // hostname -> flag emoji ("" = unknown)
+
+/**
+ * Resolve a country flag for each server from its play URL's host. Uses ipwho.is
+ * (free, no key, resolves domains → geo) and caches per host. Returns a map keyed
+ * by the original play URL, so the table can look it up directly.
+ */
+export function useServerFlags(urls: string[]): Record<string, string> {
+  const [flags, setFlags] = useState<Record<string, string>>({});
+  const key = useMemo(
+    () => Array.from(new Set(urls.filter(Boolean))).sort().join("\n"),
+    [urls],
+  );
+
+  useEffect(() => {
+    const list = key ? key.split("\n") : [];
+    if (list.length === 0) return;
+    let cancelled = false;
+
+    for (const url of list) {
+      const host = hostOf(url);
+      if (!host) continue;
+      const cached = geoCache.get(host);
+      if (cached !== undefined) {
+        if (cached) setFlags((prev) => ({ ...prev, [url]: cached }));
+        continue;
+      }
+      void (async () => {
+        let flag = "";
+        try {
+          const res = await fetch(`https://ipwho.is/${host}?fields=success,country_code`);
+          const j = (await res.json()) as { success?: boolean; country_code?: string };
+          if (j && j.success !== false && j.country_code) flag = flagEmoji(j.country_code);
+        } catch {
+          /* offline / rate-limited → leave unknown */
+        }
+        geoCache.set(host, flag); // cache even "" so we don't retry every render
+        if (!cancelled && flag) setFlags((prev) => ({ ...prev, [url]: flag }));
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+
+  return flags;
 }

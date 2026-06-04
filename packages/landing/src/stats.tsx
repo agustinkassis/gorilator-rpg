@@ -3,9 +3,14 @@ import { createRoot } from "react-dom/client";
 import { ArrowLeft, Github, Play, Radio } from "lucide-react";
 import { npubEncode } from "nostr-tools/nip19";
 import {
+  ACTIVITY_WINDOWS,
+  dedupeByUrl,
   useGorilatorServers,
   useProfiles,
+  useServerFlags,
   useServerHealth,
+  useServerPings,
+  type Ping,
   type Profile,
   type ServerStatus,
 } from "./realms";
@@ -93,24 +98,51 @@ function StatCard({ value, label, sub }: { value: number | string; label: string
   );
 }
 
+/** Latency cell: round-trip ms to /healthz, colour-coded; em-dash when unknown. */
+function PingCell({ ping, offline }: { ping?: Ping | null; offline: boolean }) {
+  if (offline) return <span className="muted small">—</span>;
+  if (ping === undefined) return <span className="muted small">…</span>;
+  if (ping === null) return <span className="pingBad" title="No response">timeout</span>;
+  const cls = ping.ms < 80 ? "pingGood" : ping.ms < 200 ? "pingOk" : "pingBad";
+  return (
+    <span className={cls} title="Round-trip to /healthz">
+      {ping.ms} ms
+    </span>
+  );
+}
+
 function ServerRow({
   server,
   profiles,
   now,
+  ping,
+  flag,
 }: {
   server: ServerStatus & { fetchedAt?: number; offline?: boolean };
   profiles: Record<string, Profile>;
   now: number;
+  ping?: Ping | null;
+  flag?: string;
 }) {
   const offline = !!server.offline;
   const r = offline ? null : server.currentRealm;
   const npubs = r?.npubs ?? [];
   const shown = npubs.slice(0, 4);
   const extra = npubs.length - shown.length;
+  const npub = useMemo(() => npubEncode(server.pubkey), [server.pubkey]);
   return (
     <tr className={offline ? "offline" : r ? "playing" : ""}>
       <td className="colServer">
         <span className="srvName">{server.name}</span>
+        <a
+          className="srvNpub"
+          href={`https://njump.me/${npub}`}
+          target="_blank"
+          rel="noreferrer"
+          title={npub}
+        >
+          {shortNpub(npub)}
+        </a>
         {offline ? (
           <span className="offlineTag">● offline</span>
         ) : server.fetchedAt ? (
@@ -129,6 +161,20 @@ function ServerRow({
       <td className="num">{server.totalRealms}</td>
       <td className="num">{server.maxRounds}</td>
       <td className="num">{r ? r.wave : "—"}</td>
+      <td className="num colPing">
+        {server.url ? (
+          <span className="pingWrap">
+            {flag && (
+              <span className="pingFlag" title="Server location" aria-hidden>
+                {flag}
+              </span>
+            )}
+            <PingCell ping={ping} offline={offline} />
+          </span>
+        ) : (
+          <span className="muted small">—</span>
+        )}
+      </td>
       <td className="colPlayers">
         {r ? (
           <div className="playersCell">
@@ -160,17 +206,43 @@ function ServerRow({
   );
 }
 
+/** Most recent sign of life from a server: a live /api/status poll or its newest event. */
+function lastActivity(s: { updatedAt: number; fetchedAt?: number }): number {
+  return Math.max(s.updatedAt, s.fetchedAt ?? 0);
+}
+
+/**
+ * A server is online only if we can actually reach it now. Offline when: a health
+ * check already failed, it advertises no play URL (nothing to reach from the browser),
+ * or its latest ping timed out. An unmeasured ping (undefined) stays pending — we
+ * don't flip a freshly-discovered server to Offline before the first probe lands.
+ */
+function deriveOffline(
+  s: { url: string; offline?: boolean },
+  ping: Ping | null | undefined,
+): boolean {
+  if (s.offline) return true;
+  if (!s.url) return true;
+  return ping === null;
+}
+
 function Stats() {
   const { servers, status } = useGorilatorServers();
   const now = useNow(1000);
+
+  // "Active in the last…" filter — default to 48h. Index into ACTIVITY_WINDOWS.
+  const [windowIdx, setWindowIdx] = useState(3);
+  const windowMs = ACTIVITY_WINDOWS[windowIdx].ms;
 
   // Health-check servers that advertise a play URL: enrich with their live /api/status
   // and flag the ones a check found offline. HTTP wins when reachable; we keep the
   // relay-proven pubkey as the identity.
   const health = useServerHealth(servers);
+  // One row per server: collapse same-play-URL keys to the latest version FIRST
+  // (by discovery-event time), then enrich the survivor with its live health.
   const merged = useMemo<(ServerStatus & { fetchedAt?: number; offline?: boolean })[]>(
     () =>
-      servers.map((s) => {
+      dedupeByUrl(servers).map((s) => {
         const h = s.url ? health[s.url] : undefined;
         const base = h?.data ? { ...h.data, pubkey: s.pubkey } : s;
         return { ...base, offline: h?.offline ?? false };
@@ -178,17 +250,38 @@ function Stats() {
     [servers, health],
   );
 
-  const playing = useMemo(() => merged.filter((s) => s.currentRealm && !s.offline), [merged]);
+  // Keep only servers whose last activity falls inside the selected window.
+  const active = useMemo(
+    () => merged.filter((s) => now - lastActivity(s) <= windowMs),
+    [merged, now, windowMs],
+  );
+
+  // Live latency + country flag for every server that advertises a play URL.
+  const serverUrls = useMemo(() => active.map((s) => s.url).filter(Boolean), [active]);
+  const pings = useServerPings(serverUrls);
+  const flags = useServerFlags(serverUrls);
+
+  // Resolve each server's online/offline status from whether we can reach it now.
+  const withStatus = useMemo(
+    () =>
+      active.map((s) => ({ ...s, offline: deriveOffline(s, s.url ? pings[s.url] : undefined) })),
+    [active, pings],
+  );
+
+  const playing = useMemo(
+    () => withStatus.filter((s) => s.currentRealm && !s.offline),
+    [withStatus],
+  );
 
   const totals = useMemo(() => {
-    const totalRealms = merged.reduce((n, s) => n + s.totalRealms, 0);
-    const bestWave = merged.reduce((n, s) => Math.max(n, s.maxRounds), 0);
+    const totalRealms = withStatus.reduce((n, s) => n + s.totalRealms, 0);
+    const bestWave = withStatus.reduce((n, s) => Math.max(n, s.maxRounds), 0);
     const livePlayers = playing.reduce(
       (n, s) => n + (s.currentRealm?.players ?? s.currentRealm?.npubs.length ?? 0),
       0,
     );
     return { totalRealms, bestWave, livePlayers };
-  }, [merged, playing]);
+  }, [withStatus, playing]);
 
   const livePubkeys = useMemo(() => {
     const set = new Set<string>();
@@ -198,18 +291,18 @@ function Stats() {
 
   const allPubkeys = useMemo(() => {
     const set = new Set<string>();
-    merged.forEach((s) => {
+    withStatus.forEach((s) => {
       s.currentRealm?.npubs.forEach((p) => set.add(p));
       s.lastRealm?.npubs.forEach((p) => set.add(p));
     });
     return [...set];
-  }, [merged]);
+  }, [withStatus]);
 
   const profiles = useProfiles(allPubkeys);
 
   const sortedServers = useMemo(
     () =>
-      [...merged].sort((a, b) => {
+      [...withStatus].sort((a, b) => {
         // Offline servers sink to the bottom; joinable (Play button) on top; then
         // most recently updated first.
         const ao = a.offline ? 1 : 0;
@@ -220,11 +313,15 @@ function Stats() {
         if (au !== bu) return bu - au;
         return b.updatedAt - a.updatedAt;
       }),
-    [merged],
+    [withStatus],
   );
 
-  const sortedPlayers = useMemo(
-    () => [...allPubkeys].sort((a, b) => (livePubkeys.has(b) ? 1 : 0) - (livePubkeys.has(a) ? 1 : 0)),
+  // Every npub captured across servers (current + last realms), live ones first.
+  const capturedPlayers = useMemo(
+    () =>
+      [...allPubkeys].sort(
+        (a, b) => (livePubkeys.has(b) ? 1 : 0) - (livePubkeys.has(a) ? 1 : 0),
+      ),
     [allPubkeys, livePubkeys],
   );
 
@@ -257,8 +354,25 @@ function Stats() {
         </p>
       </section>
 
+      <section className="activityFilter" aria-label="Filter by last activity">
+        <span className="filterLabel">Active in the last</span>
+        <div className="filterSeg" role="tablist">
+          {ACTIVITY_WINDOWS.map((w, i) => (
+            <button
+              key={w.label}
+              role="tab"
+              aria-selected={i === windowIdx}
+              className={`segBtn ${i === windowIdx ? "active" : ""}`}
+              onClick={() => setWindowIdx(i)}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="statGrid">
-        <StatCard value={merged.length} label="Servers" sub={`${playing.length} playing`} />
+        <StatCard value={active.length} label="Servers" sub={`${playing.length} playing`} />
         <StatCard value={playing.length} label="Live realms" />
         <StatCard value={totals.livePlayers} label="Players in play" />
         <StatCard value={totals.totalRealms} label="Realms played" sub="all time" />
@@ -268,31 +382,38 @@ function Stats() {
 
       <section className="statsSection">
         <h2>Players</h2>
-        <p className="muted sectionSub">Defenders who log in with Nostr — others defend anonymously.</p>
-        {allPubkeys.length === 0 ? (
+        <p className="muted sectionSub">
+          Every npub seen across these servers ({capturedPlayers.length}) — others defend anonymously.
+        </p>
+        {capturedPlayers.length === 0 ? (
           <p className="muted">
-            {status === "live" ? "No identified players yet." : "Listening for players…"}
+            {status === "live" ? "No identified players captured yet." : "Listening for players…"}
           </p>
         ) : (
           <div className="avatarWall">
-            {sortedPlayers.map((pk) => (
-              <div className={`playerChip ${livePubkeys.has(pk) ? "live" : ""}`} key={pk}>
-                <Avatar pubkey={pk} profile={profiles[pk]} live={livePubkeys.has(pk)} />
-                <span className="playerName">{profiles[pk]?.name || shortNpub(npubEncode(pk))}</span>
-                {livePubkeys.has(pk) && <span className="liveTag">in play</span>}
-              </div>
-            ))}
+            {capturedPlayers.map((pk) => {
+              const live = livePubkeys.has(pk);
+              return (
+                <div className={`playerChip ${live ? "live" : ""}`} key={pk}>
+                  <Avatar pubkey={pk} profile={profiles[pk]} live={live} />
+                  <span className="playerName">{profiles[pk]?.name || shortNpub(npubEncode(pk))}</span>
+                  {live && <span className="liveTag">in play</span>}
+                </div>
+              );
+            })}
           </div>
         )}
       </section>
 
       <section className="statsSection">
         <h2>Servers</h2>
-        {merged.length === 0 ? (
+        {active.length === 0 ? (
           <p className="muted">
-            {status === "live"
-              ? "No Gorilator servers are broadcasting right now."
-              : "Searching relays…"}
+            {status !== "live"
+              ? "Searching relays…"
+              : merged.length === 0
+                ? "No Gorilator servers are broadcasting right now."
+                : `No servers active in the last ${ACTIVITY_WINDOWS[windowIdx].label}.`}
           </p>
         ) : (
           <div className="serverTableWrap">
@@ -304,13 +425,21 @@ function Stats() {
                   <th className="num">Realms</th>
                   <th className="num">Best wave</th>
                   <th className="num">Wave</th>
+                  <th className="num">Ping</th>
                   <th>Players</th>
                   <th aria-label="Join" />
                 </tr>
               </thead>
               <tbody>
                 {sortedServers.map((s) => (
-                  <ServerRow key={s.pubkey} server={s} profiles={profiles} now={now} />
+                  <ServerRow
+                    key={s.pubkey}
+                    server={s}
+                    profiles={profiles}
+                    now={now}
+                    ping={s.url ? pings[s.url] : undefined}
+                    flag={s.url ? flags[s.url] : undefined}
+                  />
                 ))}
               </tbody>
             </table>
