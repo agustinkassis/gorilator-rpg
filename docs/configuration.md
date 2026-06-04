@@ -51,6 +51,7 @@ the section comments in the file:
 | `UPDATE_CHECK_HOURS` | how often the daemon checks GitHub for a newer release (default `1`; `0` disables). Configure via `gorilator setup → Server settings`. See [publishing-cli.md](publishing-cli.md#auto-update-check). |
 | `UPDATE_REPO` | `owner/repo` the auto-update check queries (default `agustinkassis/gorilator-rpg`) |
 | `GITHUB_TOKEN` | optional — raises the GitHub API rate limit for the auto-update check |
+| `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → Server settings → Manage admins`. See [admin.md](admin.md). |
 
 ## 3. Runtime content files (live-reloaded JSON)
 

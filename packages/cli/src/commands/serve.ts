@@ -4,6 +4,7 @@
 // process answers both the game page and the WebSocket on one port.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig } from "../lib/config.js";
 import { parseEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
@@ -23,6 +24,13 @@ export function serve(opts: Options): void {
   if (!env.CLIENT_PORT && cfg?.clientPort) env.CLIENT_PORT = String(cfg.clientPort);
   if (opts.portExplicit) env.GAME_SERVER_PORT = String(opts.port);
   else if (!env.GAME_SERVER_PORT) env.GAME_SERVER_PORT = String(opts.port);
+
+  // Tell the server it's a CLI-managed install and how to relaunch the updater,
+  // so an admin can trigger `gorilator update` from the splash (systems/selfUpdate).
+  // process.argv[1] is this CLI's entrypoint (dist/index.js).
+  env.GORILATOR_MANAGED = "1";
+  if (process.argv[1]) env.GORILATOR_BIN = process.argv[1];
+  if (!env.GORILATOR_UPDATE_LOG) env.GORILATOR_UPDATE_LOG = join(appDir, ".gorilator-update.log");
 
   // Same node that runs the CLI runs the server — no reliance on the service's
   // PATH; tsx resolves from <appDir>/packages/server/node_modules.

@@ -14,6 +14,9 @@ import { getServerIdentity } from "./systems/nostrIdentity";
 import { realmTracker } from "./systems/realms";
 import { perfTracker } from "./systems/perf";
 import { updateChecker } from "./systems/updateCheck";
+import { adminCount, isAdmin, listAdminNpubs } from "./systems/admins";
+import { requireAdmin, verifyNip98, type AdminRequest } from "./systems/nip98";
+import { canSelfUpdate, startSelfUpdate } from "./systems/selfUpdate";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -88,6 +91,40 @@ app.get("/api/perf", (_req, res) => res.json(perfTracker.snapshot()));
 // release exists. The game splash polls this to show an "update available"
 // banner; the `gorilator` CLI surfaces it in `status`. See systems/updateCheck.
 app.get("/api/update", (_req, res) => res.json(updateChecker.snapshot()));
+
+// ---- Admin API (NIP-98 authenticated; see systems/nip98 + systems/admins) ----
+//
+// whoami: validates the NIP-98 token and reports whether that key is an admin.
+// Unlike the other routes it does NOT 403 non-admins — the splash uses it to
+// decide whether to show the admin "Update now" button. `selfUpdate` advertises
+// whether this process can even self-update (a CLI-managed install).
+app.get("/api/admin/whoami", async (req: AdminRequest, res: Response) => {
+  try {
+    const pubkey = await verifyNip98(req);
+    res.json({ pubkey, isAdmin: isAdmin(pubkey), adminCount: adminCount(), selfUpdate: canSelfUpdate() });
+  } catch (err) {
+    res.status(401).json({ error: err instanceof Error ? err.message : "unauthorized" });
+  }
+});
+
+// List the configured admin npubs (admin only).
+app.get("/api/admin/admins", requireAdmin, (_req, res) => {
+  res.json({ admins: listAdminNpubs(), selfUpdate: canSelfUpdate() });
+});
+
+// Trigger a self-update (admin only): launches `gorilator update` detached. The
+// daemon will go down and come back on the new version; the client polls
+// /api/status to detect the new version and reloads.
+app.post("/api/admin/update", requireAdmin, (req: AdminRequest, res: Response) => {
+  const fromVersion = realmTracker.status().version;
+  const result = startSelfUpdate();
+  if (!result.ok) {
+    res.status(409).json({ error: result.reason ?? "cannot self-update", fromVersion });
+    return;
+  }
+  console.log(`[admin] update triggered by ${req.adminPubkey?.slice(0, 12)}… from v${fromVersion}`);
+  res.status(202).json({ started: true, fromVersion });
+});
 
 // SPA fallback (single-service only): unmatched GETs return index.html so the
 // client renders, but never shadow the monitor or Colyseus matchmaking routes.

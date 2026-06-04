@@ -675,6 +675,78 @@
         opacity: 1;
       }
 
+      /* Actions directly under the update banner (admin button / CLI hint / the
+         self-update progress bar). Pinned just below the banner pill. */
+      #updateActions {
+        position: fixed;
+        top: 56px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10001;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 24px);
+        text-align: center;
+      }
+      #updateAdminBtn {
+        padding: 8px 18px;
+        border: 1px solid rgba(255, 212, 121, 0.85);
+        border-radius: 999px;
+        background: linear-gradient(180deg, #ffd479, #f0a83c);
+        color: #2a1a05;
+        font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        box-shadow: 0 6px 18px rgba(240, 168, 60, 0.35);
+      }
+      #updateAdminBtn:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
+      #updateAdminBtn:disabled {
+        filter: grayscale(0.4) brightness(0.85);
+        cursor: default;
+      }
+      #updateCliHint {
+        padding: 6px 12px;
+        border-radius: 8px;
+        background: rgba(8, 6, 10, 0.72);
+        color: #d7c39a;
+        font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #updateCliHint code {
+        color: #ffe6a8;
+        background: rgba(255, 212, 121, 0.12);
+        padding: 1px 6px;
+        border-radius: 5px;
+      }
+      #updateProgress {
+        width: min(320px, calc(100vw - 32px));
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+      }
+      #updateProgressTrack {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+      #updateProgressFill {
+        width: 4%;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #ffd479, #f0a83c);
+        transition: width 0.6s ease;
+      }
+      #updateProgressStatus {
+        color: #ffe6a8;
+        font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
       /* Tiny always-on version tag, pinned to the bottom-right corner — above the
          splash + HUD, and never intercepts clicks. */
       #versionTag {
@@ -2209,6 +2281,19 @@
           <span id="updateBannerText">Update available</span>
         </a>
         <button id="updateBannerClose" type="button" aria-label="Dismiss update notice">×</button>
+      </div>
+      <!-- Actions under the update banner. For a logged-in admin: an "Update now"
+           button that triggers the server self-update. For everyone else: the
+           CLI command to run on the server. Both hidden until /api/update fires. -->
+      <div id="updateActions" hidden>
+        <button id="updateAdminBtn" type="button" hidden>⟳ Update now</button>
+        <div id="updateCliHint" hidden>
+          To update, run <code>gorilator update</code> on the server
+        </div>
+        <div id="updateProgress" hidden>
+          <div id="updateProgressTrack"><div id="updateProgressFill"></div></div>
+          <div id="updateProgressStatus">Starting update…</div>
+        </div>
       </div>
       <div id="assetLoad">
         <div id="assetLoadHead">

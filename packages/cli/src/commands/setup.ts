@@ -25,6 +25,7 @@ import {
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
+import { isValidNpub } from "../lib/npub.js";
 import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
@@ -165,6 +166,7 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
       { label: "Update optional client port", hint: clientPort ? String(clientPort) : "disabled" },
       { label: "Use one-port mode", hint: "client + WebSocket + monitor on server port" },
       { label: "Auto-update check interval", hint: updateCheckHint(ctx.env.UPDATE_CHECK_HOURS) },
+      { label: "Manage admins (NIP-98)", hint: adminsHint(ctx.env.ADMIN_NPUBS) },
       { label: "Back" },
     ]);
 
@@ -172,8 +174,86 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
     else if (choice === 1) await updateClientPort(opts, clientPort);
     else if (choice === 2) await setOnePortMode(opts);
     else if (choice === 3) updateAutoUpdateInterval(opts);
+    else if (choice === 4) await adminsMenu(opts);
     else return;
   }
+}
+
+/** Parse ADMIN_NPUBS into a clean npub list. */
+function parseAdminNpubs(raw: string | undefined): string[] {
+  return (raw ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Hint for the admins menu row: how many are configured. */
+function adminsHint(raw: string | undefined): string {
+  const n = parseAdminNpubs(raw).length;
+  return n === 0 ? "none" : `${n} configured`;
+}
+
+/** Add/remove the admin npubs allowed to call the protected /api/admin/* API
+ *  (NIP-98 auth) and trigger updates from the splash. Persists ADMIN_NPUBS. */
+async function adminsMenu(opts: Options): Promise<void> {
+  for (;;) {
+    const ctx = requireInstall(opts);
+    const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+    const list =
+      admins.length === 0
+        ? "  (no admins configured)\n"
+        : admins.map((n, i) => `  ${i + 1}. ${n.slice(0, 14)}…${n.slice(-6)}`).join("\n") + "\n";
+    const choice = await selectMenu(`Admins (NIP-98)\n${list}`, [
+      { label: "Add admin npub" },
+      { label: "Remove admin npub", hint: admins.length ? `${admins.length} configured` : "none" },
+      { label: "Back" },
+    ]);
+
+    if (choice === 0) addAdmin(opts);
+    else if (choice === 1) removeAdmin(opts);
+    else return;
+  }
+}
+
+function addAdmin(opts: Options): void {
+  const npub = ask("Admin npub1…: ").trim();
+  if (!isValidNpub(npub)) {
+    log.warn("That is not a valid npub1… key. No change made.");
+    pause();
+    return;
+  }
+  const ctx = requireInstall(opts);
+  const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+  if (admins.includes(npub)) {
+    log.ok("That npub is already an admin.");
+    pause();
+    return;
+  }
+  admins.push(npub);
+  writeEnvPatch(ctx, { ADMIN_NPUBS: admins.join(",") }, `Added admin ${npub.slice(0, 14)}….`);
+  restartDaemon();
+  pause();
+}
+
+function removeAdmin(opts: Options): void {
+  const ctx = requireInstall(opts);
+  const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+  if (admins.length === 0) {
+    log.warn("No admins to remove.");
+    pause();
+    return;
+  }
+  const raw = ask(`Remove which? Enter the number (1-${admins.length}) or paste the npub: `).trim();
+  let idx = Number(raw) - 1;
+  if (!Number.isInteger(idx) || idx < 0 || idx >= admins.length) {
+    idx = admins.indexOf(raw);
+  }
+  if (idx < 0) {
+    log.warn("No matching admin. No change made.");
+    pause();
+    return;
+  }
+  const [removed] = admins.splice(idx, 1);
+  writeEnvPatch(ctx, { ADMIN_NPUBS: admins.join(",") }, `Removed admin ${removed.slice(0, 14)}….`);
+  restartDaemon();
+  pause();
 }
 
 /** Hint for the auto-update menu row: the current interval (1h default, 0=off). */

@@ -23,6 +23,7 @@ import { AnimationController } from "../entities/AnimationController";
 import {
   nostrLogin,
   hasNostrExtension,
+  nip98AuthHeader,
   NostrCredentials,
   NostrPhase,
 } from "../net/nostr";
@@ -100,6 +101,14 @@ export class SplashScreen {
   private nostr?: NostrCredentials;
   /** Times the level-reveal → profile-card hand-off in the logged-in reframe. */
   private revealTimer?: number;
+
+  // ---- update-available actions (admin "Update now" / CLI hint) ----
+  /** The server base URL, kept so the action UI can call /api/admin/* + poll. */
+  private updateHttpBase?: string;
+  /** True once /api/update reported a newer release (banner shown). */
+  private updateIsAvailable = false;
+  /** Guards against re-triggering the self-update once it's in flight. */
+  private updateRunning = false;
 
   // ---- connect-progress log (terminal-style, paced flush) ----
   private logQueue: Array<{ text: string; cls: string; pct?: number }> = [];
@@ -201,6 +210,7 @@ export class SplashScreen {
    * configured, or already up to date all simply leave the banner hidden.
    */
   async showUpdateBanner(httpBase: string): Promise<void> {
+    this.updateHttpBase = httpBase;
     const banner = document.getElementById("updateBanner") as HTMLElement | null;
     if (!banner) return;
     try {
@@ -222,9 +232,157 @@ export class SplashScreen {
       document.getElementById("updateBannerClose")?.addEventListener("click", () => {
         banner.classList.remove("show");
         banner.hidden = true;
+        document.getElementById("updateActions")?.setAttribute("hidden", "");
       });
+
+      this.updateIsAvailable = true;
+      this.wireUpdateButton();
+      void this.refreshUpdateActions();
     } catch {
       /* offline / not configured / up to date — leave the banner hidden */
+    }
+  }
+
+  /** Wire the "Update now" button once (clicking runs the admin self-update). */
+  private wireUpdateButton(): void {
+    const btn = document.getElementById("updateAdminBtn") as HTMLButtonElement | null;
+    if (btn && !btn.dataset.wired) {
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", () => void this.runSelfUpdate());
+    }
+  }
+
+  /**
+   * Decide what to show under the update banner:
+   *  - logged in via Nostr AND that npub is a server admin AND the server can
+   *    self-update → the "Update now" button;
+   *  - otherwise → the CLI hint (`gorilator update`).
+   * Called on load and again whenever the Nostr login state changes.
+   */
+  private async refreshUpdateActions(): Promise<void> {
+    if (!this.updateIsAvailable || this.updateRunning) return;
+    const actions = document.getElementById("updateActions");
+    const btn = document.getElementById("updateAdminBtn") as HTMLButtonElement | null;
+    const hint = document.getElementById("updateCliHint");
+    if (!actions || !btn || !hint) return;
+
+    actions.removeAttribute("hidden");
+    const showCli = () => {
+      btn.hidden = true;
+      hint.hidden = false;
+    };
+    // Not logged in (or no signer) → only the CLI instruction.
+    if (!this.nostr || !hasNostrExtension()) {
+      showCli();
+      return;
+    }
+    // Logged in: ask the server (NIP-98) whether this key is an admin that can
+    // trigger a self-update. Default to the CLI hint until we know / on failure.
+    showCli();
+    try {
+      const base = this.updateHttpBase ?? "";
+      const header = await nip98AuthHeader(`${base}/api/admin/whoami`, "get");
+      const res = await fetch(`${base}/api/admin/whoami`, { headers: { Authorization: header } });
+      if (!res.ok) return;
+      const who = (await res.json()) as { isAdmin?: boolean; selfUpdate?: boolean };
+      if (who.isAdmin && who.selfUpdate) {
+        btn.hidden = false;
+        hint.hidden = true;
+      }
+    } catch {
+      /* signer declined / offline → keep the CLI hint */
+    }
+  }
+
+  /**
+   * Admin self-update: POST /api/admin/update (NIP-98), then show a progress bar
+   * while the daemon restarts. We poll /healthz; once the server has gone down
+   * and come back up on the new build, reload the page to load it.
+   */
+  private async runSelfUpdate(): Promise<void> {
+    if (this.updateRunning) return;
+    const base = this.updateHttpBase ?? "";
+    const btn = document.getElementById("updateAdminBtn") as HTMLButtonElement | null;
+    const hint = document.getElementById("updateCliHint");
+    const prog = document.getElementById("updateProgress");
+    const fill = document.getElementById("updateProgressFill") as HTMLElement | null;
+    const status = document.getElementById("updateProgressStatus");
+    const setStatus = (t: string) => status && (status.textContent = t);
+    const setFill = (pct: number) => fill && (fill.style.width = `${Math.min(100, pct)}%`);
+
+    this.updateRunning = true;
+    if (btn) btn.disabled = true;
+    if (hint) hint.hidden = true;
+    if (prog) prog.hidden = false;
+    setStatus("Authorizing…");
+    setFill(4);
+
+    try {
+      const header = await nip98AuthHeader(`${base}/api/admin/update`, "post");
+      const res = await fetch(`${base}/api/admin/update`, { method: "POST", headers: { Authorization: header } });
+      if (res.status !== 202) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `update failed (${res.status})`);
+      }
+    } catch (err) {
+      setStatus(`Couldn't start update: ${err instanceof Error ? err.message : "error"}`);
+      this.updateRunning = false;
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    setStatus("Update started — the server will restart…");
+    setFill(12);
+
+    // Progress is unknowable from the client (the server goes away), so creep a
+    // faux bar while we watch reachability: up → down (rebuilding) → up = done.
+    const startedAt = Date.now();
+    const EXPECTED_MS = 90_000;
+    const MAX_MS = 6 * 60_000;
+    let sawDown = false;
+
+    for (;;) {
+      await wait(2500);
+      const elapsed = Date.now() - startedAt;
+      const up = await this.probe(`${base}/healthz`);
+
+      if (!up) {
+        sawDown = true;
+        setStatus("Rebuilding… (server offline)");
+      } else if (sawDown) {
+        // It went away and is back — the new build is live.
+        setFill(100);
+        setStatus("Updated! Reloading…");
+        await wait(800);
+        location.reload();
+        return;
+      } else {
+        setStatus("Preparing update…");
+      }
+
+      // Creep toward 95% over the expected window; hold there until it's back.
+      setFill(12 + Math.min(83, (elapsed / EXPECTED_MS) * 83));
+
+      if (elapsed > MAX_MS) {
+        setStatus("Update is taking longer than expected — check 'gorilator logs'.");
+        this.updateRunning = false;
+        if (btn) btn.disabled = false;
+        return;
+      }
+    }
+  }
+
+  /** GET a URL with a short timeout; true if it answered 2xx. */
+  private async probe(url: string): Promise<boolean> {
+    const controller = new AbortController();
+    const t = window.setTimeout(() => controller.abort(), 2000);
+    try {
+      const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(t);
     }
   }
 
@@ -731,12 +889,17 @@ export class SplashScreen {
     this.el.classList.add("nostr", "revealing");
     window.clearTimeout(this.revealTimer);
     this.revealTimer = window.setTimeout(() => this.el.classList.remove("revealing"), 1300);
+
+    // Now that we know the npub, re-evaluate the update actions (admin → button).
+    void this.refreshUpdateActions();
   }
 
   private clearNostr() {
     this.nostr = undefined;
     window.clearTimeout(this.revealTimer);
     this.el.classList.remove("nostr", "revealing");
+    // Back to anonymous → revert any admin button to the CLI hint.
+    void this.refreshUpdateActions();
     const btn = document.getElementById("nostrBtn") as HTMLButtonElement;
     btn.hidden = false;
     btn.disabled = false;
