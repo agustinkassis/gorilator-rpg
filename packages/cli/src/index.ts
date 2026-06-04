@@ -6,6 +6,7 @@
 //   gorilator start | stop | restart       drive the OS service
 //   gorilator status | info | logs         inspect it
 //   gorilator update                       stop services, git pull, rebuild, start services
+//   gorilator remote                       compare local versions with remote ones
 //   gorilator tunnel <login|status|restart>  manage the Cloudflare tunnel
 //   gorilator uninstall                    stop and remove Gorilator from this machine
 //   gorilator serve                        internal: the supervised foreground process
@@ -14,6 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { install } from "./commands/install.js";
+import { remoteCmd } from "./commands/remote.js";
 import { serve } from "./commands/serve.js";
 import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/service.js";
 import { runSetup, tunnelCmd } from "./commands/setup.js";
@@ -26,14 +28,35 @@ import { resolveOptions, type RawFlags } from "./lib/options.js";
 import { ask, canPrompt } from "./lib/proc.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const VERSION = (() => {
-  try {
-    return (JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as { version: string })
-      .version;
-  } catch {
-    return "0.0.0";
+const VERSION = readCliPackageVersion();
+
+function readCliPackageVersion(): string {
+  for (const dir of ancestorDirs(here)) {
+    for (const packagePath of [join(dir, "package.json"), join(dir, "packages", "cli", "package.json")]) {
+      const version = readVersionFromCliPackage(packagePath);
+      if (version) return version;
+    }
   }
-})();
+  return "0.0.0";
+}
+
+function readVersionFromCliPackage(packagePath: string): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(packagePath, "utf8")) as { name?: unknown; version?: unknown };
+    if (pkg.name !== "gorilator") return null;
+    return typeof pkg.version === "string" && pkg.version.trim().length > 0 ? pkg.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function* ancestorDirs(start: string): Generator<string> {
+  for (let dir = start; ; dir = dirname(dir)) {
+    yield dir;
+    const parent = dirname(dir);
+    if (parent === dir) return;
+  }
+}
 
 function usage(): void {
   process.stdout.write(`${log.bold("gorilator")} ${VERSION} — native install & daemon for the Gorilator RPG (no Docker)
@@ -49,6 +72,7 @@ Usage: gorilator <command> [options]
   status, info       Service state + health check + local & public URLs
   logs               Show server logs; add --follow to stream realtime
   update             Stop services, git pull, rebuild, start services
+  remote             Check remote updates and compare package versions
   tunnel <cmd>       Manage the Cloudflare tunnel — login | status | restart
   uninstall          Stop and remove Gorilator services, config, global command, and installed files
   serve              Run the server in the foreground (used by the service)
@@ -80,6 +104,9 @@ Options (uninstall):
   --keep-files       Stop services/config, but keep the installed app directory
   --keep-command     Keep the global npm 'gorilator' command
   --keep-tunnel      Keep the local cloudflared service/config
+
+Options (remote):
+  --no-npm           Skip the published npm package version check
 `);
 }
 
@@ -194,6 +221,21 @@ Usage:
 
 Stops services, updates the installed git checkout, reinstalls dependencies, rebuilds packages, and starts services again.
 `,
+  remote: `${log.bold("gorilator remote")} — compare local and remote versions
+
+Usage:
+  gorilator remote [options]
+  gorilator help remote
+
+Fetches the configured git ref without changing the worktree, compares local package versions with the remote package.json versions, and compares the local CLI package with the latest published npm package.
+
+Options:
+  --no-npm           Skip the published npm package version check
+
+Examples:
+  gorilator remote
+  gorilator remote --no-npm
+`,
   tunnel: `${log.bold("gorilator tunnel")} — manage the Cloudflare tunnel
 
 Usage:
@@ -293,6 +335,7 @@ async function main(): Promise<void> {
       "no-follow": { type: "boolean" },
       filter: { type: "string" },
       since: { type: "string" },
+      "no-npm": { type: "boolean" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -366,6 +409,9 @@ async function main(): Promise<void> {
     case "update":
       await update(ctx, opts);
       break;
+    case "remote":
+      await remoteCmd(ctx, opts, { npm: !values["no-npm"] });
+      break;
     case "tunnel":
       tunnelCmd(positionals[1]);
       break;
@@ -400,6 +446,7 @@ async function runProjectMenu(ctx: RuntimeContext, opts: ReturnType<typeof resol
       { label: "Logs" },
       { label: "Settings" },
       { label: "Update" },
+      { label: "Remote" },
       { label: "Help" },
       { label: "Exit" },
     ]);
@@ -424,6 +471,9 @@ async function runProjectMenu(ctx: RuntimeContext, opts: ReturnType<typeof resol
       await update(ctx, opts);
       pause();
     } else if (choice === 7) {
+      await remoteCmd(ctx, opts);
+      pause();
+    } else if (choice === 8) {
       usage();
       pause();
     } else return;
@@ -441,6 +491,7 @@ async function runSystemMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolv
       { label: "Setup" },
       { label: "Install" },
       { label: "Update" },
+      { label: "Remote" },
       { label: "Tunnel" },
       { label: "Uninstall" },
       { label: "Help" },
@@ -470,11 +521,14 @@ async function runSystemMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolv
       await update(ctx, opts);
       pause();
     } else if (choice === 8) {
-      await runTunnelMenu();
+      await remoteCmd(ctx, opts);
+      pause();
     } else if (choice === 9) {
+      await runTunnelMenu();
+    } else if (choice === 10) {
       uninstall(opts);
       pause();
-    } else if (choice === 10) {
+    } else if (choice === 11) {
       usage();
       pause();
     } else return;

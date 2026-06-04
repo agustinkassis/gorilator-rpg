@@ -16,7 +16,7 @@ import { probeHealth } from "./health.js";
 import * as log from "./log.js";
 import type { Options } from "./options.js";
 import { run, tryRun } from "./proc.js";
-import { readEnvInfo } from "./summary.js";
+import { printField, printPackageVersions, printSection, readEnvInfo } from "./summary.js";
 
 export interface ProjectStatus {
   state: ProjectDevState | null;
@@ -123,41 +123,53 @@ export async function printProjectStatus(ctx: RuntimeContext, opts: Options): Pr
   const status = await projectStatus(ctx);
   const state = status.state;
   const label = status.active ? log.green("active") : log.yellow("inactive");
-  process.stdout.write(`${log.bold("Project")} local dev: ${label}\n`);
-  process.stdout.write(`  Files  : ${ctx.appDir}\n`);
+  printSection("Gorilator Status");
+  printField("Mode", "local project");
+  printField("State", label);
+  printField("Files", ctx.appDir);
+  printField("Ref", cfg.ref);
   if (state) {
     const info = readEnvInfo(ctx.appDir, state.serverPort, state.clientPort);
-    process.stdout.write(`  PID    : ${state.pid}\n`);
-    process.stdout.write(`  Since  : ${state.startedAt}\n`);
-    process.stdout.write(
-      `  Client : http://localhost:${state.clientPort}  ${
+    printField("PID", String(state.pid));
+    printField("Since", state.startedAt);
+    process.stdout.write("\n");
+    printSection("Local URLs");
+    printField(
+      "Client",
+      `http://localhost:${state.clientPort}  ${
         status.clientActive ? log.green("(ok)") : log.yellow("(starting...)")
-      }\n`,
+      }`,
     );
-    process.stdout.write(
-      `  Server : http://localhost:${state.serverPort}  ${
+    printField(
+      "Server",
+      `http://localhost:${state.serverPort}  ${
         status.serverHealthy ? log.green("(ok)") : log.yellow("(starting...)")
-      }\n`,
+      }`,
     );
     const creds = info.monitorUser
       ? `  (user ${info.monitorUser}${info.monitorPass ? ` · pass ${info.monitorPass}` : ""})`
       : "";
-    process.stdout.write(`  Monitor: http://localhost:${state.serverPort}/colyseus${creds}\n`);
+    printField("Monitor", `http://localhost:${state.serverPort}/colyseus${creds}`);
     if (
       state.serverPort !== state.requestedServerPort ||
       state.clientPort !== state.requestedClientPort
     ) {
-      process.stdout.write(
-        `  Ports  : requested server ${state.requestedServerPort}, client ${state.requestedClientPort}\n`,
+      printField(
+        "Requested",
+        `server ${state.requestedServerPort}, client ${state.requestedClientPort}`,
       );
     }
   } else {
     const info = readEnvInfo(ctx.appDir, cfg.port, cfg.clientPort);
-    process.stdout.write(`  Client : http://localhost:${info.clientPort ?? 5173}\n`);
-    process.stdout.write(`  Server : http://localhost:${info.port}\n`);
-    process.stdout.write(`  Monitor: http://localhost:${info.port}/colyseus\n`);
+    process.stdout.write("\n");
+    printSection("Local URLs");
+    printField("Client", `http://localhost:${info.clientPort ?? 5173}`);
+    printField("Server", `http://localhost:${info.port}`);
+    printField("Monitor", `http://localhost:${info.port}/colyseus`);
     if (status.stale) log.warn("Removed stale local dev state.");
   }
+  process.stdout.write("\n");
+  printPackageVersions(ctx.appDir, { heading: true });
 }
 
 export function logsProjectDev(ctx: RuntimeContext): void {

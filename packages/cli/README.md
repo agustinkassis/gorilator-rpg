@@ -67,6 +67,7 @@ gorilator stop        # stop the service
 gorilator restart     # restart the service
 gorilator logs        # show recent logs; add --follow, --lines, --filter, --since
 gorilator update      # stop services, git pull, rebuild, start services
+gorilator remote      # compare local package versions against remote/latest
 gorilator setup       # interactive setup menu: ports, NSEC, Cloudflare, env
 gorilator tunnel <cmd># Cloudflare tunnel — login | status | restart
 gorilator uninstall   # stop and remove services, config, command, and installed files

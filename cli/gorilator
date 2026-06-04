@@ -161,8 +161,35 @@ build_local_cli() {
     || { warn "Local CLI build failed."; return 1; }
 }
 
+is_version_request() {
+  [ "$#" -eq 1 ] || return 1
+  case "$1" in
+    --version|-v|version) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+print_cli_version() {
+  local version
+  version="$(
+    node -e '
+      const { readFileSync } = require("node:fs");
+      const pkg = JSON.parse(readFileSync(process.argv[1], "utf8"));
+      if (pkg.name !== "gorilator" || typeof pkg.version !== "string" || pkg.version.trim() === "") {
+        process.exit(1);
+      }
+      process.stdout.write(pkg.version);
+    ' "$CLI_DIR/package.json" 2>/dev/null || true
+  )"
+  printf 'gorilator %s\n' "${version:-0.0.0}"
+}
+
 main() {
   ensure_node
+  if is_version_request "$@"; then
+    print_cli_version
+    exit 0
+  fi
   if [ ! -f "$CLI_ENTRY" ]; then
     build_local_cli || true
   fi
