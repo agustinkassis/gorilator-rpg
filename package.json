@@ -16,6 +16,7 @@
     "build:landing": "pnpm --filter @gorilator/landing build",
     "perf": "node scripts/perf-analyze.mjs",
     "bump": "node scripts/bump.mjs",
+    "version:check": "node scripts/check-versions.mjs",
     "deploy": "bash cli/gorilator install",
     "gorilator": "bash cli/gorilator"
   },

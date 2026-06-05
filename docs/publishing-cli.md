@@ -50,6 +50,10 @@ pnpm bump app <level>        # bump only the umbrella version (catch-up)
 (See [`scripts/bump.mjs`](../scripts/bump.mjs). It rewrites just the `version` field,
 so all other package.json formatting is preserved.)
 
+A PR CI check enforces this — [`version-guard.yml`](../.github/workflows/version-guard.yml)
+fails if a package version changed without the app version bumping by at least the same
+level. Run it locally with `pnpm version:check` (compares against `origin/main`).
+
 ## Releasing a new version
 
 1. **Bump the CLI:** `pnpm bump cli <major|minor|patch>` (this also bumps the app
