@@ -16,16 +16,19 @@ of `npub1…` keys (raw 64-char hex also accepted):
 ADMIN_NPUBS=npub1abc…,npub1def…
 ```
 
-Manage it from the CLI (validates the npub, writes `.env`, restarts the daemon):
+Manage it from the CLI (validates input, writes `.env`, restarts the daemon):
 
 ```
 gorilator setup → Server settings → Manage admins (NIP-98)
-   • Add admin npub
-   • Remove admin npub
+   • Add admin        — paste an npub1… OR a NIP-05 identifier (name@domain,
+                        resolved to an npub via /.well-known/nostr.json)
+   • Remove an admin  — by list number or by pasting the npub
+   • Remove all admins
 ```
 
-You can also set/edit `ADMIN_NPUBS` by hand in the install's `.env`. The daemon
-reads it on (re)start, so changes apply after a restart (the CLI does this for you).
+The menu shows the current admin list. You can also set/edit `ADMIN_NPUBS` by hand
+in the install's `.env` (comma/space-separated npubs); the daemon reads it on
+(re)start, so changes apply after a restart (the CLI does this for you).
 
 ## Protected endpoints
 

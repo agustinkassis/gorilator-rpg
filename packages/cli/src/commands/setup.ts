@@ -25,7 +25,7 @@ import {
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
-import { isValidNpub } from "../lib/npub.js";
+import { isValidNpub, nip05ToNpub } from "../lib/npub.js";
 import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
@@ -201,24 +201,42 @@ async function adminsMenu(opts: Options): Promise<void> {
         ? "  (no admins configured)\n"
         : admins.map((n, i) => `  ${i + 1}. ${n.slice(0, 14)}…${n.slice(-6)}`).join("\n") + "\n";
     const choice = await selectMenu(`Admins (NIP-98)\n${list}`, [
-      { label: "Add admin npub" },
-      { label: "Remove admin npub", hint: admins.length ? `${admins.length} configured` : "none" },
+      { label: "Add admin", hint: "npub1… or NIP-05 (name@domain)" },
+      { label: "Remove an admin", hint: admins.length ? `${admins.length} configured` : "none" },
+      { label: "Remove all admins", hint: admins.length ? `${admins.length} configured` : "none" },
       { label: "Back" },
     ]);
 
-    if (choice === 0) addAdmin(opts);
+    if (choice === 0) await addAdmin(opts);
     else if (choice === 1) removeAdmin(opts);
+    else if (choice === 2) removeAllAdmins(opts);
     else return;
   }
 }
 
-function addAdmin(opts: Options): void {
-  const npub = ask("Admin npub1…: ").trim();
-  if (!isValidNpub(npub)) {
-    log.warn("That is not a valid npub1… key. No change made.");
+/** Add an admin by npub1… or NIP-05 identifier (name@domain, resolved to npub). */
+async function addAdmin(opts: Options): Promise<void> {
+  const input = ask("Admin npub1… or NIP-05 (name@domain): ").trim();
+  if (!input) return;
+
+  let npub: string | null = null;
+  if (input.includes("@")) {
+    log.info(`Resolving NIP-05 ${input}…`);
+    npub = await nip05ToNpub(input);
+    if (!npub) {
+      log.warn(`Couldn't resolve NIP-05 '${input}'. No change made.`);
+      pause();
+      return;
+    }
+    log.ok(`Resolved to ${npub.slice(0, 14)}…${npub.slice(-6)}`);
+  } else if (isValidNpub(input)) {
+    npub = input;
+  } else {
+    log.warn("Enter a valid npub1… key or a NIP-05 identifier (name@domain). No change made.");
     pause();
     return;
   }
+
   const ctx = requireInstall(opts);
   const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
   if (admins.includes(npub)) {
@@ -252,6 +270,20 @@ function removeAdmin(opts: Options): void {
   }
   const [removed] = admins.splice(idx, 1);
   writeEnvPatch(ctx, { ADMIN_NPUBS: admins.join(",") }, `Removed admin ${removed.slice(0, 14)}….`);
+  restartDaemon();
+  pause();
+}
+
+function removeAllAdmins(opts: Options): void {
+  const ctx = requireInstall(opts);
+  const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+  if (admins.length === 0) {
+    log.warn("No admins to remove.");
+    pause();
+    return;
+  }
+  if (!confirm(`Remove ALL ${admins.length} admin(s)? This clears ADMIN_NPUBS.`)) return;
+  writeEnvPatch(ctx, { ADMIN_NPUBS: "" }, `Removed all ${admins.length} admin(s).`);
   restartDaemon();
   pause();
 }
