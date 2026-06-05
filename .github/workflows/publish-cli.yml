@@ -1,7 +1,9 @@
 name: Publish CLI to npm
 
-# Publishes packages/cli (the `gorilator` package) to the npm registry
-# whenever a GitHub Release is published.
+# Publishes packages/cli (the `gorilator` package) to npm when a GitHub Release
+# is published — but ONLY if the CLI's package version isn't already on npm
+# (i.e. the CLI version actually changed). Releases that bump only the app
+# umbrella version, or that don't touch the CLI, skip publishing cleanly.
 on:
   release:
     types: [published]
@@ -27,20 +29,39 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      # Publish only when this exact version isn't already on npm.
+      - name: Decide whether to publish
+        id: gate
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "gorilator@$VERSION" version >/dev/null 2>&1; then
+            echo "gorilator@$VERSION is already published — skipping."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "gorilator@$VERSION is new — will build, test, and publish."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Trusted Publishing (OIDC) requires npm >= 11.5.1
       - name: Update npm
+        if: steps.gate.outputs.publish == 'true'
         run: npm install -g npm@latest
 
       - name: Install dependencies
+        if: steps.gate.outputs.publish == 'true'
         run: npm install
 
       - name: Build
+        if: steps.gate.outputs.publish == 'true'
         run: npm run build
 
       - name: Test
+        if: steps.gate.outputs.publish == 'true'
         run: npm test
 
       # No NODE_AUTH_TOKEN needed: authentication is via OIDC Trusted Publishing,
       # configured on npmjs.com for this repo + workflow. Provenance is automatic.
       - name: Publish to npm
+        if: steps.gate.outputs.publish == 'true'
         run: npm publish

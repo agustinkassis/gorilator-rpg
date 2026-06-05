@@ -12,11 +12,14 @@ The workflow lives at [`.github/workflows/publish-cli.yml`](../.github/workflows
 
 1. **Trigger** — `release: [published]` (a published GitHub Release). It also exposes
    `workflow_dispatch` so it can be run manually from the **Actions** tab as a fallback.
-2. **Build & test** — in `packages/cli`: `npm install`, `npm run build` (tsc), `npm test`.
-3. **Publish** — `npm publish`. No `NODE_AUTH_TOKEN`; the runner authenticates to npm
+2. **Version gate** — the job first checks `npm view gorilator@<version>`. If that exact
+   CLI version is **already on npm, it skips** build/test/publish (the job still passes).
+   So it publishes **only when the CLI version changed** — a release that bumps just the
+   app umbrella version (or doesn't touch the CLI) is a clean no-op here.
+3. **Build & test** — in `packages/cli`: `npm install`, `npm run build` (tsc), `npm test`.
+4. **Publish** — `npm publish`. No `NODE_AUTH_TOKEN`; the runner authenticates to npm
    via OIDC. Provenance is attached automatically (the job has `id-token: write`).
-4. **npm version** — CI upgrades npm to latest first, because Trusted Publishing
-   requires **npm ≥ 11.5.1** (Node 20 ships an older npm).
+   CI upgrades npm to latest first (Trusted Publishing needs **npm ≥ 11.5.1**).
 
 ## One-time setup (already done)
 
@@ -57,17 +60,20 @@ level. Run it locally with `pnpm version:check` (compares against `origin/main`)
 ## Releasing a new version
 
 1. **Bump the CLI:** `pnpm bump cli <major|minor|patch>` (this also bumps the app
-   umbrella version). npm rejects re-publishing an existing version, so this **must**
-   change the CLI version.
+   umbrella version). Bumping the CLI is what makes CI actually publish (the version
+   gate skips when the CLI version is unchanged).
 2. Commit and merge to `main`.
-3. Create a **GitHub Release** (e.g. tag `cli-vX.Y.Z`). Publishing the release fires CI.
-4. Watch the run in the **Actions** tab; on success the new version is live on npm.
+3. Create a **GitHub Release** tagged with the **app (umbrella) version**, e.g.
+   `vX.Y.Z` — the daemon auto-update compares the release tag's version against the
+   app version (see [Auto-update check](#auto-update-check) below). Publishing the
+   release fires CI.
+4. Watch the run in the **Actions** tab; on success the new CLI version is live on npm.
 
 ### Manual publish (fallback)
 
 You can trigger the workflow by hand from **Actions → Publish CLI to npm → Run workflow**.
-Only do this when `package.json` already has a fresh, unpublished version — otherwise the
-`npm publish` step fails with "version already exists".
+It's safe to run anytime: if the CLI version is already on npm the version gate skips,
+otherwise it publishes.
 
 ## Auto-update check
 
@@ -78,9 +84,11 @@ releases** and surfaces an alert so operators know when to run `gorilator update
 
 - The game server (the supervised daemon process) runs a periodic check
   ([`packages/server/src/systems/updateCheck.ts`](../packages/server/src/systems/updateCheck.ts)).
-  It calls the GitHub Releases API for the repo and compares the latest release's
-  publish date against the local git `HEAD` commit date — i.e. "was a release cut
-  after the code I'm running?".
+  It calls the GitHub Releases API and compares (SemVer) the latest release's tag
+  version against the local **app (umbrella) version** — the root `package.json`
+  version, **not** the CLI or server version. So releases must be tagged with the app
+  version (e.g. `v0.4.0`). If a tag has no parseable version, it falls back to
+  comparing the release date against the local git `HEAD` commit date.
 - The verdict is cached and exposed at **`GET /api/update`**.
 - **Game splash:** on load, the client polls `/api/update` and, if an update
   exists, shows a small dismissible "⬆ Update available — &lt;tag&gt;" banner
