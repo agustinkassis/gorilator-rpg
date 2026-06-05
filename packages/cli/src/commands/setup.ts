@@ -25,6 +25,7 @@ import {
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
+import { isValidNpub, nip05ToNpub } from "../lib/npub.js";
 import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
@@ -87,6 +88,10 @@ async function runSetupMenu(opts: Options): Promise<void> {
         label: "Colyseus and environment",
         hint: "monitor auth, server name, stats files",
       },
+      {
+        label: "Developer",
+        hint: ctx.env.GORILATOR_DEV === "1" ? "dev mode ON" : "dev mode off",
+      },
       { label: "Show current settings" },
       { label: "Exit" },
     ]);
@@ -108,6 +113,9 @@ async function runSetupMenu(opts: Options): Promise<void> {
         await environmentMenu(opts);
         break;
       case 5:
+        await developerMenu(opts);
+        break;
+      case 6:
         showCurrentSettings(requireInstall(opts));
         pause();
         break;
@@ -115,6 +123,36 @@ async function runSetupMenu(opts: Options): Promise<void> {
         return;
     }
   }
+}
+
+/** Developer tools. Currently a single toggle: when ON, `gorilator serve` runs
+ *  the live dev server (Vite HMR + tsx, in-game Dev Mode editor) instead of the
+ *  production build — see commands/serve.ts. Mock Nostr login stays disabled. */
+async function developerMenu(opts: Options): Promise<void> {
+  for (;;) {
+    const ctx = requireInstall(opts);
+    const on = ctx.env.GORILATOR_DEV === "1";
+    const choice = await selectMenu(`Developer\n  Dev mode is ${on ? "ON" : "off"}\n`, [
+      { label: on ? "Turn dev mode OFF" : "Turn dev mode ON", hint: on ? "back to production build" : "live dev server (Vite + tsx)" },
+      { label: "Back" },
+    ]);
+    if (choice === 0) toggleDevMode(opts, !on);
+    else return;
+  }
+}
+
+function toggleDevMode(opts: Options, on: boolean): void {
+  const ctx = requireInstall(opts);
+  if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
+    return;
+  }
+  writeEnvPatch(
+    ctx,
+    { GORILATOR_DEV: on ? "1" : "" },
+    on ? "Dev mode ON — the daemon will run the live dev server." : "Dev mode off — back to the production build.",
+  );
+  restartDaemon();
+  pause();
 }
 
 async function logsMenu(): Promise<void> {
@@ -164,14 +202,163 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
       { label: "Update server port", hint: String(port) },
       { label: "Update optional client port", hint: clientPort ? String(clientPort) : "disabled" },
       { label: "Use one-port mode", hint: "client + WebSocket + monitor on server port" },
+      { label: "Auto-update check interval", hint: updateCheckHint(ctx.env.UPDATE_CHECK_HOURS) },
+      { label: "Manage admins (NIP-98)", hint: adminsHint(ctx.env.ADMIN_NPUBS) },
       { label: "Back" },
     ]);
 
     if (choice === 0) await updateServerPort(opts, port);
     else if (choice === 1) await updateClientPort(opts, clientPort);
     else if (choice === 2) await setOnePortMode(opts);
+    else if (choice === 3) updateAutoUpdateInterval(opts);
+    else if (choice === 4) await adminsMenu(opts);
     else return;
   }
+}
+
+/** Parse ADMIN_NPUBS into a clean npub list. */
+function parseAdminNpubs(raw: string | undefined): string[] {
+  return (raw ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Hint for the admins menu row: how many are configured. */
+function adminsHint(raw: string | undefined): string {
+  const n = parseAdminNpubs(raw).length;
+  return n === 0 ? "none" : `${n} configured`;
+}
+
+/** Add/remove the admin npubs allowed to call the protected /api/admin/* API
+ *  (NIP-98 auth) and trigger updates from the splash. Persists ADMIN_NPUBS. */
+async function adminsMenu(opts: Options): Promise<void> {
+  for (;;) {
+    const ctx = requireInstall(opts);
+    const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+    const list =
+      admins.length === 0
+        ? "  (no admins configured)\n"
+        : admins.map((n, i) => `  ${i + 1}. ${n.slice(0, 14)}…${n.slice(-6)}`).join("\n") + "\n";
+    const choice = await selectMenu(`Admins (NIP-98)\n${list}`, [
+      { label: "Add admin", hint: "npub1… or NIP-05 (name@domain)" },
+      { label: "Remove an admin", hint: admins.length ? `${admins.length} configured` : "none" },
+      { label: "Remove all admins", hint: admins.length ? `${admins.length} configured` : "none" },
+      { label: "Back" },
+    ]);
+
+    if (choice === 0) await addAdmin(opts);
+    else if (choice === 1) removeAdmin(opts);
+    else if (choice === 2) removeAllAdmins(opts);
+    else return;
+  }
+}
+
+/** Add an admin by npub1… or NIP-05 identifier (name@domain, resolved to npub). */
+async function addAdmin(opts: Options): Promise<void> {
+  const input = ask("Admin npub1… or NIP-05 (name@domain): ").trim();
+  if (!input) return;
+
+  let npub: string | null = null;
+  if (input.includes("@")) {
+    log.info(`Resolving NIP-05 ${input}…`);
+    npub = await nip05ToNpub(input);
+    if (!npub) {
+      log.warn(`Couldn't resolve NIP-05 '${input}'. No change made.`);
+      pause();
+      return;
+    }
+    log.ok(`Resolved to ${npub.slice(0, 14)}…${npub.slice(-6)}`);
+  } else if (isValidNpub(input)) {
+    npub = input;
+  } else {
+    log.warn("Enter a valid npub1… key or a NIP-05 identifier (name@domain). No change made.");
+    pause();
+    return;
+  }
+
+  const ctx = requireInstall(opts);
+  const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+  if (admins.includes(npub)) {
+    log.ok("That npub is already an admin.");
+    pause();
+    return;
+  }
+  admins.push(npub);
+  writeEnvPatch(ctx, { ADMIN_NPUBS: admins.join(",") }, `Added admin ${npub.slice(0, 14)}….`);
+  restartDaemon();
+  pause();
+}
+
+function removeAdmin(opts: Options): void {
+  const ctx = requireInstall(opts);
+  const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+  if (admins.length === 0) {
+    log.warn("No admins to remove.");
+    pause();
+    return;
+  }
+  const raw = ask(`Remove which? Enter the number (1-${admins.length}) or paste the npub: `).trim();
+  let idx = Number(raw) - 1;
+  if (!Number.isInteger(idx) || idx < 0 || idx >= admins.length) {
+    idx = admins.indexOf(raw);
+  }
+  if (idx < 0) {
+    log.warn("No matching admin. No change made.");
+    pause();
+    return;
+  }
+  const [removed] = admins.splice(idx, 1);
+  writeEnvPatch(ctx, { ADMIN_NPUBS: admins.join(",") }, `Removed admin ${removed.slice(0, 14)}….`);
+  restartDaemon();
+  pause();
+}
+
+function removeAllAdmins(opts: Options): void {
+  const ctx = requireInstall(opts);
+  const admins = parseAdminNpubs(ctx.env.ADMIN_NPUBS);
+  if (admins.length === 0) {
+    log.warn("No admins to remove.");
+    pause();
+    return;
+  }
+  if (!confirm(`Remove ALL ${admins.length} admin(s)? This clears ADMIN_NPUBS.`)) return;
+  writeEnvPatch(ctx, { ADMIN_NPUBS: "" }, `Removed all ${admins.length} admin(s).`);
+  restartDaemon();
+  pause();
+}
+
+/** Hint for the auto-update menu row: the current interval (1h default, 0=off). */
+function updateCheckHint(raw: string | undefined): string {
+  if (raw === undefined || raw.trim() === "") return "every 1h (default)";
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return "disabled";
+  return `every ${n}h`;
+}
+
+/** Prompt for the daemon's release-check interval in hours (0 disables) and
+ *  persist it as UPDATE_CHECK_HOURS, then restart so the server picks it up. */
+function updateAutoUpdateInterval(opts: Options): void {
+  const ctx = requireInstall(opts);
+  const current = ctx.env.UPDATE_CHECK_HOURS?.trim() || "1";
+  process.stdout.write(
+    "How often should the daemon check GitHub for a new release?\n" +
+      "  Enter hours (e.g. 1, 6, 24). Enter 0 to disable auto-update checks.\n",
+  );
+  const raw = ask(`Check interval in hours [${current}]: `).trim() || current;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    log.warn("Enter a non-negative number of hours. No change made.");
+    pause();
+    return;
+  }
+  const value = String(Math.floor(n));
+  writeEnvPatch(
+    ctx,
+    { UPDATE_CHECK_HOURS: value },
+    n === 0
+      ? "Disabled the daemon auto-update check."
+      : `Set the daemon auto-update check to every ${value}h.`,
+  );
+  restartDaemon();
+  pause();
 }
 
 async function updateServerPort(opts: Options, current: number): Promise<void> {

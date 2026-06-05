@@ -31,6 +31,30 @@ function appVersion(): string {
   }
 }
 
+/** Versions of every workspace package, read at build time, for the footer
+ *  version popup (click the bottom-right tag). Skips any that can't be read. */
+function packageVersions(): Record<string, string> {
+  const root = resolve(configDir, "..", "..");
+  const files: Array<[string, string]> = [
+    ["app", "package.json"],
+    ["client", "packages/client/package.json"],
+    ["server", "packages/server/package.json"],
+    ["shared", "packages/shared/package.json"],
+    ["cli", "packages/cli/package.json"],
+    ["landing", "packages/landing/package.json"],
+  ];
+  const out: Record<string, string> = {};
+  for (const [label, rel] of files) {
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(root, rel), "utf8")) as { version?: string };
+      if (typeof pkg.version === "string" && pkg.version) out[label] = pkg.version;
+    } catch {
+      /* missing/unreadable — skip */
+    }
+  }
+  return out;
+}
+
 function captureGit(args: string[], cwd?: string, trim = true): string | null {
   try {
     const raw = execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -1961,6 +1985,7 @@ export default defineConfig(({ command }) => {
     // Inject local build metadata for the always-visible footer tags.
     define: {
       __APP_VERSION__: JSON.stringify(appVersion()),
+      __PKG_VERSIONS__: JSON.stringify(packageVersions()),
       __WORKTREE_LABEL__: JSON.stringify(worktree.label),
       __WORKTREE_FULL_LABEL__: JSON.stringify(worktree.fullLabel),
     },
