@@ -35,10 +35,26 @@ Two things had to be configured once; they're in place and don't need redoing:
 > If the workflow file is ever renamed, the Trusted Publisher entry on npmjs.com must
 > be updated to match the new filename, or publishes will fail authentication.
 
+## Versioning
+
+Each workspace package keeps its **own** version. The root `package.json` version is
+the project-wide **umbrella ("app") version** — it advances by the same semver level
+whenever any package is bumped. Always bump with the helper so the two move together:
+
+```
+pnpm bump <cli|client|server|shared|landing> <major|minor|patch>
+# e.g. pnpm bump cli minor   →  cli 1.4.0→1.5.0  AND  app 0.3.0→0.4.0
+pnpm bump app <level>        # bump only the umbrella version (catch-up)
+```
+
+(See [`scripts/bump.mjs`](../scripts/bump.mjs). It rewrites just the `version` field,
+so all other package.json formatting is preserved.)
+
 ## Releasing a new version
 
-1. Bump `version` in [`packages/cli/package.json`](../packages/cli/package.json).
-   npm rejects re-publishing a version that already exists, so this **must** change.
+1. **Bump the CLI:** `pnpm bump cli <major|minor|patch>` (this also bumps the app
+   umbrella version). npm rejects re-publishing an existing version, so this **must**
+   change the CLI version.
 2. Commit and merge to `main`.
 3. Create a **GitHub Release** (e.g. tag `cli-vX.Y.Z`). Publishing the release fires CI.
 4. Watch the run in the **Actions** tab; on success the new version is live on npm.

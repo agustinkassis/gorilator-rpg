@@ -1,6 +1,6 @@
 {
   "name": "rpg-online",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Multiplayer isometric low-poly RPG demo — Babylon.js + Colyseus",
   "scripts": {
@@ -15,6 +15,7 @@
     "build": "pnpm --filter @rpg/shared build && pnpm --filter @rpg/client build && pnpm --filter @gorilator/landing build",
     "build:landing": "pnpm --filter @gorilator/landing build",
     "perf": "node scripts/perf-analyze.mjs",
+    "bump": "node scripts/bump.mjs",
     "deploy": "bash cli/gorilator install",
     "gorilator": "bash cli/gorilator"
   },
