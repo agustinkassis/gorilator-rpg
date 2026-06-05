@@ -1,5 +1,8 @@
 # Agent Workflow
 
+> This is the **canonical** agent-instructions file. `CLAUDE.md` is a symlink to it.
+> Always edit **AGENTS.md** — never add a separate CLAUDE.md.
+
 - Read `codex-workflow.json` before committing, merging, pushing, or opening a PR.
 - Treat `targetBranch` as the selected merge/PR base branch. Default to `main` only when the file or property is missing.
 - The local dev UI updates `codex-workflow.json` when the user changes the target branch selector in the lower-left worktree drawer.
