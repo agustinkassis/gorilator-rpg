@@ -24,8 +24,15 @@ packages/client/public/models/*.glb
 !packages/client/public/models/goblin_house.glb
 packages/client/public/models/characters/
 
-# Local agent/tooling state (not for the public repo)
-.claude/
+# Shared agent/tooling config is committed so new developers get the same
+# startup flow. Local runtime state and machine-specific permissions stay out.
+.claude/worktrees/
+.claude/settings.local.json
+.claude/**/*.local.json
+.codex/worktrees/
+.codex/settings.local.json
+.codex/*.local.toml
+.codex/*.local.json
 
 # Local Gorilator CLI project settings, process state, and logs
 .gorilator/

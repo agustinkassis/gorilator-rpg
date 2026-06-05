@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "landing",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "pnpm --filter @gorilator/landing exec vite --host 0.0.0.0 --port 4900 --strictPort"
+      ],
+      "port": 4900
+    },
+    {
+      "name": "game",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "CLIENT_PORT=4901 GAME_SERVER_PORT=4902 pnpm dev"
+      ],
+      "port": 4901
+    }
+  ]
+}
