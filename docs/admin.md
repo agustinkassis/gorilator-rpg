@@ -19,14 +19,18 @@ ADMIN_NPUBS=npub1abc…,npub1def…
 Manage it from the CLI (validates input, writes `.env`, restarts the daemon):
 
 ```
-gorilator setup → Server settings → Manage admins (NIP-98)
+# system install:  gorilator setup → Server settings → Manage admins (NIP-98)
+# from the repo:    gorilator setup → Manage admins (NIP-98)
    • Add admin        — paste an npub1… OR a NIP-05 identifier (name@domain,
                         resolved to an npub via /.well-known/nostr.json)
    • Remove an admin  — by list number or by pasting the npub
    • Remove all admins
 ```
 
-The menu shows the current admin list. You can also set/edit `ADMIN_NPUBS` by hand
+The same menu is available in **both** modes — the system-install setup (a deployed
+daemon) and the in-repo **project setup** (run `gorilator setup` from a checkout,
+e.g. `npm start -- setup` in `packages/cli` during dev). The menu shows the current
+admin list. You can also set/edit `ADMIN_NPUBS` by hand
 in the install's `.env` (comma/space-separated npubs); the daemon reads it on
 (re)start, so changes apply after a restart (the CLI does this for you).
 

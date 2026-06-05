@@ -7,6 +7,13 @@ import { selectMenu } from "../lib/menu.js";
 import type { Options } from "../lib/options.js";
 import { ask, canPrompt, confirm } from "../lib/proc.js";
 import { projectStatus, restartProjectDev } from "../lib/projectDev.js";
+import {
+  adminsHint,
+  adminsMenu,
+  updateAutoUpdateInterval,
+  updateCheckHint,
+  type ServerSettingsCtx,
+} from "../lib/serverSettings.js";
 
 type EnvMap = Record<string, string>;
 
@@ -35,6 +42,8 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
         label: "Colyseus and environment",
         hint: env.SERVER_NAME || DEFAULT_SERVER_NAME,
       },
+      { label: "Auto-update check interval", hint: updateCheckHint(env.UPDATE_CHECK_HOURS) },
+      { label: "Manage admins (NIP-98)", hint: adminsHint(env.ADMIN_NPUBS) },
       { label: "Show current settings" },
       { label: "Exit" },
     ]);
@@ -42,11 +51,23 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
     if (choice === 0) await portsMenu(opts, ctx);
     else if (choice === 1) await nsecMenu(opts, ctx);
     else if (choice === 2) await environmentMenu(opts, ctx);
-    else if (choice === 3) {
+    else if (choice === 3) await updateAutoUpdateInterval(settingsCtx(opts, ctx));
+    else if (choice === 4) await adminsMenu(() => settingsCtx(opts, ctx));
+    else if (choice === 5) {
       showCurrentSettings(opts, ctx);
       pause();
     } else return;
   }
+}
+
+/** The shared ServerSettingsCtx for the in-repo project: the repo .env, its env
+ *  writer, and a dev-server restart (only if it's currently running). */
+function settingsCtx(opts: Options, ctx: RuntimeContext): ServerSettingsCtx {
+  return {
+    env: readProjectEnv(ctx),
+    write: (patch, message) => writeEnvPatch(ctx, patch, message),
+    restart: () => restartIfRunning(opts, ctx),
+  };
 }
 
 async function portsMenu(opts: Options, ctx: RuntimeContext): Promise<void> {
