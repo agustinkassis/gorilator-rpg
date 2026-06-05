@@ -1,7 +1,6 @@
 import {
   ArcRotateCamera,
   Color3,
-  ShadowGenerator,
   TransformNode,
   AbstractMesh,
   Vector3,
@@ -65,8 +64,9 @@ import {
   normalizeStructureMask,
 } from "../input/FootprintPicker";
 import { smooth } from "../util/math";
-import { applyTransform, importModel } from "../scene/props";
+import { applyTransform, bounds, importModel } from "../scene/props";
 import { itemDef, loadItemDefs } from "../items/itemRegistry";
+import { ContactShadowHandle, ContactShadowShape, ContactShadowSystem } from "../scene/contactShadows";
 
 interface ServerView {
   x: number;
@@ -101,6 +101,7 @@ interface Hop {
  *  hands off to the real (server-spawned) collectible resting at the same spot. */
 interface ThrownBanana {
   model: BananaModel;
+  shadow: ContactShadowHandle;
   hops: Hop[];
   hopIndex: number;
   t: number; // time into the current hop
@@ -170,15 +171,17 @@ export class Game {
   private pendingEnemies = new Set<string>();
   private pendingEnemyViews = new Map<string, Enemy>();
   private potions = new Map<string, (PotionModel | BerserkerPotionModel) & { bob: number; drop?: DropAnim }>();
-  private trees = new Map<string, TreeModel & { hp: number; maxHp: number }>();
+  private trees = new Map<string, TreeModel & { hp: number; maxHp: number; alive: boolean }>();
   private logs = new Map<string, LogModel & { bob: number; drop?: DropAnim }>();
-  private rocks = new Map<string, RockModel & { hp: number; maxHp: number }>();
+  private rocks = new Map<string, RockModel & { hp: number; maxHp: number; alive: boolean }>();
   private stones = new Map<string, StoneModel & { bob: number; drop?: DropAnim }>();
   private bananas = new Map<string, BananaModel & { spin: number; drop?: DropAnim }>();
   private items = new Map<string, CollectibleModel & { bob: number; drop?: DropAnim; itemId: string; restY: number }>();
   private pendingItems = new Set<string>();
   private removedItems = new Set<string>();
   private houses = new Map<string, { hp: number; maxHp: number; alive: boolean; anchor: TransformNode; visual?: TransformNode; meshes?: AbstractMesh[] }>();
+  private contactShadows = new Map<string, ContactShadowHandle>();
+  private characterShadeRadii = new Map<string, number>();
   private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
   private housePickable = false;
   private healingCircle: SacredCircleFx | null = null;
@@ -203,7 +206,7 @@ export class Game {
     private camera: ArcRotateCamera,
     private factory: CharacterFactory,
     private hud: HUD,
-    private shadow: ShadowGenerator,
+    private shadows: ContactShadowSystem,
   ) {
     const canvas = camera.getScene().getEngine().getRenderingCanvas();
     if (canvas) this.damageFx = new DamageFx(canvas);
@@ -488,8 +491,9 @@ export class Game {
     model.root.metadata = { entityId: id, kind: "potion" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "potion" };
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
+    this.addContactShadow("potion", id, model.root, "pickup", 0.9, 1.1, 0.24, model.meshes);
     this.potions.set(id, {
       ...model,
       bob: Math.random() * Math.PI * 2,
@@ -511,6 +515,7 @@ export class Game {
     if (!pot) return;
     this.potions.delete(id);
     this.footprints.remove("potion", id);
+    this.removeContactShadow("potion", id);
     this.startCollect(pot); // fly into the collector, shrink + fade
   }
 
@@ -522,8 +527,9 @@ export class Game {
     model.root.position.set(t.x, 0, t.z);
     model.root.metadata = { entityId: id, kind: "tree" };
     model.setAlive(t.alive);
-    for (const mesh of model.meshes) this.castAndReceive(mesh); // light shadow
-    const tm = { ...model, hp: t.hp, maxHp: t.maxHp };
+    for (const mesh of model.meshes) this.receiveContactShadow(mesh);
+    this.addContactShadow("tree", id, model.root, "structure", 2.6, 3.2, 0.42, model.meshes, true);
+    const tm = { ...model, hp: t.hp, maxHp: t.maxHp, alive: t.alive };
     this.trees.set(id, tm);
     this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS, PICK_PRIORITY.resource, t.alive && t.hp > 0);
     // HP bar floats above the crown; it only appears once the tree is chopped.
@@ -536,11 +542,20 @@ export class Game {
   changeTree(t: Tree, id: string) {
     const tm = this.trees.get(id);
     if (!tm) return;
+    const modelStateChanged = tm.alive !== t.alive;
     tm.hp = t.hp;
     tm.maxHp = t.maxHp;
+    tm.alive = t.alive;
     tm.setAlive(t.alive);
     tm.root.position.x = t.x; // follow dev-mode relocation (HP bar is parented, so it tags along)
     tm.root.position.z = t.z;
+    if (modelStateChanged) {
+      this.addContactShadow("tree", id, tm.root, "structure", t.alive && t.hp > 0 ? 2.6 : 1.0, t.alive && t.hp > 0 ? 3.2 : 1.1, t.alive && t.hp > 0 ? 0.42 : 0.22, tm.meshes, true);
+    } else {
+      this.updateContactShadow("tree", id, tm.root, t.alive && t.hp > 0 ? 0.42 : 0.22);
+      this.resizeContactShadow("tree", id, t.alive && t.hp > 0 ? 2.6 : 1.0, t.alive && t.hp > 0 ? 3.2 : 1.1);
+    }
+    this.shadows.refreshStaticShadows();
     this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS, PICK_PRIORITY.resource, t.alive && t.hp > 0);
   }
 
@@ -548,6 +563,7 @@ export class Game {
     const tree = this.trees.get(id);
     if (!tree) return;
     this.hud.remove(id);
+    this.removeContactShadow("tree", id);
     tree.dispose();
     this.trees.delete(id);
     this.footprints.remove("tree", id);
@@ -561,8 +577,9 @@ export class Game {
     model.root.metadata = { entityId: id, kind: "log" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "log" };
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
+    this.addContactShadow("log", id, model.root, "pickup", 1.0, 1.25, 0.24, model.meshes);
     this.logs.set(id, {
       ...model,
       bob: Math.random() * Math.PI * 2,
@@ -584,6 +601,7 @@ export class Game {
     if (!log) return;
     this.logs.delete(id);
     this.footprints.remove("log", id);
+    this.removeContactShadow("log", id);
     this.startCollect(log);
   }
 
@@ -596,10 +614,11 @@ export class Game {
     model.root.metadata = { entityId: id, kind: "rock" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "rock" };
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
     model.setAlive(rock.alive);
-    const rm = { ...model, hp: rock.hp, maxHp: rock.maxHp };
+    this.addContactShadow("rock", id, model.root, "structure", Math.max(1.4, rock.radius * 1.9), Math.max(1.6, rock.radius * 2.2), 0.44, model.meshes, true);
+    const rm = { ...model, hp: rock.hp, maxHp: rock.maxHp, alive: rock.alive };
     this.rocks.set(id, rm);
     this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
     // HP bar floats above the boulder; it only appears once the rock is mined.
@@ -612,11 +631,23 @@ export class Game {
   changeRock(rock: Rock, id: string) {
     const rm = this.rocks.get(id);
     if (!rm) return;
+    const modelStateChanged = rm.alive !== rock.alive;
     rm.hp = rock.hp;
     rm.maxHp = rock.maxHp;
+    rm.alive = rock.alive;
     rm.setAlive(rock.alive);
     rm.root.position.x = rock.x; // follow dev-mode relocation (HP bar is parented, tags along)
     rm.root.position.z = rock.z;
+    const shadowW = rock.alive && rock.hp > 0 ? Math.max(1.4, rock.radius * 1.9) : Math.max(0.9, rock.radius);
+    const shadowD = rock.alive && rock.hp > 0 ? Math.max(1.6, rock.radius * 2.2) : Math.max(1.0, rock.radius * 1.1);
+    const shadowOpacity = rock.alive && rock.hp > 0 ? 0.44 : 0.22;
+    if (modelStateChanged) {
+      this.addContactShadow("rock", id, rm.root, "structure", shadowW, shadowD, shadowOpacity, rm.meshes, true);
+    } else {
+      this.updateContactShadow("rock", id, rm.root, shadowOpacity);
+      this.resizeContactShadow("rock", id, shadowW, shadowD);
+    }
+    this.shadows.refreshStaticShadows();
     this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
   }
 
@@ -624,6 +655,7 @@ export class Game {
     const r = this.rocks.get(id);
     if (!r) return;
     this.hud.remove(id);
+    this.removeContactShadow("rock", id);
     r.dispose();
     this.rocks.delete(id);
     this.footprints.remove("rock", id);
@@ -668,7 +700,12 @@ export class Game {
       this.houseModel?.moveTo(h.x, h.z);
       if (h.alive) this.houseModel?.show(); // a (re)built house re-shows its model after a wipe
     } else {
+      if (visual) {
+        this.addContactShadow("house", id, visual.root, "structure", 5.8, 5.0, 0.42, visual.meshes, true);
+      }
       visual?.root.setEnabled(h.alive);
+      this.setContactShadowEnabled("house", id, h.alive);
+      if (visual) this.shadows.refreshStaticShadows();
     }
   }
 
@@ -689,6 +726,9 @@ export class Game {
       hm.visual.position.x = h.x;
       hm.visual.position.z = h.z;
       hm.visual.setEnabled(h.alive);
+      this.updateContactShadow("house", id, hm.visual, 0.42);
+      this.setContactShadowEnabled("house", id, h.alive);
+      this.shadows.refreshStaticShadows();
     }
   }
 
@@ -696,7 +736,7 @@ export class Game {
     const hm = this.houses.get(id);
     if (!hm) return;
     this.hud.remove(id);
-    for (const mesh of hm.meshes ?? []) this.shadow.removeShadowCaster(mesh);
+    this.removeContactShadow("house", id);
     hm.visual?.dispose();
     hm.anchor.dispose();
     this.houses.delete(id);
@@ -728,7 +768,7 @@ export class Game {
       mesh.parent = root;
       mesh.metadata = { entityId: id, kind: "house" };
       mesh.isPickable = this.housePickable;
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
     return { root, meshes };
   }
@@ -741,8 +781,9 @@ export class Game {
     model.root.metadata = { entityId: id, kind: "stone" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "stone" };
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
+    this.addContactShadow("stone", id, model.root, "pickup", 1.15, 1.3, 0.42);
     this.stones.set(id, {
       ...model,
       bob: Math.random() * Math.PI * 2,
@@ -764,6 +805,7 @@ export class Game {
     if (!st) return;
     this.stones.delete(id);
     this.footprints.remove("stone", id);
+    this.removeContactShadow("stone", id);
     this.startCollect(st);
   }
 
@@ -776,8 +818,9 @@ export class Game {
     model.root.metadata = { entityId: id, kind: "banana" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "banana" };
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
+    this.addContactShadow("banana", id, model.root, "pickup", 0.75, 0.95, 0.22, model.meshes);
     const ban = { ...model, spin: Math.random() * Math.PI * 2, drop: undefined as DropAnim | undefined };
     this.bananas.set(id, ban);
 
@@ -791,6 +834,7 @@ export class Game {
       if (dx * dx + dz * dz <= 2.5 * 2.5) {
         t.collectibleId = id;
         model.root.setEnabled(false);
+        this.setContactShadowEnabled("banana", id, false);
         claimed = true;
         break;
       }
@@ -814,6 +858,7 @@ export class Game {
     if (!b) return;
     this.bananas.delete(id);
     this.footprints.remove("banana", id);
+    this.removeContactShadow("banana", id);
     this.startCollect(b);
   }
 
@@ -846,8 +891,9 @@ export class Game {
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "item" };
       mesh.isPickable = false;
-      this.castAndReceive(mesh);
+      this.receiveContactShadow(mesh);
     }
+    this.addContactShadow("item", id, model.root, "pickup", 1.0, 1.15, 0.23, model.meshes);
     this.items.set(id, {
       ...model,
       itemId: item.itemId,
@@ -911,6 +957,7 @@ export class Game {
     }
     this.items.delete(id);
     this.footprints.remove("item", id);
+    this.removeContactShadow("item", id);
     this.startCollect(model);
   }
 
@@ -960,7 +1007,17 @@ export class Game {
     const scene = this.camera.getScene();
     const item: "banana" | "stone" = ev.item === "stone" ? "stone" : "banana";
     const model = ev.item === "stone" ? buildStoneShot(scene) : buildBanana(scene);
-    for (const mesh of model.meshes) this.shadow.addShadowCaster(mesh); // drops a shadow mid-flight
+    for (const mesh of model.meshes) this.receiveContactShadow(mesh);
+    const thrownShadow = this.shadows.add({
+      name: `shadow_throw_${Date.now()}`,
+      shape: "pickup",
+      x: ev.fromX,
+      z: ev.fromZ,
+      height: 1.1,
+      width: item === "stone" ? 0.8 : 0.75,
+      depth: item === "stone" ? 0.9 : 1.05,
+      opacity: item === "stone" ? 0.38 : 0.24,
+    });
     this.audio?.throwItem({ x: ev.fromX, z: ev.fromZ }, item); // whoosh from the thrower
     const HAND_Y = 1.1;
     const R = THROW_RESTITUTION;
@@ -1003,6 +1060,7 @@ export class Game {
 
     this.thrown.push({
       model,
+      shadow: thrownShadow,
       hops,
       hopIndex: 0,
       t: 0,
@@ -1159,10 +1217,72 @@ export class Game {
   }
 
   // ---- internals ----
-  /** Make a mesh both cast and receive the scene's soft shadow. */
-  private castAndReceive(mesh: AbstractMesh) {
-    this.shadow.addShadowCaster(mesh);
-    mesh.receiveShadows = true;
+  /** Keep the old receiver flag on materials; contact shadows provide the visible grounding. */
+  private receiveContactShadow(mesh: AbstractMesh) {
+    this.shadows.addReceivers([mesh]);
+  }
+
+  private shadowKey(kind: string, id: string): string {
+    return `${kind}:${id}`;
+  }
+
+  private addContactShadow(
+    kind: string,
+    id: string,
+    root: TransformNode,
+    shape: ContactShadowShape,
+    width: number,
+    depth: number,
+    opacity: number,
+    casters?: AbstractMesh[],
+    staticWorld = false,
+  ): ContactShadowHandle {
+    const key = this.shadowKey(kind, id);
+    this.removeContactShadow(kind, id);
+    const opts = {
+      name: `shadow_${kind}_${id}`,
+      shape,
+      x: root.position.x,
+      z: root.position.z,
+      height: root.position.y,
+      width,
+      depth,
+      opacity,
+    };
+    const handle = casters?.length
+      ? staticWorld
+        ? this.shadows.addWorldObject({ ...opts, root, casters })
+        : this.shadows.addProjected({ ...opts, root, casters })
+      : this.shadows.add(opts);
+    this.contactShadows.set(key, handle);
+    return handle;
+  }
+
+  private updateContactShadow(kind: string, id: string, root: TransformNode, opacity?: number) {
+    const handle = this.contactShadows.get(this.shadowKey(kind, id));
+    if (!handle) return;
+    handle.setPosition(root.position.x, root.position.z, root.position.y);
+    if (opacity !== undefined) handle.setOpacity(opacity);
+  }
+
+  private setContactShadowEnabled(kind: string, id: string, on: boolean) {
+    this.contactShadows.get(this.shadowKey(kind, id))?.setEnabled(on);
+  }
+
+  private resizeContactShadow(kind: string, id: string, width: number, depth: number) {
+    this.contactShadows.get(this.shadowKey(kind, id))?.setSize(width, depth);
+  }
+
+  private removeContactShadow(kind: string, id: string) {
+    const key = this.shadowKey(kind, id);
+    this.contactShadows.get(key)?.dispose();
+    this.contactShadows.delete(key);
+  }
+
+  private characterShadowSize(meshes: AbstractMesh[]): number {
+    const b = bounds(meshes);
+    const width = Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
+    return Number.isFinite(width) && width > 0 ? width : 1.8;
   }
 
   private register(entity: Entity, view: ServerView, isEnemy: boolean) {
@@ -1171,7 +1291,17 @@ export class Game {
     entity.level = view.level;
     entity.berserkerMs = view.berserkerMs ?? 0;
     entity.root.metadata = { entityId: entity.id, kind: isEnemy ? "enemy" : "player" };
-    for (const mesh of entity.meshes) this.castAndReceive(mesh);
+    const shadowSize = this.characterShadowSize(entity.meshes);
+    this.characterShadeRadii.set(entity.id, Math.max(0.35, shadowSize * 0.42));
+    this.addContactShadow(
+      isEnemy ? "enemy" : "player",
+      entity.id,
+      entity.root,
+      "character",
+      shadowSize,
+      shadowSize,
+      isEnemy ? 0.46 : 0.5,
+    );
     this.hud.addCharacter(entity, isEnemy);
     this.entities.set(entity.id, entity);
 
@@ -1223,9 +1353,11 @@ export class Game {
     this.hud.remove(id);
     const kind = (entity.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
     this.footprints.remove(kind, id);
+    this.characterShadeRadii.delete(id);
     entity.dispose();
     this.entities.delete(id);
     this.audio?.forget(id); // drop footstep/death bookkeeping for this entity
+    this.removeContactShadow(kind, id);
   }
 
   /** Strike a lightning bolt at a spot (used for player respawns). */
@@ -1238,13 +1370,23 @@ export class Game {
 
     const audio = this.audio;
     const localPos = this.localId ? this.entities.get(this.localId)?.root.position : undefined;
-    for (const entity of this.entities.values()) {
+    for (const [id, entity] of this.entities) {
       entity.update(dt);
+      const kind = (entity.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
+      const structureShade =
+        entity.hp > 0
+          ? this.shadows.sampleStaticShade(
+              entity.root.position.x,
+              entity.root.position.z,
+              this.characterShadeRadii.get(id) ?? 0.55,
+            )
+          : 0;
+      entity.setShadowShade(structureShade * entity.nameplateAlpha);
+      this.updateContactShadow(kind, id, entity.root, (kind === "player" ? 0.5 : 0.46) * entity.nameplateAlpha);
       if (!audio) continue;
       const px = entity.root.position.x;
       const pz = entity.root.position.z;
       const pos = { x: px, z: pz };
-      const kind = (entity.root.metadata as { kind?: string } | null)?.kind;
       audio.entityState(entity.id, entity.animState, pos, { gorillaAttack: kind === "player" });
       // footsteps: the local player always; others only when near — so a distant
       // goblin pack doesn't clatter (and we don't build inaudible voices for them).
@@ -1254,10 +1396,16 @@ export class Game {
       audio.footstep(entity.id, pos, near && entity.isMoving, entity.isSprinting, dt);
     }
 
-    for (const tree of this.trees.values()) tree.update(dt);
-    for (const rock of this.rocks.values()) rock.update(dt);
+    for (const [id, tree] of this.trees) {
+      if (tree.update(dt)) this.shadows.refreshStaticShadows();
+      this.updateContactShadow("tree", id, tree.root);
+    }
+    for (const [id, rock] of this.rocks) {
+      if (rock.update(dt)) this.shadows.refreshStaticShadows();
+      this.updateContactShadow("rock", id, rock.root);
+    }
 
-    for (const pot of this.potions.values()) {
+    for (const [id, pot] of this.potions) {
       pot.root.rotation.y += dt * 1.6;
       if (pot.drop && !pot.drop.settled) {
         pot.root.position.y = updateDrop(pot.drop, dt); // pop + bounce on drop
@@ -1265,8 +1413,9 @@ export class Game {
         pot.bob += dt;
         pot.root.position.y = 0.25 + Math.sin(pot.bob * 2.2) * 0.12;
       }
+      this.updateContactShadow("potion", id, pot.root);
     }
-    for (const log of this.logs.values()) {
+    for (const [id, log] of this.logs) {
       log.root.rotation.y += dt * 0.8;
       if (log.drop && !log.drop.settled) {
         log.root.position.y = updateDrop(log.drop, dt);
@@ -1274,8 +1423,9 @@ export class Game {
         log.bob += dt;
         log.root.position.y = 0.12 + Math.sin(log.bob * 2) * 0.06;
       }
+      this.updateContactShadow("log", id, log.root);
     }
-    for (const st of this.stones.values()) {
+    for (const [id, st] of this.stones) {
       st.root.rotation.y += dt * 0.6;
       if (st.drop && !st.drop.settled) {
         st.root.position.y = updateDrop(st.drop, dt);
@@ -1283,8 +1433,9 @@ export class Game {
         st.bob += dt;
         st.root.position.y = 0.12 + Math.sin(st.bob * 2) * 0.05;
       }
+      this.updateContactShadow("stone", id, st.root);
     }
-    for (const ban of this.bananas.values()) {
+    for (const [id, ban] of this.bananas) {
       ban.spin += dt;
       ban.root.rotation.y += dt * 0.7;
       if (ban.drop && !ban.drop.settled) {
@@ -1292,8 +1443,9 @@ export class Game {
       } else {
         ban.root.position.y = 0.25 + Math.sin(ban.spin * 2) * 0.05;
       }
+      this.updateContactShadow("banana", id, ban.root);
     }
-    for (const item of this.items.values()) {
+    for (const [id, item] of this.items) {
       item.root.rotation.y += dt * 0.65;
       if (item.drop && !item.drop.settled) {
         item.root.position.y = updateDrop(item.drop, dt);
@@ -1301,6 +1453,7 @@ export class Game {
         item.bob += dt;
         item.root.position.y = item.restY + Math.sin(item.bob * 2) * 0.05;
       }
+      this.updateContactShadow("item", id, item.root);
     }
 
     // thrown bananas: arc to the landing, then bounce in place (height ∝ speed),
@@ -1323,6 +1476,7 @@ export class Game {
           (hop.launchY - THROW_GROUND_Y) * (1 - p * frac) +
           hop.peak * Math.sin(p * frac * Math.PI);
         b.model.root.position.set(x, y, z);
+        b.shadow.setPosition(x, z, y);
         b.model.root.rotation.x += dt * 16;
         b.model.root.rotation.y += dt * 7;
         if (p >= 1) {
@@ -1349,8 +1503,10 @@ export class Game {
             const col = b.collectibleId ? this.bananas.get(b.collectibleId) : undefined;
             if (col) {
               col.root.setEnabled(true);
+              this.setContactShadowEnabled("banana", b.collectibleId!, true);
+              this.updateContactShadow("banana", b.collectibleId!, col.root);
               this.upsertCircleFootprint("banana", b.collectibleId!, col.root.position.x, col.root.position.z, BANANA_PICK_RADIUS, PICK_PRIORITY.collectible);
-              for (const m of b.model.meshes) this.shadow.removeShadowCaster(m);
+              b.shadow.dispose();
               b.model.dispose();
               this.thrown.splice(i, 1);
               continue;
@@ -1362,8 +1518,9 @@ export class Game {
         b.fade += dt;
         const k = Math.min(1, b.fade / 0.3);
         for (const m of b.model.meshes) m.visibility = 1 - k;
+        b.shadow.setOpacity(0.24 * (1 - k));
         if (k >= 1) {
-          for (const m of b.model.meshes) this.shadow.removeShadowCaster(m);
+          b.shadow.dispose();
           b.model.dispose();
           this.thrown.splice(i, 1);
         }
@@ -1427,20 +1584,6 @@ export class Game {
       t.z += (tz - t.z) * f;
       t.y = 1;
     }
-    if (local) {
-      // keep the (fixed-size) shadow frustum centred on the player so shadows stay
-      // crisp on the big map instead of being smeared across the whole world.
-      const sun = this.shadow.getLight();
-      const d = sun.direction;
-      const len = Math.hypot(d.x, d.y, d.z) || 1;
-      const D = 130;
-      sun.position.set(
-        local.root.position.x - (d.x / len) * D,
-        local.root.position.y - (d.y / len) * D,
-        local.root.position.z - (d.z / len) * D,
-      );
-    }
-
     // local-player hurt feedback: persistent low-HP vignette + decaying flash/shake
     if (this.damageFx) {
       if (local) this.damageFx.setHp(local.hp, local.maxHp);

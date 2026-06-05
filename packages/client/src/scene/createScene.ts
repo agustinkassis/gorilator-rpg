@@ -6,19 +6,19 @@ import {
   Vector3,
   HemisphericLight,
   DirectionalLight,
-  ShadowGenerator,
   AnimationPropertiesOverride,
   Mesh,
   ArcRotateCamera,
 } from "@babylonjs/core";
 import { createIsoCamera } from "./camera";
 import { createEnvironment } from "./environment";
+import { ContactShadowSystem } from "./contactShadows";
 
 export interface SceneBundle {
   scene: Scene;
   camera: ArcRotateCamera;
   ground: Mesh;
-  shadow: ShadowGenerator;
+  shadows: ContactShadowSystem;
 }
 
 export function createScene(engine: Engine): SceneBundle {
@@ -42,30 +42,12 @@ export function createScene(engine: Engine): SceneBundle {
 
   const sun = new DirectionalLight("sun", new Vector3(-1, -2, -1.2), scene);
   sun.intensity = 1.5;
-  // Fixed-size shadow frustum; the Game re-centres it on the player every frame so
-  // shadows stay crisp on the big map instead of being stretched over the whole world.
-  sun.autoUpdateExtends = false;
-  sun.orthoLeft = -40;
-  sun.orthoRight = 40;
-  sun.orthoTop = 40;
-  sun.orthoBottom = -40;
-  sun.shadowMinZ = 80;
-  sun.shadowMaxZ = 180;
   sun.position = new Vector3(51, 102, 61);
+  sun.autoUpdateExtends = true;
+  sun.autoCalcShadowZBounds = true;
 
-  const shadow = new ShadowGenerator(2048, sun);
-  // Percentage-closer filtering casts a crisp, object-shaped silhouette on the
-  // floor (the old blur-exponential map with a 20px kernel smeared every shadow
-  // into a shapeless blob). PCF only softens the silhouette's edge, so each
-  // shadow keeps the outline of the object that cast it.
-  shadow.usePercentageCloserFiltering = true;
-  shadow.filteringQuality = ShadowGenerator.QUALITY_HIGH;
-  shadow.bias = 0.0009; // prevent self-shadow acne on flat faces
-  shadow.normalBias = 0.02; // ...and on faces angled away from the sun
-  shadow.darkness = 0.18; // strong enough that every object's shadow reads on the grass
+  const shadows = new ContactShadowSystem(scene, sun);
+  const { ground } = createEnvironment(scene);
 
-  const { ground, shadowCasters } = createEnvironment(scene);
-  for (const m of shadowCasters) shadow.addShadowCaster(m);
-
-  return { scene, camera, ground, shadow };
+  return { scene, camera, ground, shadows };
 }

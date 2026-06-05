@@ -1,6 +1,7 @@
-import type { Engine, ShadowGenerator } from "@babylonjs/core";
+import type { Engine } from "@babylonjs/core";
 import type { AudioManager } from "../audio/AudioManager";
 import type { NetworkClient } from "../net/NetworkClient";
+import type { ContactShadowSystem } from "../scene/contactShadows";
 
 type View = "main" | "hotkeys" | "sound" | "graphics" | "developer";
 type Quality = "low" | "medium" | "high";
@@ -15,6 +16,7 @@ interface Settings {
 }
 
 const STORE = "gorilator-settings";
+const CONTACT_SHADOW_SETTINGS_VERSION = 1;
 const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadows: true, quality: "medium", devLabels: false };
 // hardware scaling: >1 lower-res/faster, <1 super-sampled/sharper-slower.
 const QUALITY_SCALE: Record<Quality, number> = { low: 2.0, medium: 1.0, high: 0.66 };
@@ -23,7 +25,7 @@ export interface GameMenuDeps {
   net: NetworkClient;
   audio: AudioManager;
   engine: Engine;
-  shadow: ShadowGenerator;
+  shadows: ContactShadowSystem;
   isNostrVerified: () => boolean;
   developerLabels?: {
     isEnabled: () => boolean;
@@ -89,7 +91,17 @@ export class GameMenu {
 
   private load(): Settings {
     try {
-      return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE) || "{}") };
+      const saved = JSON.parse(localStorage.getItem(STORE) || "{}") as Partial<Settings> & {
+        contactShadowSettingsVersion?: number;
+      };
+      return {
+        ...DEFAULTS,
+        ...saved,
+        shadows:
+          saved.contactShadowSettingsVersion === CONTACT_SHADOW_SETTINGS_VERSION
+            ? saved.shadows ?? DEFAULTS.shadows
+            : DEFAULTS.shadows,
+      };
     } catch {
       return { ...DEFAULTS };
     }
@@ -97,7 +109,13 @@ export class GameMenu {
   private save() {
     this.syncAudioSettings();
     try {
-      localStorage.setItem(STORE, JSON.stringify(this.settings));
+      localStorage.setItem(
+        STORE,
+        JSON.stringify({
+          ...this.settings,
+          contactShadowSettingsVersion: CONTACT_SHADOW_SETTINGS_VERSION,
+        }),
+      );
     } catch {
       /* storage unavailable */
     }
@@ -117,8 +135,7 @@ export class GameMenu {
     this.deps.developerLabels?.setEnabled(s.devLabels);
   }
   private setShadows(on: boolean) {
-    const light = this.deps.shadow.getLight() as unknown as { shadowEnabled: boolean };
-    if (light) light.shadowEnabled = on;
+    this.deps.shadows.setEnabled(on);
   }
 
   // ---- views ----

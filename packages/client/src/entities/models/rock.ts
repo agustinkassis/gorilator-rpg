@@ -12,7 +12,7 @@ export interface RockModel {
   meshes: AbstractMesh[];
   setAlive: (alive: boolean) => void;
   shake: () => void;
-  update: (dt: number) => void;
+  update: (dt: number) => boolean;
   dispose: () => void;
 }
 
@@ -116,6 +116,7 @@ export function buildRock(scene: Scene, radius: number): RockModel {
       shakeT = 0.22;
     },
     update: (dt) => {
+      let shadowChanged = false;
       if (shakeT > 0) {
         shakeT -= dt;
         const k = Math.max(0, shakeT / 0.22);
@@ -131,9 +132,11 @@ export function buildRock(scene: Scene, radius: number): RockModel {
           if (k >= 1) {
             rubbleG.setEnabled(false);
             phase = "hidden"; // stays gone until the server respawns the rock
+            shadowChanged = true;
           }
         }
       }
+      return shadowChanged;
     },
     dispose: () => {
       root.dispose();
