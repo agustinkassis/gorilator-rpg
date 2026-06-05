@@ -22,6 +22,7 @@ export class Enemy extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") rotY = 0;
+  @type("number") scale = 1;
   @type("number") hp = DUMMY_MAX_HP;
   @type("number") maxHp = DUMMY_MAX_HP;
   @type("number") level = 1; // shown on the name label; sets the XP it drops

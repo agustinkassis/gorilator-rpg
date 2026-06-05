@@ -6,6 +6,8 @@ export class Rock extends Schema {
   @type("string") id = "";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") rotY = 0;
+  @type("number") scale = 1;
   @type("number") radius = 1.4; // visual size (matches its nav collision)
   @type("number") hp = ROCK_HP;
   @type("number") maxHp = ROCK_HP;

@@ -20,6 +20,7 @@ export class Player extends Schema {
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") rotY = 0; // facing, radians around the Y axis
+  @type("number") scale = 1;
   @type("number") hp = PLAYER_MAX_HP;
   @type("number") maxHp = PLAYER_MAX_HP;
   @type("number") stamina = PLAYER_MAX_STAMINA; // sprint resource; refills over time

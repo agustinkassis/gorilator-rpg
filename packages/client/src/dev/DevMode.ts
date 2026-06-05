@@ -1672,6 +1672,40 @@ export class DevMode {
     if (this.canvas) this.canvas.style.cursor = c;
   }
 
+  private appendTransformFields(fields: Field[], spec: TransformFieldSpec) {
+    if (spec.onMove) {
+      fields.push(
+        { kind: "number", label: "x", value: round(spec.x), step: 0.5, onChange: (v) => spec.onMove?.(v, spec.currentZ?.() ?? spec.z) },
+        { kind: "number", label: "z", value: round(spec.z), step: 0.5, onChange: (v) => spec.onMove?.(spec.currentX?.() ?? spec.x, v) },
+      );
+    } else {
+      fields.push(
+        { kind: "readonly", label: "x", value: round(spec.x).toString() },
+        { kind: "readonly", label: "z", value: round(spec.z).toString() },
+      );
+    }
+    fields.push(
+      {
+        kind: "range",
+        label: "scale",
+        value: Math.max(0.05, spec.scale ?? 1),
+        min: 0.1,
+        max: spec.maxScale ?? 40,
+        step: spec.scaleStep ?? 0.1,
+        onChange: spec.onScale,
+      },
+      {
+        kind: "range",
+        label: "rot°",
+        value: deg(spec.rotY ?? 0),
+        min: 0,
+        max: 360,
+        step: 1,
+        onChange: (v) => spec.onRotate((v * Math.PI) / 180),
+      },
+    );
+  }
+
   /** Render the selection's properties + editing controls. Props edit locally and
    *  persist to props.json; synced entities send authoritative edits to the server
    *  (which sync back to every client; rocks also refresh pathfinding collision).
@@ -1686,21 +1720,28 @@ export class DevMode {
       if (!placed) return;
       const d = placed.def;
       const reapply = () => this.propManager.applyDef(sel.id);
-      fields = [
-        { kind: "text", label: "name", value: d.name, onChange: (v) => { d.name = v || "prop"; persist(); } },
-        { kind: "number", label: "x", value: round(d.x), step: 0.5, onChange: (v) => { d.x = v; reapply(); persist(); } },
-        { kind: "number", label: "z", value: round(d.z), step: 0.5, onChange: (v) => { d.z = v; reapply(); persist(); } },
-        { kind: "range", label: "scale", value: d.scale, min: 0.5, max: 40, step: 0.5, onChange: (v) => { d.scale = v; if ((d.collisionRadius ?? 0) > 0) d.collisionRadius = +(v / 2).toFixed(2); reapply(); persist(); } },
-        { kind: "range", label: "rot°", value: deg(d.rotationY), min: 0, max: 360, step: 1, onChange: (v) => { d.rotationY = (v * Math.PI) / 180; reapply(); persist(); } },
-        { kind: "checkbox", label: "concrete", value: (d.collisionRadius ?? 0) > 0, onChange: (on) => { d.collisionRadius = on ? +(d.scale / 2).toFixed(2) : 0; void this.propManager.persistUpdate(sel.id); } },
-      ];
+      fields = [{ kind: "text", label: "name", value: d.name, onChange: (v) => { d.name = v || "prop"; persist(); } }];
+      this.appendTransformFields(fields, {
+        x: d.x,
+        z: d.z,
+        scale: d.scale,
+        rotY: d.rotationY,
+        scaleStep: 0.5,
+        onMove: (x, z) => { d.x = x; d.z = z; reapply(); persist(); },
+        onScale: (v) => { d.scale = v; if ((d.collisionRadius ?? 0) > 0) d.collisionRadius = +(v / 2).toFixed(2); reapply(); persist(); },
+        onRotate: (v) => { d.rotationY = v; reapply(); persist(); },
+      });
+      fields.push({ kind: "checkbox", label: "concrete", value: (d.collisionRadius ?? 0) > 0, onChange: (on) => { d.collisionRadius = on ? +(d.scale / 2).toFixed(2) : 0; void this.propManager.persistUpdate(sel.id); } });
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
-      // A concrete prop IS a destructible structure: HP + drops, shared per MODEL
-      // (every instance of d.model inherits), so it matches every other structure.
+      // A concrete prop IS a destructible structure: HP + drops. By default those
+      // properties come from the global structure kind; the inspector can switch
+      // a selected prop to its own instance override.
       if ((d.collisionRadius ?? 0) > 0 && d.model) {
         const sobj = this.entityObj("structure", sel.id);
-        this.appendDamageableFields("structure", "default", d.model, sel.id, sobj, 50, fields);
-        this.appendFeatureDropFields("structure", "default", d.model, sel, fields, actions);
+        const feature = this.featureTarget(sel, "structure", d.model);
+        this.appendPropertyScopeToggle(sel, feature, fields);
+        this.appendDamageableFields("structure", feature.scope, feature.key, sel.id, sobj, 50, fields);
+        this.appendFeatureDropFields("structure", feature.scope, feature.key, sel, fields, actions, feature.modelId);
       }
     } else if (sel.kind === "character") {
       const cm = this.charManager;
@@ -1709,56 +1750,97 @@ export class DevMode {
       const pz = round(c?.placement.z ?? sel.root.position.z);
       fields = [
         { kind: "readonly", label: "name", value: c?.def.name ?? sel.id },
-        { kind: "number", label: "x", value: px, step: 0.5, onChange: (v) => { cm?.move(sel.id, v, cm?.get(sel.id)?.placement.z ?? pz); void cm?.persist(sel.id); } },
-        { kind: "number", label: "z", value: pz, step: 0.5, onChange: (v) => { cm?.move(sel.id, cm?.get(sel.id)?.placement.x ?? px, v); void cm?.persist(sel.id); } },
-        { kind: "range", label: "rot°", value: deg(c?.placement.rotationY ?? 0), min: 0, max: 360, step: 1, onChange: (v) => { cm?.setRotation(sel.id, (v * Math.PI) / 180); void cm?.persist(sel.id); } },
       ];
+      this.appendTransformFields(fields, {
+        x: px,
+        z: pz,
+        scale: c?.placement.scale ?? 1,
+        rotY: c?.placement.rotationY ?? 0,
+        onMove: (x, z) => { cm?.move(sel.id, x, z); void cm?.persist(sel.id); },
+        currentX: () => cm?.get(sel.id)?.placement.x ?? px,
+        currentZ: () => cm?.get(sel.id)?.placement.z ?? pz,
+        onScale: (v) => { cm?.setScale(sel.id, v); void cm?.persist(sel.id); },
+        onRotate: (v) => { cm?.setRotation(sel.id, v); void cm?.persist(sel.id); },
+      });
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
     } else if (editableSynced(sel.kind)) {
       const obj = this.entityObj(sel.kind, sel.id);
       const x = obj?.x ?? sel.root.position.x;
       const z = obj?.z ?? sel.root.position.z;
-      fields = [
-        { kind: "number", label: "x", value: round(x), step: 0.5, onChange: (v) => this.net.sendDevMove(sel.kind, sel.id, v, this.entityObj(sel.kind, sel.id)?.z ?? z) },
-        { kind: "number", label: "z", value: round(z), step: 0.5, onChange: (v) => this.net.sendDevMove(sel.kind, sel.id, this.entityObj(sel.kind, sel.id)?.x ?? x, v) },
-      ];
-      if (sel.kind === "tree") this.appendDamageableFields("tree", "default", "tree", sel.id, obj, 10, fields);
+      fields = [];
+      this.appendTransformFields(fields, {
+        x,
+        z,
+        scale: obj?.scale ?? 1,
+        rotY: obj?.rotY ?? 0,
+        onMove: (nx, nz) => this.net.sendDevMove(sel.kind, sel.id, nx, nz),
+        currentX: () => this.entityObj(sel.kind, sel.id)?.x ?? x,
+        currentZ: () => this.entityObj(sel.kind, sel.id)?.z ?? z,
+        onScale: (v) => this.net.sendDevSet(sel.kind, sel.id, "scale", v),
+        onRotate: (v) => this.net.sendDevSet(sel.kind, sel.id, "rotY", v),
+      });
+      const feature =
+        sel.kind === "enemy"
+          ? this.featureTarget(sel, obj?.kind || "npc", obj?.modelId)
+          : sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house"
+            ? this.featureTarget(sel, sel.kind)
+            : null;
+      if (feature) this.appendPropertyScopeToggle(sel, feature, fields);
+      if (sel.kind === "tree" && feature) this.appendDamageableFields("tree", feature.scope, feature.key, sel.id, obj, 10, fields);
       if (sel.kind === "enemy" && obj?.maxHp !== undefined) {
-        this.appendCharacterFields(sel, obj, fields);
+        const enemyFeature = feature ?? this.featureTarget(sel, obj.kind || "npc", obj.modelId);
+        this.appendCharacterFields(sel, obj, fields, enemyFeature);
       }
       if (sel.kind === "rock" && obj?.radius !== undefined) {
-        this.appendDamageableFields("rock", "default", "rock", sel.id, obj, 10, fields);
+        if (feature) this.appendDamageableFields("rock", feature.scope, feature.key, sel.id, obj, 10, fields);
         fields.push({ kind: "readonly", label: "radius", value: obj.radius.toFixed(2) }); // collision follows the move
       }
       if (sel.kind === "house") {
-        this.appendDamageableFields("house", "default", "house", sel.id, obj, 50, fields);
+        if (feature) this.appendDamageableFields("house", feature.scope, feature.key, sel.id, obj, 50, fields);
         const hp = obj?.maxHp ?? 0;
         fields.push({ kind: "readonly", label: "note", value: hp <= 0 ? "indestructible (HP 0)" : "set HP 0 = indestructible" });
       }
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
     } else if (sel.kind === "player") {
       const obj = this.entityObj("player", sel.id);
-      fields = [
-        { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
-        { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
-      ];
-      if (obj) this.appendCharacterFields(sel, obj, fields);
+      fields = [];
+      this.appendTransformFields(fields, {
+        x: obj?.x ?? sel.root.position.x,
+        z: obj?.z ?? sel.root.position.z,
+        scale: obj?.scale ?? 1,
+        rotY: obj?.rotY ?? 0,
+        onScale: (v) => this.net.sendDevSet("player", sel.id, "scale", v),
+        onRotate: (v) => this.net.sendDevSet("player", sel.id, "rotY", v),
+      });
+      if (obj) {
+        const feature = this.featureTarget(sel, "player");
+        this.appendPropertyScopeToggle(sel, feature, fields);
+        this.appendCharacterFields(sel, obj, fields, feature);
+      }
     } else {
       // player / static: inspect-only
       const obj = this.entityObj(sel.kind, sel.id);
-      fields = [
-        { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
-        { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
-      ];
+      fields = [];
+      this.appendTransformFields(fields, {
+        x: obj?.x ?? sel.root.position.x,
+        z: obj?.z ?? sel.root.position.z,
+        scale: obj?.scale ?? 1,
+        rotY: obj?.rotY ?? 0,
+        onScale: (v) => this.net.sendDevSet(sel.kind, sel.id, "scale", v),
+        onRotate: (v) => this.net.sendDevSet(sel.kind, sel.id, "rotY", v),
+      });
       if (obj?.radius !== undefined) fields.push({ kind: "readonly", label: "radius", value: obj.radius.toFixed(2) });
     }
 
     if (sel.kind === "house") this.appendStructureMaskFields(sel, fields, actions);
-    if (sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house")
-      this.appendFeatureDropFields(sel.kind, "default", sel.kind, sel, fields, actions);
+    if (sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house") {
+      const feature = this.featureTarget(sel, sel.kind);
+      this.appendFeatureDropFields(sel.kind, feature.scope, feature.key, sel, fields, actions, feature.modelId);
+    }
     if (sel.kind === "enemy") {
       const obj = this.entityObj(sel.kind, sel.id);
-      this.appendFeatureDropFields(obj?.kind || "npc", "instance", sel.id, sel, fields, actions, obj?.modelId);
+      const feature = this.featureTarget(sel, obj?.kind || "npc", obj?.modelId);
+      this.appendFeatureDropFields(feature.kind, feature.scope, feature.key, sel, fields, actions, feature.modelId);
     }
     // Any object (house/prop/tree/rock) can be turned into a goblin spawner.
     if (spawnable(sel.kind)) this.appendSpawnerFields(sel, fields, actions);
@@ -1779,10 +1861,11 @@ export class DevMode {
     fields: Field[],
   ) {
     const cfg = this.feature(scope, key);
+    const view = scope === "instance" ? this.mergedFeature(kind, key) : cfg;
     fields.push({
       kind: "number",
       label: "HP",
-      value: obj?.maxHp ?? cfg.hp ?? 0,
+      value: cfg.hp ?? view.hp ?? obj?.maxHp ?? 0,
       min: 0,
       step: hpStep,
       onChange: (v) => {
@@ -2003,7 +2086,30 @@ export class DevMode {
     return cfg;
   }
 
-  private mergedFeature(kind: string, id: string, modelId?: string): EntityFeatureCfg {
+  private cloneFeatureConfig(cfg: EntityFeatureCfg): EntityFeatureCfg {
+    return {
+      ...cfg,
+      stats: cfg.stats ? { ...cfg.stats } : undefined,
+      drops: cfg.drops ? cfg.drops.map((d) => ({ ...d })) : undefined,
+    };
+  }
+
+  private hasInstanceFeature(id: string): boolean {
+    return this.features.instances?.[id] !== undefined;
+  }
+
+  private featureTarget(sel: Selectable, kind: string, modelId?: string): FeatureTarget {
+    const scope: FeatureScope = this.hasInstanceFeature(sel.id) ? "instance" : "default";
+    return {
+      scope,
+      key: scope === "instance" ? sel.id : kind,
+      kind,
+      defaultKey: kind,
+      modelId,
+    };
+  }
+
+  private mergedFeature(kind: string, id?: string, modelId?: string): EntityFeatureCfg {
     const d = this.features.defaults ?? {};
     const i = this.features.instances ?? {};
     return {
@@ -2017,6 +2123,55 @@ export class DevMode {
       },
       drops: i[id]?.drops ?? (modelId ? d[modelId]?.drops : undefined) ?? d[kind]?.drops,
     };
+  }
+
+  private displayFeature(feature: FeatureTarget): EntityFeatureCfg {
+    const own = this.feature(feature.scope, feature.key);
+    if (feature.scope === "default") return own;
+    const inherited = this.mergedFeature(feature.kind, undefined, feature.modelId);
+    return {
+      ...inherited,
+      ...own,
+      stats: {
+        ...((inherited.stats ?? {}) as CharacterStatsCfg),
+        ...((own.stats ?? {}) as CharacterStatsCfg),
+      },
+      drops: own.drops ?? inherited.drops,
+    };
+  }
+
+  private appendPropertyScopeToggle(sel: Selectable, feature: FeatureTarget, fields: Field[]) {
+    fields.push({
+      kind: "scopeToggle",
+      section: "Property Source",
+      label: "Properties",
+      value: feature.scope,
+      options: [
+        {
+          value: "default",
+          label: "Default",
+          description: `global ${feature.defaultKey}`,
+        },
+        {
+          value: "instance",
+          label: "Instance",
+          description: shortId(sel.id),
+        },
+      ],
+      onChange: (value) => {
+        if (value === "instance") {
+          const inherited = this.mergedFeature(feature.kind, undefined, feature.modelId);
+          (this.features.instances ??= {})[sel.id] = this.cloneFeatureConfig(inherited);
+          this.scheduleFeatureSave("instance", sel.id);
+          this.applyFeatureLive(sel, feature.kind, this.features.instances[sel.id]);
+        } else {
+          if (this.features.instances?.[sel.id]) delete this.features.instances[sel.id];
+          void this.deleteFeature("instance", sel.id);
+          this.applyFeatureLive(sel, feature.kind, this.mergedFeature(feature.kind, undefined, feature.modelId));
+        }
+        this.showSelection(sel);
+      },
+    });
   }
 
   private scheduleFeatureSave(scope: "default" | "instance", key: string) {
@@ -2034,39 +2189,65 @@ export class DevMode {
     }).catch((e) => console.warn("[features] save failed", e));
   }
 
-  private appendCharacterFields(sel: Selectable, obj: EntityView, fields: Field[]) {
+  private async deleteFeature(scope: "default" | "instance", key: string) {
+    await fetch("/__features/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope, key }),
+    }).catch((e) => console.warn("[features] delete failed", e));
+  }
+
+  private applyFeatureLive(sel: Selectable, kind: string, cfg: EntityFeatureCfg) {
+    const stats = cfg.stats ?? {};
+    if (sel.kind === "enemy" && cfg.brain) this.net.sendDevSet("enemy", sel.id, "brain", cfg.brain);
+    const maxHp = cfg.hp ?? stats.maxHp;
+    if (maxHp !== undefined) {
+      const targetKind = sel.kind === "prop" ? "structure" : sel.kind;
+      this.net.sendDevSet(targetKind, sel.id, "maxHp", Math.max(0, Math.round(maxHp)));
+    }
+    for (const field of ["level", "attack", "armor", "critChance", "moveSpeed", "throwPower"] as const) {
+      const value = stats[field];
+      if (value !== undefined && (sel.kind === "enemy" || sel.kind === "player")) {
+        this.net.sendDevSet(sel.kind, sel.id, field, value);
+      }
+    }
+  }
+
+  private appendCharacterFields(sel: Selectable, obj: EntityView, fields: Field[], feature: FeatureTarget) {
     const kind = sel.kind === "player" ? "player" : obj.kind || "npc";
-    const cfg = this.feature("instance", sel.id);
+    const cfg = this.feature(feature.scope, feature.key);
+    const view = this.displayFeature(feature);
     const stats = cfg.stats ?? (cfg.stats = {});
+    const viewStats = view.stats ?? {};
     const saveStat = (field: keyof CharacterStatsCfg, value: number) => {
       stats[field] = Math.max(0, value);
       if (field === "maxHp") cfg.hp = stats.maxHp;
       this.net.sendDevSet(sel.kind, sel.id, field === "maxHp" ? "maxHp" : field, stats[field] ?? 0);
-      this.scheduleFeatureSave("instance", sel.id);
+      this.scheduleFeatureSave(feature.scope, feature.key);
     };
     fields.push({ kind: "readonly", label: "kind", value: kind });
     if (sel.kind === "enemy") {
       fields.push({
         kind: "select",
         label: "brain",
-        value: (obj.brain || cfg.brain || (kind === "goblin" ? "attacks_home" : "idle")) as string,
+        value: (cfg.brain || view.brain || obj.brain || (kind === "goblin" ? "attacks_home" : "idle")) as string,
         options: BRAIN_OPTIONS,
         onChange: (v) => {
           cfg.brain = v;
           this.net.sendDevSet("enemy", sel.id, "brain", v);
-          this.scheduleFeatureSave("instance", sel.id);
+          this.scheduleFeatureSave(feature.scope, feature.key);
         },
       });
     }
     fields.push(
-      { kind: "number", label: "level", value: obj.level ?? stats.level ?? 1, min: 1, step: 1, onChange: (v) => saveStat("level", Math.max(1, Math.round(v))) },
-      { kind: "number", label: "HP", value: obj.maxHp ?? stats.maxHp ?? 0, min: 0, step: 5, onChange: (v) => saveStat("maxHp", Math.max(0, Math.round(v))) },
+      { kind: "number", label: "level", value: viewStats.level ?? obj.level ?? 1, min: 1, step: 1, onChange: (v) => saveStat("level", Math.max(1, Math.round(v))) },
+      { kind: "number", label: "HP", value: cfg.hp ?? view.hp ?? viewStats.maxHp ?? obj.maxHp ?? 0, min: 0, step: 5, onChange: (v) => saveStat("maxHp", Math.max(0, Math.round(v))) },
       { kind: "number", label: "current HP", value: obj.hp ?? obj.maxHp ?? 0, min: 0, step: 5, onChange: (v) => this.net.sendDevSet(sel.kind, sel.id, "hp", Math.max(0, Math.round(v))) },
-      { kind: "number", label: "attack", value: obj.attack ?? stats.attack ?? 0, min: 0, step: 1, onChange: (v) => saveStat("attack", v) },
-      { kind: "number", label: "armor", value: obj.armor ?? stats.armor ?? 0, min: 0, step: 1, onChange: (v) => saveStat("armor", v) },
-      { kind: "number", label: "crit %", value: Math.round(((obj.critChance ?? stats.critChance ?? 0) * 100)), min: 0, max: 100, step: 1, onChange: (v) => saveStat("critChance", Math.max(0, Math.min(100, v)) / 100) },
-      { kind: "number", label: "move spd", value: obj.moveSpeed ?? stats.moveSpeed ?? 0, min: 0, step: 0.25, onChange: (v) => saveStat("moveSpeed", v) },
-      { kind: "number", label: "throw pow", value: obj.throwPower ?? stats.throwPower ?? 1, min: 0, step: 0.1, onChange: (v) => saveStat("throwPower", v) },
+      { kind: "number", label: "attack", value: viewStats.attack ?? obj.attack ?? 0, min: 0, step: 1, onChange: (v) => saveStat("attack", v) },
+      { kind: "number", label: "armor", value: viewStats.armor ?? obj.armor ?? 0, min: 0, step: 1, onChange: (v) => saveStat("armor", v) },
+      { kind: "number", label: "crit %", value: Math.round(((viewStats.critChance ?? obj.critChance ?? 0) * 100)), min: 0, max: 100, step: 1, onChange: (v) => saveStat("critChance", Math.max(0, Math.min(100, v)) / 100) },
+      { kind: "number", label: "move spd", value: viewStats.moveSpeed ?? obj.moveSpeed ?? 0, min: 0, step: 0.25, onChange: (v) => saveStat("moveSpeed", v) },
+      { kind: "number", label: "throw pow", value: viewStats.throwPower ?? obj.throwPower ?? 1, min: 0, step: 0.1, onChange: (v) => saveStat("throwPower", v) },
     );
     if ((obj.maxHp ?? 0) <= 0) fields.push({ kind: "readonly", label: "note", value: "HP 0 = unkillable" });
   }
@@ -2082,7 +2263,7 @@ export class DevMode {
   ) {
     const cfg = this.feature(scope, key);
     if (!cfg.drops) {
-      const merged = this.mergedFeature(kind, key, modelId);
+      const merged = scope === "instance" ? this.mergedFeature(kind, key, modelId) : this.mergedFeature(kind);
       cfg.drops = merged.drops ? merged.drops.map((d) => ({ ...d })) : [];
     }
     const drops = cfg.drops;
@@ -2581,6 +2762,8 @@ export class DevMode {
 interface EntityView {
   x?: number;
   z?: number;
+  rotY?: number;
+  scale?: number;
   hp?: number;
   maxHp?: number;
   alive?: boolean;
@@ -2596,6 +2779,20 @@ interface EntityView {
   critChance?: number;
   moveSpeed?: number;
   throwPower?: number;
+}
+
+interface TransformFieldSpec {
+  x: number;
+  z: number;
+  scale: number;
+  rotY: number;
+  maxScale?: number;
+  scaleStep?: number;
+  currentX?: () => number;
+  currentZ?: () => number;
+  onMove?: (x: number, z: number) => void;
+  onScale: (scale: number) => void;
+  onRotate: (rotY: number) => void;
 }
 
 interface StructureCfg {
@@ -3342,6 +3539,16 @@ interface EntityFeatureCfg {
 interface EntityFeatureManifest {
   defaults?: Record<string, EntityFeatureCfg>;
   instances?: Record<string, EntityFeatureCfg>;
+}
+
+type FeatureScope = "default" | "instance";
+
+interface FeatureTarget {
+  scope: FeatureScope;
+  key: string;
+  kind: string;
+  defaultKey: string;
+  modelId?: string;
 }
 
 /** Trim long ids (prop ids are model urls) for the panel title. */

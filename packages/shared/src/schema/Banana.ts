@@ -7,4 +7,6 @@ export class Banana extends Schema {
   @type("string") id = "";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") rotY = 0;
+  @type("number") scale = 1;
 }

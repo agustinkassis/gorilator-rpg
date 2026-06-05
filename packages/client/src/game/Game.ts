@@ -75,6 +75,7 @@ interface ServerView {
   x: number;
   z: number;
   rotY: number;
+  scale?: number;
   hp: number;
   maxHp: number;
   state: AnimState;
@@ -181,7 +182,7 @@ export class Game {
   private items = new Map<string, CollectibleModel & { bob: number; drop?: DropAnim; itemId: string; restY: number }>();
   private pendingItems = new Set<string>();
   private removedItems = new Set<string>();
-  private houses = new Map<string, { hp: number; maxHp: number; alive: boolean; anchor: TransformNode; visual?: TransformNode; meshes?: AbstractMesh[] }>();
+  private houses = new Map<string, { hp: number; maxHp: number; alive: boolean; x: number; z: number; radius: number; scale: number; anchor: TransformNode; visual?: TransformNode; meshes?: AbstractMesh[] }>();
   private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
   private housePickable = false;
   // Destructible concrete structures (the prop is the visual; this tracks HP + the
@@ -196,6 +197,7 @@ export class Game {
   private playerLevels = new Map<string, number>(); // last seen level, to detect level-ups
   private footprints = new FootprintPicker();
   private structureMasks = new Map<string, StructureMask>();
+  private rootBaseScales = new WeakMap<TransformNode, number>();
   private lightnings: Lightning[] = [];
   private deadElapsed: number | null = null; // seconds the local player has been dead
   private dropsEnabled = false; // gate the loot-pop so the initial world sync doesn't all pop at once
@@ -324,6 +326,22 @@ export class Game {
     return hit?.id === this.localId ? null : hit;
   };
 
+  private rememberBaseScale(root: TransformNode) {
+    if (!this.rootBaseScales.has(root)) this.rootBaseScales.set(root, root.scaling.x || 1);
+  }
+
+  private applySyncedTransform(
+    root: TransformNode,
+    view: { x: number; z: number; rotY?: number; scale?: number },
+    y: number,
+  ) {
+    this.rememberBaseScale(root);
+    const scale = Number.isFinite(view.scale) ? Math.max(0.05, Number(view.scale)) : 1;
+    root.position.set(view.x, y, view.z);
+    root.rotation.y = view.rotY ?? 0;
+    root.scaling.setAll((this.rootBaseScales.get(root) ?? 1) * scale);
+  }
+
   structureMaskFor(kind: string): StructureMask {
     return cloneStructureMask(this.structureMasks.get(kind) ?? defaultStructureMask(kind));
   }
@@ -333,7 +351,7 @@ export class Game {
     if (clean) this.structureMasks.set(kind, clean);
     else this.structureMasks.delete(kind);
     if (kind === "house") {
-      for (const [id, h] of this.houses) this.upsertHouseFootprint(id, h.anchor.position.x, h.anchor.position.z, h.alive);
+      for (const [id, h] of this.houses) this.upsertHouseFootprint(id, h.x, h.z, h.radius, h.scale, h.alive);
     }
   }
 
@@ -346,7 +364,7 @@ export class Game {
         const mask = normalizeStructureMask(value?.mask);
         if (mask) this.structureMasks.set(kind, mask);
       }
-      for (const [id, h] of this.houses) this.upsertHouseFootprint(id, h.anchor.position.x, h.anchor.position.z, h.alive);
+      for (const [id, h] of this.houses) this.upsertHouseFootprint(id, h.x, h.z, h.radius, h.scale, h.alive);
     } catch {
       /* no structure mask config yet — defaults cover the current world */
     }
@@ -385,13 +403,16 @@ export class Game {
     });
   }
 
-  private upsertHouseFootprint(id: string, x: number, z: number, active: boolean) {
+  private upsertHouseFootprint(id: string, x: number, z: number, radius: number, scale: number, active: boolean) {
+    const mask = cloneStructureMask(this.structureMasks.get("house") ?? defaultStructureMask("house"));
+    const s = Math.max(0.05, scale || 1);
+    mask.points = mask.points.map((p) => ({ x: p.x * s, z: p.z * s }));
     this.footprints.upsert({
       id,
       kind: "house",
       x,
       z,
-      shape: this.structureMasks.get("house") ?? defaultStructureMask("house"),
+      shape: mask ?? { type: "circle", radius: Math.max(1, radius * s) },
       priority: PICK_PRIORITY.structure,
       active,
     });
@@ -497,7 +518,7 @@ export class Game {
       p.kind === "berserker_potion"
         ? buildBerserkerPotion(scene)
         : buildPotion(scene);
-    model.root.position.set(p.x, 0.2, p.z);
+    this.applySyncedTransform(model.root, p, 0.2);
     model.root.metadata = { entityId: id, kind: "potion" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "potion" };
@@ -508,15 +529,14 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(0.25) : undefined,
     });
-    this.upsertCircleFootprint("potion", id, p.x, p.z, POTION_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.upsertCircleFootprint("potion", id, p.x, p.z, POTION_PICK_RADIUS * (p.scale || 1), PICK_PRIORITY.collectible);
   }
 
   changePotion(p: Potion, id: string) {
     const pot = this.potions.get(id);
     if (!pot) return;
-    pot.root.position.x = p.x;
-    pot.root.position.z = p.z;
-    this.upsertCircleFootprint("potion", id, p.x, p.z, POTION_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.applySyncedTransform(pot.root, p, pot.root.position.y);
+    this.upsertCircleFootprint("potion", id, p.x, p.z, POTION_PICK_RADIUS * (p.scale || 1), PICK_PRIORITY.collectible);
   }
 
   removePotion(id: string) {
@@ -532,13 +552,13 @@ export class Game {
     if (this.trees.has(id)) return;
     const scene = this.camera.getScene();
     const model = buildTree(scene);
-    model.root.position.set(t.x, 0, t.z);
+    this.applySyncedTransform(model.root, t, 0);
     model.root.metadata = { entityId: id, kind: "tree" };
     model.setAlive(t.alive);
     for (const mesh of model.meshes) this.castAndReceive(mesh); // light shadow
     const tm = { ...model, hp: t.hp, maxHp: t.maxHp };
     this.trees.set(id, tm);
-    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS, PICK_PRIORITY.resource, t.alive && t.hp > 0);
+    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS * (t.scale || 1), PICK_PRIORITY.resource, t.alive && t.hp > 0);
     // HP bar floats above the crown; it only appears once the tree is chopped.
     const anchor = new TransformNode(`treeBar-${id}`, scene);
     anchor.parent = model.root;
@@ -552,9 +572,8 @@ export class Game {
     tm.hp = t.hp;
     tm.maxHp = t.maxHp;
     tm.setAlive(t.alive);
-    tm.root.position.x = t.x; // follow dev-mode relocation (HP bar is parented, so it tags along)
-    tm.root.position.z = t.z;
-    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS, PICK_PRIORITY.resource, t.alive && t.hp > 0);
+    this.applySyncedTransform(tm.root, t, 0); // HP bar is parented, so it tags along
+    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS * (t.scale || 1), PICK_PRIORITY.resource, t.alive && t.hp > 0);
   }
 
   removeTree(id: string) {
@@ -581,11 +600,11 @@ export class Game {
     if (this.structures.has(id)) return this.changeStructure(s, id);
     const scene = this.camera.getScene();
     const anchor = new TransformNode(`structBar-${id}`, scene);
-    anchor.position.set(s.x, Math.max(3, s.radius * 1.6), s.z);
+    anchor.position.set(s.x, Math.max(3, s.radius * (s.scale || 1) * 1.6), s.z);
     const sm = { hp: s.hp, maxHp: s.maxHp, anchor };
     this.structures.set(id, sm);
     this.hud.addResource(id, anchor, () => sm.hp, () => sm.maxHp, "#d98c54");
-    this.upsertCircleFootprint("structure", id, s.x, s.z, Math.max(1, s.radius), PICK_PRIORITY.resource, s.alive && s.hp > 0);
+    this.upsertCircleFootprint("structure", id, s.x, s.z, Math.max(1, s.radius * (s.scale || 1)), PICK_PRIORITY.resource, s.alive && s.hp > 0);
   }
 
   changeStructure(s: Structure, id: string): void {
@@ -593,8 +612,8 @@ export class Game {
     if (!sm) return this.addStructure(s, id);
     sm.hp = s.hp;
     sm.maxHp = s.maxHp;
-    sm.anchor.position.set(s.x, Math.max(3, s.radius * 1.6), s.z);
-    this.upsertCircleFootprint("structure", id, s.x, s.z, Math.max(1, s.radius), PICK_PRIORITY.resource, s.alive && s.hp > 0);
+    sm.anchor.position.set(s.x, Math.max(3, s.radius * (s.scale || 1) * 1.6), s.z);
+    this.upsertCircleFootprint("structure", id, s.x, s.z, Math.max(1, s.radius * (s.scale || 1)), PICK_PRIORITY.resource, s.alive && s.hp > 0);
     if (!s.alive) this.setPropVisible(id, false); // destroyed → hide the prop visual
   }
 
@@ -611,7 +630,7 @@ export class Game {
   addLog(l: Log, id: string) {
     if (this.logs.has(id)) return;
     const model = buildLog(this.camera.getScene());
-    model.root.position.set(l.x, 0.12, l.z);
+    this.applySyncedTransform(model.root, l, 0.12);
     model.root.metadata = { entityId: id, kind: "log" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "log" };
@@ -622,15 +641,14 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(0.12) : undefined,
     });
-    this.upsertCircleFootprint("log", id, l.x, l.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.upsertCircleFootprint("log", id, l.x, l.z, LOG_PICK_RADIUS * (l.scale || 1), PICK_PRIORITY.collectible);
   }
 
   changeLog(l: Log, id: string) {
     const log = this.logs.get(id);
     if (!log) return;
-    log.root.position.x = l.x;
-    log.root.position.z = l.z;
-    this.upsertCircleFootprint("log", id, l.x, l.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.applySyncedTransform(log.root, l, log.root.position.y);
+    this.upsertCircleFootprint("log", id, l.x, l.z, LOG_PICK_RADIUS * (l.scale || 1), PICK_PRIORITY.collectible);
   }
 
   removeLog(id: string) {
@@ -646,7 +664,7 @@ export class Game {
     if (this.rocks.has(id)) return;
     const scene = this.camera.getScene();
     const model = buildRock(scene, rock.radius);
-    model.root.position.set(rock.x, 0, rock.z);
+    this.applySyncedTransform(model.root, rock, 0);
     model.root.metadata = { entityId: id, kind: "rock" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "rock" };
@@ -655,7 +673,7 @@ export class Game {
     model.setAlive(rock.alive);
     const rm = { ...model, hp: rock.hp, maxHp: rock.maxHp };
     this.rocks.set(id, rm);
-    this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
+    this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius * (rock.scale || 1)), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
     // HP bar floats above the boulder; it only appears once the rock is mined.
     const anchor = new TransformNode(`rockBar-${id}`, scene);
     anchor.parent = model.root;
@@ -669,9 +687,8 @@ export class Game {
     rm.hp = rock.hp;
     rm.maxHp = rock.maxHp;
     rm.setAlive(rock.alive);
-    rm.root.position.x = rock.x; // follow dev-mode relocation (HP bar is parented, tags along)
-    rm.root.position.z = rock.z;
-    this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
+    this.applySyncedTransform(rm.root, rock, 0); // HP bar is parented, tags along
+    this.upsertCircleFootprint("rock", id, rock.x, rock.z, Math.max(1, rock.radius * (rock.scale || 1)), PICK_PRIORITY.resource, rock.alive && rock.hp > 0);
   }
 
   removeRock(id: string) {
@@ -712,14 +729,14 @@ export class Game {
     // The house glb itself is loaded separately (loadHouse); here we just track its
     // HP and float a bar above the roof. The anchor is a fixed node at the house.
     const anchor = new TransformNode(`houseBar-${id}`, scene);
-    anchor.position.set(h.x, 9, h.z);
+    anchor.position.set(h.x, 9 * (h.scale || 1), h.z);
     const visual = id === "house-0" ? undefined : this.buildDevHouseVisual(id, h);
-    const hm = { hp: h.hp, maxHp: h.maxHp, alive: h.alive, anchor, visual: visual?.root, meshes: visual?.meshes };
+    const hm = { hp: h.hp, maxHp: h.maxHp, alive: h.alive, x: h.x, z: h.z, radius: h.radius, scale: h.scale || 1, anchor, visual: visual?.root, meshes: visual?.meshes };
     this.houses.set(id, hm);
-    this.upsertHouseFootprint(id, h.x, h.z, h.alive);
+    this.upsertHouseFootprint(id, h.x, h.z, h.radius, h.scale || 1, h.alive);
     this.hud.addResource(id, anchor, () => hm.hp, () => hm.maxHp, "#d98c54");
     if (id === "house-0") {
-      this.houseModel?.moveTo(h.x, h.z);
+      this.houseModel?.transformTo(h.x, h.z, h.rotY || 0, h.scale || 1);
       if (h.alive) this.houseModel?.show(); // a (re)built house re-shows its model after a wipe
     } else {
       visual?.root.setEnabled(h.alive);
@@ -732,16 +749,18 @@ export class Game {
     hm.hp = h.hp;
     hm.maxHp = h.maxHp;
     hm.alive = h.alive;
-    hm.anchor.position.x = h.x;
-    hm.anchor.position.z = h.z;
-    this.upsertHouseFootprint(id, h.x, h.z, h.alive);
+    hm.x = h.x;
+    hm.z = h.z;
+    hm.radius = h.radius;
+    hm.scale = h.scale || 1;
+    hm.anchor.position.set(h.x, 9 * (h.scale || 1), h.z);
+    this.upsertHouseFootprint(id, h.x, h.z, h.radius, h.scale || 1, h.alive);
     if (id === "house-0") {
-      this.houseModel?.moveTo(h.x, h.z);
+      this.houseModel?.transformTo(h.x, h.z, h.rotY || 0, h.scale || 1);
       if (!h.alive) this.houseModel?.hide(); // collapsed
       else this.houseModel?.show();
     } else if (hm.visual) {
-      hm.visual.position.x = h.x;
-      hm.visual.position.z = h.z;
+      this.applySyncedTransform(hm.visual, h, 0);
       hm.visual.setEnabled(h.alive);
     }
   }
@@ -761,7 +780,7 @@ export class Game {
   private buildDevHouseVisual(id: string, h: House): { root: TransformNode; meshes: AbstractMesh[] } {
     const scene = this.camera.getScene();
     const root = new TransformNode(`devHouse-${id}`, scene);
-    root.position.set(h.x, 0, h.z);
+    this.applySyncedTransform(root, h, 0);
     root.metadata = { entityId: id, kind: "house" };
 
     const wallMat = new StandardMaterial(`devHouseWall-${id}`, scene);
@@ -791,7 +810,7 @@ export class Game {
   addStone(s: Stone, id: string) {
     if (this.stones.has(id)) return;
     const model = buildStone(this.camera.getScene());
-    model.root.position.set(s.x, 0.12, s.z);
+    this.applySyncedTransform(model.root, s, 0.12);
     model.root.metadata = { entityId: id, kind: "stone" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "stone" };
@@ -802,15 +821,14 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(0.12) : undefined,
     });
-    this.upsertCircleFootprint("stone", id, s.x, s.z, STONE_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.upsertCircleFootprint("stone", id, s.x, s.z, STONE_PICK_RADIUS * (s.scale || 1), PICK_PRIORITY.collectible);
   }
 
   changeStone(s: Stone, id: string) {
     const st = this.stones.get(id);
     if (!st) return;
-    st.root.position.x = s.x;
-    st.root.position.z = s.z;
-    this.upsertCircleFootprint("stone", id, s.x, s.z, STONE_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.applySyncedTransform(st.root, s, st.root.position.y);
+    this.upsertCircleFootprint("stone", id, s.x, s.z, STONE_PICK_RADIUS * (s.scale || 1), PICK_PRIORITY.collectible);
   }
 
   removeStone(id: string) {
@@ -825,8 +843,9 @@ export class Game {
   addBanana(b: Banana, id: string) {
     if (this.bananas.has(id)) return;
     const model = buildBanana(this.camera.getScene());
-    model.root.position.set(b.x, 0.25, b.z);
-    model.root.rotation.set(0.25, Math.random() * Math.PI * 2, 0.1);
+    this.applySyncedTransform(model.root, b, 0.25);
+    model.root.rotation.x = 0.25;
+    model.root.rotation.z = 0.1;
     model.root.metadata = { entityId: id, kind: "banana" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "banana" };
@@ -852,15 +871,16 @@ export class Game {
     // A freshly dropped banana pops into the air; one handed off from a thrown
     // banana already arced through flight, so it just appears where it landed.
     if (!claimed && this.dropsEnabled) ban.drop = startDrop(0.25);
-    this.upsertCircleFootprint("banana", id, b.x, b.z, BANANA_PICK_RADIUS, PICK_PRIORITY.collectible, !claimed);
+    this.upsertCircleFootprint("banana", id, b.x, b.z, BANANA_PICK_RADIUS * (b.scale || 1), PICK_PRIORITY.collectible, !claimed);
   }
 
   changeBanana(b: Banana, id: string) {
     const ban = this.bananas.get(id);
     if (!ban) return;
-    ban.root.position.x = b.x;
-    ban.root.position.z = b.z;
-    this.upsertCircleFootprint("banana", id, b.x, b.z, BANANA_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.applySyncedTransform(ban.root, b, ban.root.position.y);
+    ban.root.rotation.x = 0.25;
+    ban.root.rotation.z = 0.1;
+    this.upsertCircleFootprint("banana", id, b.x, b.z, BANANA_PICK_RADIUS * (b.scale || 1), PICK_PRIORITY.collectible);
   }
 
   removeBanana(id: string) {
@@ -895,7 +915,7 @@ export class Game {
     }
     const restY = Math.max(0.12, model.root.position.y || 0.18);
     model.root.name = `item-${item.itemId}-${id}`;
-    model.root.position.set(item.x, restY, item.z);
+    this.applySyncedTransform(model.root, item, restY);
     model.root.metadata = { entityId: id, kind: "item" };
     for (const mesh of model.meshes) {
       mesh.metadata = { entityId: id, kind: "item" };
@@ -909,7 +929,7 @@ export class Game {
       bob: Math.random() * Math.PI * 2,
       drop: this.dropsEnabled ? startDrop(restY) : undefined,
     });
-    this.upsertCircleFootprint("item", id, item.x, item.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.upsertCircleFootprint("item", id, item.x, item.z, LOG_PICK_RADIUS * (item.scale || 1), PICK_PRIORITY.collectible);
   }
 
   private async buildGenericItemModel(itemId: string): Promise<CollectibleModel> {
@@ -952,9 +972,8 @@ export class Game {
     const model = this.items.get(id);
     if (!model) return;
     model.itemId = item.itemId;
-    model.root.position.x = item.x;
-    model.root.position.z = item.z;
-    this.upsertCircleFootprint("item", id, item.x, item.z, LOG_PICK_RADIUS, PICK_PRIORITY.collectible);
+    this.applySyncedTransform(model.root, item, model.root.position.y);
+    this.upsertCircleFootprint("item", id, item.x, item.z, LOG_PICK_RADIUS * (item.scale || 1), PICK_PRIORITY.collectible);
   }
 
   removeItem(id: string) {
@@ -1222,6 +1241,7 @@ export class Game {
   private register(entity: Entity, view: ServerView, isEnemy: boolean) {
     entity.teleport(view.x, view.z);
     entity.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
+    entity.setVisualScale(view.scale ?? 1);
     entity.level = view.level;
     entity.berserkerMs = view.berserkerMs ?? 0;
     entity.root.metadata = { entityId: entity.id, kind: isEnemy ? "enemy" : "player" };
@@ -1258,6 +1278,7 @@ export class Game {
       }
     }
     e.setServerState(view.x, view.z, view.rotY, view.hp, view.maxHp, view.state, view.sprinting);
+    e.setVisualScale(view.scale ?? 1);
     e.level = view.level;
     e.berserkerMs = nextBerserkerMs;
     if (localBerserkerStarted) this.audio?.berserker();
@@ -1312,7 +1333,6 @@ export class Game {
     for (const rock of this.rocks.values()) rock.update(dt);
 
     for (const pot of this.potions.values()) {
-      pot.root.rotation.y += dt * 1.6;
       if (pot.drop && !pot.drop.settled) {
         pot.root.position.y = updateDrop(pot.drop, dt); // pop + bounce on drop
       } else {
@@ -1321,7 +1341,6 @@ export class Game {
       }
     }
     for (const log of this.logs.values()) {
-      log.root.rotation.y += dt * 0.8;
       if (log.drop && !log.drop.settled) {
         log.root.position.y = updateDrop(log.drop, dt);
       } else {
@@ -1330,7 +1349,6 @@ export class Game {
       }
     }
     for (const st of this.stones.values()) {
-      st.root.rotation.y += dt * 0.6;
       if (st.drop && !st.drop.settled) {
         st.root.position.y = updateDrop(st.drop, dt);
       } else {
@@ -1340,7 +1358,6 @@ export class Game {
     }
     for (const ban of this.bananas.values()) {
       ban.spin += dt;
-      ban.root.rotation.y += dt * 0.7;
       if (ban.drop && !ban.drop.settled) {
         ban.root.position.y = updateDrop(ban.drop, dt);
       } else {
@@ -1348,7 +1365,6 @@ export class Game {
       }
     }
     for (const item of this.items.values()) {
-      item.root.rotation.y += dt * 0.65;
       if (item.drop && !item.drop.settled) {
         item.root.position.y = updateDrop(item.drop, dt);
       } else {

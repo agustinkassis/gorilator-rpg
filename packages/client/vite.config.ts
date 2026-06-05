@@ -1059,6 +1059,7 @@ interface Placement {
   x: number;
   z: number;
   rotationY: number;
+  scale?: number;
   brain?: BrainId;
   stats?: CharacterStatsConfig;
 }
@@ -1463,6 +1464,7 @@ function modelImporter(): Plugin {
               x: Number(b.x) || 0,
               z: Number(b.z) || 0,
               rotationY: Number(b.rotationY) || 0,
+              scale: Math.max(0.05, Number(b.scale) || 1),
               ...(b.brain ? { brain: String(b.brain) } : {}),
               ...(b.stats && typeof b.stats === "object" ? { stats: b.stats } : {}),
             };
@@ -1563,7 +1565,7 @@ function modelImporter(): Plugin {
             const npcs = readJsonArray<Placement>(npcsPathFor(root));
             const p = npcs.find((n) => n.id === String(patch.id ?? ""));
             if (!p) return fail(res, 404, "no such placement");
-            for (const f of ["x", "z", "rotationY"] as const)
+            for (const f of ["x", "z", "rotationY", "scale"] as const)
               if (patch[f] !== undefined) p[f] = Number(patch[f]);
             if (patch.brain !== undefined) (p as Record<string, unknown>).brain = String(patch.brain);
             if (patch.stats && typeof patch.stats === "object") (p as Record<string, unknown>).stats = patch.stats;
@@ -1651,6 +1653,28 @@ function modelImporter(): Plugin {
               : { ...(manifest.defaults ?? {}) };
             const next = sanitizeFeature((b.config && typeof b.config === "object" ? b.config : b) as Record<string, unknown>);
             bucket[key] = next;
+            if (scope === "instances") manifest.instances = bucket;
+            else manifest.defaults = bucket;
+            writeFeatures(manifest);
+            sendJson(res, { ok: true, scope, key });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__features/delete", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}") as Record<string, unknown>;
+            const scope = b.scope === "instance" ? "instances" : "defaults";
+            const key = String(b.key || "");
+            if (!key) return fail(res, 400, "missing key");
+            const manifest = readFeatures();
+            const bucket = scope === "instances"
+              ? { ...(manifest.instances ?? {}) }
+              : { ...(manifest.defaults ?? {}) };
+            delete bucket[key];
             if (scope === "instances") manifest.instances = bucket;
             else manifest.defaults = bucket;
             writeFeatures(manifest);

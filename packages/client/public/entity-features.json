@@ -12,11 +12,11 @@
       ]
     },
     "rock": {
-      "hp": 400,
+      "hp": 200,
       "drops": [
         {
           "item": "stone",
-          "quantity": 60,
+          "quantity": 40,
           "probability": 1,
           "trigger": "damage"
         }
@@ -80,6 +80,16 @@
         "level": 1
       },
       "drops": []
+    },
+    "/models/goblin_house.glb": {
+      "drops": [
+        {
+          "item": "berserker_potion",
+          "quantity": 1,
+          "probability": 0.03,
+          "trigger": "kill"
+        }
+      ]
     }
   },
   "instances": {
@@ -96,6 +106,32 @@
           "quantity": 1,
           "probability": 0.03,
           "trigger": "kill"
+        }
+      ]
+    },
+    "npc_1780687999612": {
+      "brain": "attacks_home",
+      "stats": {
+        "moveSpeed": 60,
+        "level": 1
+      },
+      "drops": [
+        {
+          "item": "berserker_potion",
+          "quantity": 1,
+          "probability": 1,
+          "trigger": "kill"
+        }
+      ]
+    },
+    "rock-3": {
+      "hp": 100,
+      "drops": [
+        {
+          "item": "stone",
+          "quantity": 20,
+          "probability": 1,
+          "trigger": "damage"
         }
       ]
     }

@@ -260,7 +260,9 @@ export class GameRoom extends Room<GameState> {
       if (msg.kind === "rock") this.refreshRockObstacles(); // drop its collision too
     });
     this.onMessage("dev_set", (_client, msg: DevSetMessage) => {
-      if (msg) devSet(this.state, msg.kind, msg.id, msg.field, msg.value);
+      if (!msg) return;
+      devSet(this.state, msg.kind, msg.id, msg.field, msg.value);
+      if (msg.kind === "rock" && msg.field === "scale") this.refreshRockObstacles();
     });
     this.onMessage("dev_give_item", (client, msg: DevGiveItemMessage) => {
       const inv = this.inventories.get(client.sessionId);
@@ -948,7 +950,7 @@ export class GameRoom extends Room<GameState> {
     // right up to a boulder (and reach the stones it drops) instead of being held
     // off at arm's length.
     this.state.rocks.forEach((r) =>
-      circles.push({ x: r.x, z: r.z, radius: r.radius * ROCK_COLLISION_SCALE }),
+      circles.push({ x: r.x, z: r.z, radius: r.radius * (r.scale || 1) * ROCK_COLLISION_SCALE }),
     );
     setRockObstacles(circles);
   }

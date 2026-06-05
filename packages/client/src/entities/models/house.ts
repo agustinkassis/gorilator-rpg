@@ -35,6 +35,8 @@ export interface HouseModel {
   setPickable(on: boolean): void;
   /** Move the visible model to the synced house centre. */
   moveTo(x: number, z: number): void;
+  /** Apply the full Dev Mode transform to the visible model. */
+  transformTo(x: number, z: number, rotY: number, scale: number): void;
 }
 
 /**
@@ -118,14 +120,22 @@ export async function loadHouse(
 
     const rootBaseX = root.position.x;
     const rootBaseZ = root.position.z;
+    const rootBaseScale = root.scaling.clone();
     const proxyBaseX = proxy.position.x;
     const proxyBaseZ = proxy.position.z;
-    const moveTo = (x: number, z: number) => {
+    const proxyBaseScale = proxy.scaling.clone();
+    const transformTo = (x: number, z: number, rotY: number, scaleMult: number) => {
+      const s = Number.isFinite(scaleMult) ? Math.max(0.05, scaleMult) : 1;
       root.position.x = rootBaseX + x;
       root.position.z = rootBaseZ + z;
+      root.rotation.y = rotY;
+      root.scaling.set(rootBaseScale.x * s, rootBaseScale.y * s, rootBaseScale.z * s);
       proxy.position.x = proxyBaseX + x;
       proxy.position.z = proxyBaseZ + z;
+      proxy.rotation.y = rotY;
+      proxy.scaling.set(proxyBaseScale.x * s, proxyBaseScale.y * s, proxyBaseScale.z * s);
     };
+    const moveTo = (x: number, z: number) => transformTo(x, z, 0, 1);
 
     console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
 
@@ -145,6 +155,7 @@ export async function loadHouse(
         for (const mesh of r.meshes) mesh.isPickable = on;
       },
       moveTo,
+      transformTo,
     };
   } catch (e) {
     console.warn(`[assets] failed to load ${HOUSE_URL}`, e);
