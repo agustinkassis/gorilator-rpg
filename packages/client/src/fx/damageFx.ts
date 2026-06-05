@@ -23,6 +23,7 @@ export class DamageFx {
   private targetLow = 0;
   private flash = 0; // transient red flash 0..1
   private shake = 0; // transient shake 0..1
+  private suppressed = false; // Dev Mode: no hurt feedback at all
 
   constructor(canvas: HTMLElement) {
     this.canvas = canvas;
@@ -47,8 +48,28 @@ export class DamageFx {
     this.alert = alert;
   }
 
+  /** Dev Mode: turn ALL hurt feedback (flash/shake/low-HP vignette/alert) on/off.
+   *  When enabled, clears anything currently showing so the screen is pristine. */
+  setSuppressed(on: boolean) {
+    this.suppressed = on;
+    if (on) this.reset();
+  }
+
+  /** Wipe every effect back to a clean screen. */
+  private reset() {
+    this.low = 0;
+    this.targetLow = 0;
+    this.flash = 0;
+    this.shake = 0;
+    this.overlay.style.display = "none";
+    this.alert.classList.remove("show");
+    this.alert.style.display = "none";
+    if (this.canvas.style.transform) this.canvas.style.transform = "";
+  }
+
   /** A hit landed on the local player; `dmgFrac` = damage / maxHp. */
   onHit(dmgFrac: number) {
+    if (this.suppressed) return;
     const k = Math.max(0.12, Math.min(0.85, dmgFrac * 2.2));
     this.flash = Math.min(1, this.flash + k);
     this.shake = Math.min(1, this.shake + k);
@@ -56,11 +77,13 @@ export class DamageFx {
 
   /** Screen shake without the local-player red hurt flash. */
   shakeOnly(strength = 0.5) {
+    if (this.suppressed) return;
     this.shake = Math.min(1, this.shake + Math.max(0.12, Math.min(0.9, strength)));
   }
 
   /** Aggressive double white flash used when La Crypta is damaged offscreen. */
   whiteAlert() {
+    if (this.suppressed) return;
     this.alert.style.display = "block";
     this.alert.classList.remove("show");
     void this.alert.offsetWidth;
@@ -73,6 +96,7 @@ export class DamageFx {
   }
 
   update(dt: number) {
+    if (this.suppressed) return; // Dev Mode: nothing renders (reset() already cleared)
     // ease the persistent severity toward the current HP (a slow brightness/desat shift)
     this.low += (this.targetLow - this.low) * Math.min(1, dt * 4);
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * FLASH_DECAY);

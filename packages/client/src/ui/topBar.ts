@@ -259,6 +259,25 @@ function injectStyles() {
       78% { opacity: 1; }
       100% { opacity: 0; transform: scale(0.92) translateY(28px); filter: blur(2px); }
     }
+
+    /* Dev Mode: the top bar animates into a compact, minified version (narrower,
+       smaller header + thinner HP bar, and the wave countdown row collapses away)
+       so it stays out of the way while editing. Toggled by body.devMode. */
+    #topBar { transition: width .3s ease, padding .3s ease, row-gap .3s ease, grid-template-rows .3s ease; }
+    #topBar .tbTitle, #topBar .tbWave, #topBar .tbHp { transition: font-size .24s ease; }
+    #topBar .tbTrack { transition: height .26s ease; }
+    #topBar .tbCountdownSlot {
+      max-height: 110px;
+      transition: color .16s ease, font-size .16s ease, height .16s ease, max-height .3s ease, opacity .24s ease;
+    }
+    body.devMode #topBar {
+      width: 300px; padding: 5px 11px; row-gap: 3px; grid-template-rows: 17px 10px auto;
+    }
+    body.devMode #topBar .tbTitle { font-size: 12px; }
+    body.devMode #topBar .tbWave { font-size: 10px; }
+    body.devMode #topBar .tbTrack { height: 10px; }
+    body.devMode #topBar .tbHp { font-size: 9px; }
+    body.devMode #topBar .tbCountdownSlot { max-height: 0; opacity: 0; overflow: hidden; }
   `;
   const style = document.createElement("style");
   style.textContent = css;

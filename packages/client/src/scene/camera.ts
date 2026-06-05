@@ -7,16 +7,47 @@ const ORTHO_HALF_HEIGHT = 7.56;
 /** Dev Mode can pull the camera back up to this many × the normal play zoom. */
 export const MAX_DEV_ZOOM = 6;
 let zoom = 1; // 1 = normal play zoom; grows toward MAX_DEV_ZOOM when zoomed out in Dev Mode
+let zoomRaf = 0; // active zoom-tween rAF id (0 = none)
+
+const clampZoom = (f: number) => Math.max(1, Math.min(MAX_DEV_ZOOM, f));
 
 /** Current zoom-out factor (1 = normal). */
 export function getCameraZoom(): number {
   return zoom;
 }
 
-/** Set the zoom-out factor (clamped to [1, MAX_DEV_ZOOM]) and apply it. */
+/** Set the zoom-out factor (clamped to [1, MAX_DEV_ZOOM]) and apply it IMMEDIATELY
+ *  (used by the scroll-wheel survey zoom). Cancels any in-progress tween. */
 export function setCameraZoom(camera: ArcRotateCamera, factor: number) {
-  zoom = Math.max(1, Math.min(MAX_DEV_ZOOM, factor));
+  if (zoomRaf) {
+    cancelAnimationFrame(zoomRaf);
+    zoomRaf = 0;
+  }
+  zoom = clampZoom(factor);
   applyOrthoSize(camera);
+}
+
+/** Smoothly ease the zoom toward `factor` (used when entering/leaving Dev Mode). */
+export function tweenCameraZoom(camera: ArcRotateCamera, factor: number, durationMs = 320) {
+  const target = clampZoom(factor);
+  const start = zoom;
+  if (start === target) return;
+  if (zoomRaf) cancelAnimationFrame(zoomRaf);
+  const t0 = performance.now();
+  const step = (now: number) => {
+    const p = Math.min(1, (now - t0) / durationMs);
+    const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+    zoom = start + (target - start) * e;
+    applyOrthoSize(camera);
+    if (p < 1) {
+      zoomRaf = requestAnimationFrame(step);
+    } else {
+      zoom = target;
+      applyOrthoSize(camera);
+      zoomRaf = 0;
+    }
+  };
+  zoomRaf = requestAnimationFrame(step);
 }
 
 /**

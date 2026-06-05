@@ -61,6 +61,7 @@ export class Player extends Schema {
 
   // ---- server-only (not synced) ----
   prevDead = false; // was DEAD last tick — to count each death once on the alive→dead flip
+  ghostSpeedMult = 1; // Dev ghost mode: glide-speed multiplier from the client's zoom (server-only)
   sprintHeld = false; // SPACE held? (input intent reported by the client)
   exhausted = false; // emptied the bar → "winded", can't sprint until it recovers past STAMINA_SPRINT_REENGAGE
   staminaRegen = 0; // ms left before stamina starts regenerating after a sprint

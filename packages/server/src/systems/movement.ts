@@ -47,9 +47,10 @@ export function placeAtFreeSpot(player: Player, x: number, z: number) {
  *  fresh target (clicked) actually move. */
 const GHOST_SPEED_MULT = 3;
 export function ghostMovementSystem(state: GameState, dt: number) {
-  const speed = MOVE_SPEED * GHOST_SPEED_MULT;
   state.players.forEach((p) => {
     if (p.state === AnimState.DEAD) return;
+    // Faster the more the dev is zoomed out (ghostSpeedMult = camera zoom, 1..6).
+    const speed = MOVE_SPEED * GHOST_SPEED_MULT * (p.ghostSpeedMult || 1);
     const dx = p.targetX - p.x;
     const dz = p.targetZ - p.z;
     const dist = Math.hypot(dx, dz);

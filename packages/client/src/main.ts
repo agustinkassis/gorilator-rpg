@@ -1209,6 +1209,11 @@ const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManage
 devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
 devMode?.setGame(game); // library explorer can select + camera-focus world entities
 devMode?.setInventoryUI(inventory); // Dev Mode: click an inventory slot to set its item/qty
+if (developerLabels)
+  devMode?.setDeveloperLabels({
+    isEnabled: () => developerLabels.isEnabled(),
+    setEnabled: (on) => developerLabels.setEnabled(on),
+  });
 
 setupClickToMove({
   scene,
@@ -1216,7 +1221,8 @@ setupClickToMove({
   net,
   pickTargetAt: game.pickTargetAt,
   onMoveTo: (point) => {
-    hud.showClickMarker(point);
+    // No click marker while paused (ghost free-roam in Dev Mode).
+    if ((net.room?.state.timeScale ?? 1) > 0) hud.showClickMarker(point);
   },
   onSelectTarget: (id) => game.flashSelectTarget(id), // flash the picked target white
   // a banana/stone is thrown by holding its assigned hotkey (Q/W/E/R)
@@ -1502,6 +1508,7 @@ if (import.meta.env.DEV) {
     characterImporter.setVisible(on);
     propImporter.setVisible(on);
     animationTester.setVisible(on);
+    game.setDamageFxSuppressed(on); // no red flash / shake / low-HP vignette while editing
   });
 }
 

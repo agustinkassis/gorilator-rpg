@@ -183,10 +183,12 @@ export class GameRoom extends Room<GameState> {
       p.pickupTargetId = ""; // a manual move cancels any pursuit
       if (this.state.timeScale === 0) {
         // paused → ghost free-roam: fly straight to the point (no pathfinding,
-        // ignoring obstacles); ghostMovementSystem glides there at 3× speed.
+        // ignoring obstacles); ghostMovementSystem glides there, faster the more
+        // the client is zoomed out (msg.gz = the camera zoom factor, 1..6).
         p.path = [];
         p.targetX = clampToWorld(msg.x);
         p.targetZ = clampToWorld(msg.z);
+        p.ghostSpeedMult = Math.max(1, Math.min(6, Number(msg.gz) || 1));
         return;
       }
       setDestination(p, clampToWorld(msg.x), clampToWorld(msg.z));

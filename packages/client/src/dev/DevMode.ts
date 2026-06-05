@@ -1,5 +1,5 @@
 import { Scene, Mesh, ArcRotateCamera, Vector3, MeshBuilder, StandardMaterial, Color3 } from "@babylonjs/core";
-import { setCameraZoom, getCameraZoom } from "../scene/camera";
+import { setCameraZoom, getCameraZoom, tweenCameraZoom } from "../scene/camera";
 import { NetworkClient } from "../net/NetworkClient";
 import { PropManager } from "./PropManager";
 import { SelectionManager, Selectable } from "./Selection";
@@ -76,6 +76,10 @@ export class DevMode {
   active = false;
   private drag: Selectable | null = null; // object currently being dragged on the ground
   private lastDragSend = 0; // throttle clock for synced-entity drag moves
+  private ghostFollowing = false; // hold-click on bare ground → the ghost follows the cursor
+  private lastGhostMoveAt = 0; // throttle clock for the follow-the-cursor ghost moves
+  private lastGhostX = 0;
+  private lastGhostZ = 0;
   private shiftDown = false; // hold Shift while dropping to keep placing copies
   private skipNextPointerUp = false; // click-to-drop fires pointerup after pointerdown; don't drop the fresh copy
   private selection: SelectionManager;
@@ -83,7 +87,8 @@ export class DevMode {
   private explorer: LibraryExplorer;
   private itemLibrary: ItemLibrary;
   private btn: HTMLButtonElement;
-  private itemsBtn: HTMLButtonElement;
+  private labelsBtn: HTMLButtonElement;
+  private developerLabels: { isEnabled(): boolean; setEnabled(on: boolean): void } | null = null;
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
   private gameplayPanel: HTMLElement;
@@ -134,6 +139,20 @@ export class DevMode {
   /** Wire in the Animation Tester so the Tools window can launch it. */
   setAnimationTester(at: AnimationTester) {
     this.animationTester = at;
+  }
+
+  /** Wire in the developer component-labels toggle (driven by the top-right button). */
+  setDeveloperLabels(dl: { isEnabled(): boolean; setEnabled(on: boolean): void }) {
+    this.developerLabels = dl;
+    this.refreshLabelsBtn();
+  }
+
+  /** Reflect the labels on/off state in the toggle button's look. */
+  private refreshLabelsBtn() {
+    if (!this.labelsBtn) return;
+    const on = this.developerLabels?.isEnabled() ?? false;
+    this.labelsBtn.style.background = on ? "#3a7a40" : "#2a3242";
+    this.labelsBtn.style.color = on ? "#fff" : "#9fe0a0";
   }
 
   /** Wire in the inventory UI so Dev Mode slot-clicks open the set-item popup. */
@@ -248,25 +267,31 @@ export class DevMode {
     const btn = document.createElement("button");
     btn.id = "devModeBtn";
     btn.textContent = "🛠 Dev Mode (`)";
+    // Top-right, just left of the sound buttons (#audioControls is right:12px, ~82px wide).
     btn.style.cssText =
-      "position:fixed; right:16px; bottom:204px; z-index:40; cursor:pointer;" +
-      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
+      "position:fixed; right:102px; top:10px; z-index:40; cursor:pointer; height:34px;" +
+      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:8px;" +
+      "padding:0 10px; font:12px system-ui,sans-serif;";
     btn.onclick = () => this.toggle();
     document.body.appendChild(btn);
     this.btn = btn;
 
-    // Custom inventory/gameplay items: create definitions and test-give/drop them.
-    const itemsBtn = document.createElement("button");
-    itemsBtn.id = "devItemsBtn";
-    itemsBtn.textContent = "🎒 Items";
-    itemsBtn.style.cssText =
-      "position:fixed; right:16px; bottom:168px; z-index:40; cursor:pointer; display:none;" +
-      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
-    itemsBtn.onclick = () => this.itemLibrary.toggle();
-    document.body.appendChild(itemsBtn);
-    this.itemsBtn = itemsBtn;
+    // Component-labels toggle — shown in Dev Mode, just LEFT of the Dev Mode button.
+    const labelsBtn = document.createElement("button");
+    labelsBtn.id = "devLabelsBtn";
+    labelsBtn.textContent = "🏷 Labels";
+    labelsBtn.title = "Toggle component labels";
+    labelsBtn.style.cssText =
+      "position:fixed; right:240px; top:10px; z-index:40; cursor:pointer; height:34px; display:none;" +
+      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:8px;" +
+      "padding:0 10px; font:12px system-ui,sans-serif;";
+    labelsBtn.onclick = () => {
+      if (!this.developerLabels) return;
+      this.developerLabels.setEnabled(!this.developerLabels.isEnabled());
+      this.refreshLabelsBtn();
+    };
+    document.body.appendChild(labelsBtn);
+    this.labelsBtn = labelsBtn;
 
     // Top-left Dev control stack — Gameplay Options, Library, Tools (shared style).
     const stackBtn = (id: string, label: string, top: number) => {
@@ -443,6 +468,11 @@ export class DevMode {
     window.addEventListener("blur", () => {
       this.shiftDown = false;
       this.skipNextPointerUp = false;
+      this.ghostFollowing = false;
+    });
+    // Releasing the button anywhere (even off-canvas) ends the follow-the-cursor move.
+    window.addEventListener("pointerup", (e) => {
+      if (e.button === 0) this.ghostFollowing = false;
     });
 
     // Dev Mode only: scroll to zoom the camera out (up to 6×) to survey the map.
@@ -469,7 +499,7 @@ export class DevMode {
     this.net.sendGodMode(true);
     this.setScale(0); // entering Dev Mode freezes authoritative gameplay for everyone
     const cam = this.scene.activeCamera as ArcRotateCamera | null;
-    if (cam) setCameraZoom(cam, 1.1); // pull the view back 10% to survey while editing
+    if (cam) tweenCameraZoom(cam, 1.2); // smoothly pull the view back 20% to survey while editing
     void this.loadSpawners(); // reflect existing spawners in object inspectors
     void this.loadFeatures(); // generic HP/drop/brain/stat feature config
     void this.loadCharacterDefs(); // custom spawn targets for spawner rules
@@ -477,7 +507,10 @@ export class DevMode {
     void this.loadStructures(); // reflect existing structure loot tables
     this.btn.style.background = "#3a7a40";
     this.btn.style.color = "#fff";
-    this.itemsBtn.style.display = "block";
+    // Labels toggle: show it just left of the (always-visible) Dev Mode button.
+    this.labelsBtn.style.display = "block";
+    this.labelsBtn.style.right = `${Math.round(102 + this.btn.getBoundingClientRect().width + 8)}px`;
+    this.refreshLabelsBtn();
     this.entitiesBtn.style.display = "block";
     this.gameplayBtn.style.display = "block";
     this.toolsBtn.style.display = "block";
@@ -501,7 +534,7 @@ export class DevMode {
     this.selection.clear();
     this.btn.style.background = "#2a3242";
     this.btn.style.color = "#9fe0a0";
-    this.itemsBtn.style.display = "none";
+    this.labelsBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
     this.gameplayBtn.style.display = "none";
     this.toolsBtn.style.display = "none";
@@ -520,7 +553,7 @@ export class DevMode {
     this.itemLibrary?.close();
     this.clearFocus(); // release the camera back to the player
     const cam = this.scene.activeCamera as ArcRotateCamera | null;
-    if (cam) setCameraZoom(cam, 1); // back to the normal play zoom
+    if (cam) tweenCameraZoom(cam, 1); // smoothly ease back to the normal play zoom
     this.inspector.hide();
     this.setCursor("default");
   }
@@ -1429,14 +1462,31 @@ export class DevMode {
       if (this.drag) this.setCursor("grabbing");
       return true;
     }
-    // bare ground (or nothing actionable): deselect, but keep navigation working
+    // bare ground (or nothing actionable): deselect, but keep navigation working.
+    // Hold the button + drag and the player follows the cursor, like in gameplay.
     this.selectNone();
     if (point) {
       this.clearFocus(); // walking again → camera resumes following the player
-      this.net.sendMove(point.x, point.z);
+      this.ghostFollowing = true;
+      this.lastGhostMoveAt = performance.now();
+      this.lastGhostX = point.x;
+      this.lastGhostZ = point.z;
+      this.net.sendMove(point.x, point.z, getCameraZoom());
     }
     return true;
   };
+
+  /** While the button is held on bare ground, re-issue moves toward the cursor's
+   *  ground spot (throttled) so the player follows it — Diablo/gameplay style. */
+  private ghostWalkTo(point: Vector3) {
+    const now = performance.now();
+    if (now - this.lastGhostMoveAt < 90) return; // don't spam the server
+    if (Math.hypot(point.x - this.lastGhostX, point.z - this.lastGhostZ) < 0.5) return;
+    this.net.sendMove(point.x, point.z, getCameraZoom());
+    this.lastGhostMoveAt = now;
+    this.lastGhostX = point.x;
+    this.lastGhostZ = point.z;
+  }
 
   /** Hover: themed cursor; while dragging, relocate the grabbed object across the
    *  ground plane (props move + persist locally, synced entities send throttled moves). */
@@ -1448,6 +1498,11 @@ export class DevMode {
       this.setCursor("grabbing");
       return true;
     }
+    if (this.ghostFollowing) {
+      if (point) this.ghostWalkTo(point); // hold-to-move: keep following the cursor
+      this.setCursor("default");
+      return true;
+    }
     const sel = this.resolveSelAt(point);
     this.setCursor(sel ? "grab" : "default");
     return true;
@@ -1456,6 +1511,7 @@ export class DevMode {
   /** Release ends a button-held drag. */
   pointerUp = (event?: PointerEvent) => {
     if (event) this.shiftDown = event.shiftKey;
+    this.ghostFollowing = false; // stop following the cursor
     if (this.maskEdit) {
       this.maskDrag = false;
       this.saveMaskEdit();

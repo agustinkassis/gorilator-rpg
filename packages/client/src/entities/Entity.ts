@@ -3,6 +3,7 @@ import { AnimState, SPRINT_SPEED_MULT, BERSERKER_SCALE } from "@rpg/shared";
 import { AnimationController } from "./AnimationController";
 import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH, BERSERK_FLASH } from "./types";
 import { makeBerserkerAura } from "../fx/berserkerFx";
+import { getCameraZoom } from "../scene/camera";
 import { lerpAngle, smooth } from "../util/math";
 
 export interface AnimationDebugClip {
@@ -34,7 +35,7 @@ const CORPSE_FADE = 0.9; // seconds to fade the corpse to nothing
 const SELECT_FLASH_MS = 0.6; // total duration of the select flash
 const SELECT_BLINK_MS = 0.1; // overlay toggles every this long → "flash, flash, flash"
 const DMG_BLINK_MS = 0.08; // local player's dark-red damage flash toggles this fast
-const GHOST_FLOAT = 0.65; // units a paused "ghost" player floats off the floor (0.5 + 30%)
+const GHOST_FLOAT = 0.845; // units a paused "ghost" player floats off the floor (0.65 + 30%)
 const GHOST_VISIBILITY = 0.7; // translucency of a ghosting player
 const GHOST_BOB_AMPL = 0.08; // how far the ghost drifts up/down around its float height
 const GHOST_BOB_HZ = 0.6; // gentle bob cycles per second
@@ -174,7 +175,7 @@ export class Entity {
     if (on === this.ghost) return;
     this.ghost = on;
     this.setVisibility(on ? GHOST_VISIBILITY : 1);
-    this.root.position.y = on ? GHOST_FLOAT : 0;
+    this.root.position.y = on ? GHOST_FLOAT * getCameraZoom() : 0; // higher the more zoomed out
     if (!on) {
       this.ghostTilt = 0;
       this.root.rotation.x = 0; // drop the flight pitch back upright
@@ -300,7 +301,7 @@ export class Entity {
     // paused local player visibly hovers rather than sitting at a fixed offset.
     if (this.ghost) {
       this.root.position.y =
-        GHOST_FLOAT + Math.sin(this.stateTime * GHOST_BOB_HZ * Math.PI * 2) * GHOST_BOB_AMPL;
+        GHOST_FLOAT * getCameraZoom() + Math.sin(this.stateTime * GHOST_BOB_HZ * Math.PI * 2) * GHOST_BOB_AMPL;
     }
 
     // Measure real motion (smoothed units/sec) and re-pick the clip, so a body
