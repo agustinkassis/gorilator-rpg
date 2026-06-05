@@ -66,6 +66,12 @@ CLI as `npx gorilator install`. The installer, in order:
 > ./packages/cli/gorilator install        # same as `npx gorilator install`
 > GORILATOR_REPO=https://github.com/you/fork.git ./packages/cli/gorilator install
 > ```
+>
+> On Windows, use the Node/Command Prompt wrapper from a checkout:
+> ```powershell
+> pnpm gorilator install
+> .\packages\cli\gorilator.cmd install
+> ```
 
 ---
 
@@ -109,7 +115,9 @@ gorilator help <cmd>    Show detailed help for any command
 ```
 
 The three entry points run **identical code** — `npx gorilator <cmd>`, the global `gorilator <cmd>`, and the
-repo's `./packages/cli/gorilator <cmd>` (which only adds: ensure Node, then exec the same Node CLI).
+repo's bundled wrappers (`./packages/cli/gorilator <cmd>` on Linux/macOS, `.\packages\cli\gorilator.cmd <cmd>`
+on Windows). The POSIX wrapper can also install Node on fresh Linux/macOS hosts; the Windows wrapper expects
+Node >= 20.6 to already be installed.
 
 `gorilator uninstall` removes local machine state created by install/setup: the Gorilator daemon, local
 cloudflared service/config, install record, global npm command, and installed app directory. Add
