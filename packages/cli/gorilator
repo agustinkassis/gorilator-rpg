@@ -6,26 +6,25 @@
 # hands every argument to that same Node CLI. So all three of these run IDENTICAL
 # code:
 #
-#   bash cli/gorilator <cmd>      (this wrapper, from a checkout)
-#   npx gorilator <cmd>           (the published package)
-#   gorilator <cmd>               (the globally-installed command)
+#   bash packages/cli/gorilator <cmd>   (this wrapper, from a checkout)
+#   npx gorilator <cmd>                 (the published package)
+#   gorilator <cmd>                     (the globally-installed command)
 #
 # Usage:  gorilator install | setup | start | stop | restart | status | info |
 #                   logs | update | tunnel <login|status|restart> | uninstall
 #
 set -euo pipefail
 
-# --- Resolve the project root through the (possibly symlinked) script path.
-#     Resolved portably because macOS's readlink lacks GNU's -f. ---
+# --- Resolve this script's own directory through any symlinks. It lives in
+#     packages/cli, so that directory IS the CLI package. Resolved portably
+#     because macOS's readlink lacks GNU's -f. ---
 SELF="${BASH_SOURCE[0]}"
 while [ -h "$SELF" ]; do
   _dir="$(cd -P "$(dirname "$SELF")" && pwd)"
   SELF="$(readlink "$SELF")"
   case "$SELF" in /*) ;; *) SELF="$_dir/$SELF" ;; esac
 done
-SELF="$(cd -P "$(dirname "$SELF")" && pwd)/$(basename "$SELF")"
-PROJECT_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
-CLI_DIR="$PROJECT_DIR/packages/cli"
+CLI_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
 CLI_ENTRY="$CLI_DIR/dist/index.js"
 
 # --- Pretty logging (plain when not a TTY) ---

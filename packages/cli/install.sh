@@ -4,7 +4,7 @@
 # prerequisites, fetches the source, and runs the native installer. No Node, no
 # Docker required up front.
 #
-#   curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/packages/cli/install.sh | sudo bash
 #
 # Override the source/target with env vars:
 #   GORILATOR_REPO=https://github.com/you/fork.git GORILATOR_REF=main \
@@ -109,8 +109,8 @@ fi
 if [ "$TARGET_USER" != "root" ]; then
   chown -R "$TARGET_USER" "$INSTALL_DIR" 2>/dev/null || run_privileged chown -R "$TARGET_USER" "$INSTALL_DIR" 2>/dev/null || true
 fi
-chmod +x "$INSTALL_DIR/cli/gorilator" "$INSTALL_DIR/cli/install.sh" 2>/dev/null \
-  || run_privileged chmod +x "$INSTALL_DIR/cli/gorilator" "$INSTALL_DIR/cli/install.sh" 2>/dev/null \
+chmod +x "$INSTALL_DIR/packages/cli/gorilator" "$INSTALL_DIR/packages/cli/install.sh" 2>/dev/null \
+  || run_privileged chmod +x "$INSTALL_DIR/packages/cli/gorilator" "$INSTALL_DIR/packages/cli/install.sh" 2>/dev/null \
   || true
 
 # Use this checkout as the install dir (no second clone), then hand off to the
@@ -121,7 +121,7 @@ export GORILATOR_REF="$REF"
 export GORILATOR_DIR="$INSTALL_DIR"
 echo "==> Launching the installer…"
 if { true </dev/tty; } 2>/dev/null; then
-  bash "$INSTALL_DIR/cli/gorilator" install </dev/tty
+  bash "$INSTALL_DIR/packages/cli/gorilator" install </dev/tty
 else
-  bash "$INSTALL_DIR/cli/gorilator" install
+  bash "$INSTALL_DIR/packages/cli/gorilator" install
 fi

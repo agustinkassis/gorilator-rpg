@@ -43,10 +43,10 @@ npx gorilator install
 **On a bare box (no Node yet) — one public bash file installs OS prerequisites + Node, then everything:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/packages/cli/install.sh | sudo bash
 ```
 
-That public bootstrap fetches this repo and launches `./cli/gorilator install`, which runs the same native
+That public bootstrap fetches this repo and launches `./packages/cli/gorilator install`, which runs the same native
 CLI as `npx gorilator install`. The installer, in order:
 
 1. Ensures **ca-certificates**, **curl**, **git**, **Node ≥ 20.6**, and **pnpm@10.14.0**
@@ -63,8 +63,8 @@ CLI as `npx gorilator install`. The installer, in order:
 > Already have the repo checked out (or using a fork)? Everything also runs through the bundled wrapper,
 > which executes the very same Node CLI:
 > ```bash
-> ./cli/gorilator install        # same as `npx gorilator install`
-> GORILATOR_REPO=https://github.com/you/fork.git ./cli/gorilator install
+> ./packages/cli/gorilator install        # same as `npx gorilator install`
+> GORILATOR_REPO=https://github.com/you/fork.git ./packages/cli/gorilator install
 > ```
 
 ---
@@ -109,7 +109,7 @@ gorilator help <cmd>    Show detailed help for any command
 ```
 
 The three entry points run **identical code** — `npx gorilator <cmd>`, the global `gorilator <cmd>`, and the
-repo's `./cli/gorilator <cmd>` (which only adds: ensure Node, then exec the same Node CLI).
+repo's `./packages/cli/gorilator <cmd>` (which only adds: ensure Node, then exec the same Node CLI).
 
 `gorilator uninstall` removes local machine state created by install/setup: the Gorilator daemon, local
 cloudflared service/config, install record, global npm command, and installed app directory. Add

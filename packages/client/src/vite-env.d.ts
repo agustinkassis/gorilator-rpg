@@ -4,6 +4,10 @@
  *  `define` (see vite.config.ts). Used in bundled perf metadata. */
 declare const __APP_VERSION__: string;
 
+/** Versions of every workspace package (label → version), injected at build time
+ *  by Vite. Shown in the footer version popup. */
+declare const __PKG_VERSIONS__: Record<string, string>;
+
 /** The linked worktree serving the local dev client, or an empty string outside
  *  a linked worktree. Injected at build time by Vite. */
 declare const __WORKTREE_LABEL__: string;

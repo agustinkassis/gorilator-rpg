@@ -25,6 +25,13 @@ import {
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
+import {
+  adminsHint,
+  adminsMenu,
+  updateAutoUpdateInterval,
+  updateCheckHint,
+  type ServerSettingsCtx,
+} from "../lib/serverSettings.js";
 import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
@@ -87,6 +94,10 @@ async function runSetupMenu(opts: Options): Promise<void> {
         label: "Colyseus and environment",
         hint: "monitor auth, server name, stats files",
       },
+      {
+        label: "Developer",
+        hint: ctx.env.GORILATOR_DEV === "1" ? "dev mode ON" : "dev mode off",
+      },
       { label: "Show current settings" },
       { label: "Exit" },
     ]);
@@ -108,6 +119,9 @@ async function runSetupMenu(opts: Options): Promise<void> {
         await environmentMenu(opts);
         break;
       case 5:
+        await developerMenu(opts);
+        break;
+      case 6:
         showCurrentSettings(requireInstall(opts));
         pause();
         break;
@@ -115,6 +129,36 @@ async function runSetupMenu(opts: Options): Promise<void> {
         return;
     }
   }
+}
+
+/** Developer tools. Currently a single toggle: when ON, `gorilator serve` runs
+ *  the live dev server (Vite HMR + tsx, in-game Dev Mode editor) instead of the
+ *  production build — see commands/serve.ts. Mock Nostr login stays disabled. */
+async function developerMenu(opts: Options): Promise<void> {
+  for (;;) {
+    const ctx = requireInstall(opts);
+    const on = ctx.env.GORILATOR_DEV === "1";
+    const choice = await selectMenu(`Developer\n  Dev mode is ${on ? "ON" : "off"}\n`, [
+      { label: on ? "Turn dev mode OFF" : "Turn dev mode ON", hint: on ? "back to production build" : "live dev server (Vite + tsx)" },
+      { label: "Back" },
+    ]);
+    if (choice === 0) toggleDevMode(opts, !on);
+    else return;
+  }
+}
+
+function toggleDevMode(opts: Options, on: boolean): void {
+  const ctx = requireInstall(opts);
+  if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
+    return;
+  }
+  writeEnvPatch(
+    ctx,
+    { GORILATOR_DEV: on ? "1" : "" },
+    on ? "Dev mode ON — the daemon will run the live dev server." : "Dev mode off — back to the production build.",
+  );
+  restartDaemon();
+  pause();
 }
 
 async function logsMenu(): Promise<void> {
@@ -164,14 +208,29 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
       { label: "Update server port", hint: String(port) },
       { label: "Update optional client port", hint: clientPort ? String(clientPort) : "disabled" },
       { label: "Use one-port mode", hint: "client + WebSocket + monitor on server port" },
+      { label: "Auto-update check interval", hint: updateCheckHint(ctx.env.UPDATE_CHECK_HOURS) },
+      { label: "Manage admins (NIP-98)", hint: adminsHint(ctx.env.ADMIN_NPUBS) },
       { label: "Back" },
     ]);
 
     if (choice === 0) await updateServerPort(opts, port);
     else if (choice === 1) await updateClientPort(opts, clientPort);
     else if (choice === 2) await setOnePortMode(opts);
+    else if (choice === 3) await updateAutoUpdateInterval(settingsCtx(opts));
+    else if (choice === 4) await adminsMenu(() => settingsCtx(opts));
     else return;
   }
+}
+
+/** The shared ServerSettingsCtx for a system install: the install .env, the
+ *  (sudo-aware) env writer, and the daemon restart. */
+function settingsCtx(opts: Options): ServerSettingsCtx {
+  const ctx = requireInstall(opts);
+  return {
+    env: ctx.env,
+    write: (patch, message) => writeEnvPatch(ctx, patch, message),
+    restart: restartDaemon,
+  };
 }
 
 async function updateServerPort(opts: Options, current: number): Promise<void> {

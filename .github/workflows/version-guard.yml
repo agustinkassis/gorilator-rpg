@@ -1,0 +1,25 @@
+name: Version guard
+
+# Fails a PR if any workspace package's version changed without the umbrella
+# "app" (root package.json) version bumping by at least the same semver level.
+# Keep them in sync with `pnpm bump <package> <level>`. See scripts/check-versions.mjs.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: git fetch --no-tags --depth=200 origin "${{ github.base_ref }}"
+
+      - name: Enforce umbrella app version vs package bumps
+        run: node scripts/check-versions.mjs
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
