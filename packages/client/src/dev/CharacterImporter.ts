@@ -46,7 +46,7 @@ export interface CharacterImporterDeps {
   /** Where to drop the placed character (the player's position), or null. */
   getPlayerPos: () => { x: number; z: number } | null;
   /** Called after a character is placed so the world can spawn it live. */
-  onPlaced: (def: CharacterDef, placement: { id: string; x: number; z: number; rotationY: number }) => void;
+  onPlaced: (def: CharacterDef, placement: { id: string; x: number; z: number; rotationY: number; scale?: number }) => void;
 }
 
 /**
@@ -360,11 +360,11 @@ export class CharacterImporter {
       const res = await fetch("/__char/place", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ defId: this.def.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0 }),
+        body: JSON.stringify({ defId: this.def.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0, scale: 1 }),
       });
       if (!res.ok) throw new Error(await res.text());
       const out = await res.json();
-      this.deps.onPlaced(this.def, { id: out.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0 });
+      this.deps.onPlaced(this.def, { id: out.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0, scale: 1 });
       this.status.textContent = `✓ added "${this.def.name}" to the world`;
     } catch (e) {
       this.status.textContent = "place failed: " + (e as Error).message;

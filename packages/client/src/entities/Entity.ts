@@ -102,7 +102,10 @@ export class Entity {
   berserkerMs = 0;
   private berserkerActive = false;
   private berserkerParticles: ParticleSystem | null = null;
-  private baseScaleX = -1; // lazy-read original scale; -1 = not yet sampled
+  private visualScale = 1;
+  private naturalScaleX = 1;
+  private naturalScaleY = 1;
+  private naturalScaleZ = 1;
 
   constructor(id: string, spawned: SpawnedCharacter, isLocal: boolean) {
     this.id = id;
@@ -110,6 +113,9 @@ export class Entity {
     this.spawned = spawned;
     this.yawSign = spawned.yawSign ?? 1;
     this.root = spawned.root;
+    this.naturalScaleX = this.root.scaling.x;
+    this.naturalScaleY = this.root.scaling.y;
+    this.naturalScaleZ = this.root.scaling.z;
     this.root.metadata = { entityId: id };
     this.anim = new AnimationController(spawned.groups, spawned.speeds);
     this.anim.play(AnimState.IDLE);
@@ -167,6 +173,23 @@ export class Entity {
   /** Briefly flash this character white — used when it's picked as an attack target. */
   flashSelect() {
     this.selectFlashT = SELECT_FLASH_MS;
+  }
+
+  /** Dev Mode transform scale. Gameplay effects like Berserker layer on top. */
+  setVisualScale(scale: number) {
+    const next = Number.isFinite(scale) ? Math.max(0.05, Math.min(40, scale)) : 1;
+    if (Math.abs(next - this.visualScale) < 0.001) return;
+    this.visualScale = next;
+    this.applyVisualScale();
+  }
+
+  private applyVisualScale() {
+    const mult = this.visualScale * (this.berserkerActive ? BERSERKER_SCALE : 1);
+    this.root.scaling.set(
+      this.naturalScaleX * mult,
+      this.naturalScaleY * mult,
+      this.naturalScaleZ * mult,
+    );
   }
 
   /** Dev Mode ghost: go translucent + float off the ground (the local player while
@@ -329,15 +352,14 @@ export class Entity {
     this.berserkerActive = this.berserkerMs > 0;
     if (this.berserkerActive && !wasBerserk) {
       // buff just started — grow model and spawn the green aura
-      this.baseScaleX = this.root.scaling.x;
-      this.root.scaling.setAll(this.baseScaleX * BERSERKER_SCALE);
+      this.applyVisualScale();
       const scene = this.root.getScene();
       if (scene) {
         this.berserkerParticles = makeBerserkerAura(scene, this.root.position);
       }
     } else if (!this.berserkerActive && wasBerserk) {
       // buff expired — restore original scale and stop the aura
-      if (this.baseScaleX > 0) this.root.scaling.setAll(this.baseScaleX);
+      this.applyVisualScale();
       if (this.berserkerParticles) {
         this.berserkerParticles.stop();
         this.berserkerParticles.dispose();

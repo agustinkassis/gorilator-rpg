@@ -91,10 +91,10 @@ function resolveTarget(state: GameState, id: string): Target | undefined {
  *  not the centre, so the reach must include it. Other targets are points. */
 function targetRadius(t: Target): number {
   const r = (t as { radius?: number }).radius;
-  if (t instanceof House || t instanceof Structure) return typeof r === "number" ? r : 0;
+  if (t instanceof House || t instanceof Structure) return typeof r === "number" ? r * ((t as { scale?: number }).scale || 1) : 0;
   // Rocks carry a radius; use a fraction of it so the player walks right up to
   // the boulder to mine it (and ends up amid the stones it drops).
-  return typeof r === "number" ? r * ROCK_COLLISION_SCALE : 0;
+  return typeof r === "number" ? r * ((t as { scale?: number }).scale || 1) * ROCK_COLLISION_SCALE : 0;
 }
 
 /** How close to a target's centre you can land a hit (its surface + melee reach). */

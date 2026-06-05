@@ -331,14 +331,14 @@ function dropFromRock(state: GameState, rock: Rock, item: string) {
   const angle = Math.random() * Math.PI * 2;
   // drop close to the rock's base (just outside its shrunken collision) so the
   // items land within the player's reach instead of scattering out of range.
-  const r = rock.radius * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
+  const r = rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
   dropItem(state, item, rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
 }
 
 /** Drop a clustered burst of stones around one reachable point at a rock's base. */
 function dropStoneGroupFromRock(state: GameState, rock: Rock, count: number) {
   const angle = Math.random() * Math.PI * 2;
-  const r = rock.radius * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
+  const r = rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
   const cx = rock.x + Math.cos(angle) * r;
   const cz = rock.z + Math.sin(angle) * r;
   for (let i = 0; i < count; i++) {
@@ -364,7 +364,7 @@ export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
       rock.z,
       rock.maxHp,
       amount,
-      rock.radius * ROCK_COLLISION_SCALE + 0.8,
+      rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.8,
     );
     return;
   }
@@ -395,7 +395,7 @@ export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
 export function onRockMined(state: GameState, rock: Rock) {
   const cfg = dropConfig("rock");
   if (entityFeature("rock").drops !== undefined) {
-    dropEntityLoot(state, "rock", rock.id, undefined, rock.x, rock.z, rock.radius * ROCK_COLLISION_SCALE + 0.8);
+    dropEntityLoot(state, "rock", rock.id, undefined, rock.x, rock.z, rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.8);
     rock.alive = false;
     rock.hp = 0;
     rock.damageSinceStone = 0;

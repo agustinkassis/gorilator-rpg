@@ -352,7 +352,7 @@ function nearestPlayer(state: GameState, g: Enemy): { p: Player; d: number } | n
 
 function isDefendingHome(home: House | null, p: Player): boolean {
   if (!home) return true;
-  return Math.hypot(p.x - home.x, p.z - home.z) <= home.radius + GOBLIN_LEASH;
+  return Math.hypot(p.x - home.x, p.z - home.z) <= home.radius * (home.scale || 1) + GOBLIN_LEASH;
 }
 
 /**
@@ -442,7 +442,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
 
     // ---- Priority 2: march on the home and attack it ----
     if (home) {
-      const reach = home.radius + tuning.enemyAttackRange;
+      const reach = home.radius * (home.scale || 1) + tuning.enemyAttackRange;
       const d = Math.hypot(home.x - g.x, home.z - g.z);
       if (d <= reach) {
         g.rotY = Math.atan2(home.x - g.x, home.z - g.z);
@@ -537,7 +537,7 @@ function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamag
   if (!house || !house.alive) return;
   if (house.maxHp <= 0) return; // dev-set HP 0 ⇒ indestructible: swing connects but deals no damage
   const d = Math.hypot(house.x - g.x, house.z - g.z);
-  if (d > house.radius + tuning.enemyAttackRange * 1.4) return; // shoved out of reach
+  if (d > house.radius * (house.scale || 1) + tuning.enemyAttackRange * 1.4) return; // shoved out of reach
   const dmg = g.houseDamage || tuning.goblinHouseDamage; // per-spawner override
   house.hp = Math.max(0, house.hp - dmg);
   emitDamage({ targetId: house.id, amount: dmg, crit: false });

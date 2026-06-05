@@ -7,6 +7,8 @@ export class House extends Schema {
   @type("string") id = "";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") rotY = 0;
+  @type("number") scale = 1;
   @type("number") radius = HOUSE_COLLISION_RADIUS; // footprint a thrown item collides with
   @type("number") hp = HOUSE_HP;
   @type("number") maxHp = HOUSE_HP;
