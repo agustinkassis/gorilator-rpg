@@ -17,8 +17,8 @@
     "perf": "node scripts/perf-analyze.mjs",
     "bump": "node scripts/bump.mjs",
     "version:check": "node scripts/check-versions.mjs",
-    "deploy": "bash cli/gorilator install",
-    "gorilator": "bash cli/gorilator"
+    "deploy": "bash packages/cli/gorilator install",
+    "gorilator": "bash packages/cli/gorilator"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

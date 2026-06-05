@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "start": "tsx src/index.ts",
     "test": "npm run build && node --test test/*.test.mjs",
     "prepublishOnly": "npm run build"
   },
@@ -47,6 +48,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }
 }

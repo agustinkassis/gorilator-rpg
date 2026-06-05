@@ -8,12 +8,12 @@ import { fileURLToPath } from "node:url";
 // regardless of the invoking cwd.
 const rootDir = dirname(fileURLToPath(import.meta.url));
 // The repo's CLI bootstrap installer.
-const installShPath = resolve(rootDir, "../../cli/install.sh");
+const installShPath = resolve(rootDir, "../cli/install.sh");
 
 /**
- * Publishes cli/install.sh at the site root as /install.sh, so a fresh box can run
+ * Publishes packages/cli/install.sh at the site root as /install.sh, so a fresh box can run
  *   curl -fsSL <site>/install.sh | sudo bash
- * cli/install.sh stays the single source of truth: served live in dev and copied
+ * packages/cli/install.sh stays the single source of truth: served live in dev and copied
  * into the build output (dist/install.sh) on `vite build` — no duplicate in public/.
  */
 function installScript(): Plugin {

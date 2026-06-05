@@ -1,12 +1,12 @@
 // Daemon auto-update check. Periodically asks the GitHub Releases API whether a
-// newer release than the running checkout exists, and caches the verdict so the
-// game splash (via /api/update) and the `gorilator` CLI can surface an alert.
+// newer release exists, and caches the verdict so the game splash (via
+// /api/update) and the `gorilator` CLI can surface an alert.
 //
-// "Newer" is decided by comparing the latest published release's date against
-// the date of the local git HEAD commit — the daemon updates by fast-forwarding
-// a git ref (`gorilator update`), so this reflects "a release was cut after the
-// code I'm running" without depending on the server/CLI version numbers lining
-// up. The release tag/name/url are reported for display regardless.
+// "Newer" is decided by SemVer: the latest release's tag version vs the local
+// **app (umbrella) version** (the root package.json — see docs/versioning.md),
+// NOT the CLI or server package version. Releases must therefore be tagged with
+// the app version (e.g. `v0.4.0`). If a tag carries no parseable version we fall
+// back to comparing the release date against the local git HEAD commit date.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -22,12 +22,13 @@ export interface UpdateSnapshot {
   intervalHours: number;
   /** The `owner/repo` being checked. */
   repo: string;
-  /** True when a release newer than the running checkout was found. */
+  /** True when the latest release's version is greater than the local app version. */
   updateAvailable: boolean;
-  /** The running code's version (root package.json) + short commit. */
+  /** The running code's **app (umbrella)** version + short commit. */
   current: { version: string; sha: string | null; committedAt: string | null };
-  /** The latest published GitHub release, when one was read. */
-  latest: { tag: string; name: string; url: string; publishedAt: string } | null;
+  /** The latest published GitHub release, when one was read (`version` is the
+   *  SemVer parsed from its tag, or null if the tag has none). */
+  latest: { tag: string; name: string; url: string; publishedAt: string; version: string | null } | null;
   /** Epoch ms of the last completed check (0 if never). */
   checkedAt: number;
   /** Last error message, if the most recent check failed. */
@@ -43,7 +44,7 @@ class UpdateChecker {
     intervalHours: this.intervalHours,
     repo: this.repo,
     updateAvailable: false,
-    current: { version: resolveCurrentVersion(), sha: null, committedAt: null },
+    current: { version: resolveAppVersion(), sha: null, committedAt: null },
     latest: null,
     checkedAt: 0,
   };
@@ -74,11 +75,18 @@ class UpdateChecker {
     try {
       const sha = git("rev-parse", "--short", "HEAD");
       const committedAt = git("show", "-s", "--format=%cI", "HEAD");
+      const appVersion = resolveAppVersion();
       const latest = await fetchLatestRelease(this.repo);
 
       let updateAvailable = false;
-      if (latest && committedAt) {
-        updateAvailable = Date.parse(latest.publishedAt) > Date.parse(committedAt);
+      if (latest) {
+        if (latest.version) {
+          // Primary signal: the release's app version is newer than ours.
+          updateAvailable = compareSemver(latest.version, appVersion) > 0;
+        } else if (committedAt) {
+          // Tag has no parseable version → fall back to release-vs-HEAD date.
+          updateAvailable = Date.parse(latest.publishedAt) > Date.parse(committedAt);
+        }
       }
 
       this.snap = {
@@ -86,12 +94,12 @@ class UpdateChecker {
         intervalHours: this.intervalHours,
         repo: this.repo,
         updateAvailable,
-        current: { version: resolveCurrentVersion(), sha, committedAt },
+        current: { version: appVersion, sha, committedAt },
         latest,
         checkedAt: Date.now(),
       };
       if (updateAvailable && latest) {
-        console.log(`[update] new release available: ${latest.tag} (${latest.url})`);
+        console.log(`[update] new release available: ${latest.tag} (app ${appVersion} → ${latest.version ?? latest.tag})`);
       }
     } catch (err) {
       this.snap = {
@@ -112,18 +120,44 @@ function resolveIntervalHours(): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Root package.json version of the running checkout (best-effort). */
-function resolveCurrentVersion(): string {
-  // server cwd is <appDir>/packages/server → root package.json is two levels up.
-  for (const rel of ["../../package.json", "../../../package.json"]) {
+/** The app (umbrella) version — the **root** package.json version. Resolved via
+ *  the git repo root (robust across src/dist layouts), with URL fallbacks. */
+function resolveAppVersion(): string {
+  const root = git("rev-parse", "--show-toplevel");
+  const candidates: Array<string | URL> = [];
+  if (root) candidates.push(`${root}/package.json`);
+  // From packages/server/src/systems/: the repo root is four levels up.
+  candidates.push(new URL("../../../../package.json", import.meta.url));
+  candidates.push(new URL("../../../package.json", import.meta.url));
+  for (const p of candidates) {
     try {
-      const pkg = JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf8"));
+      const pkg = JSON.parse(readFileSync(p, "utf8"));
       if (typeof pkg?.version === "string" && pkg.version.trim()) return pkg.version;
     } catch {
       /* try next */
     }
   }
   return "0.0.0";
+}
+
+/** Extract the SemVer `MAJOR.MINOR.PATCH` from a release tag (e.g. `v0.4.0`,
+ *  `0.4.0`), or null if the tag carries no version. */
+function versionFromTag(tag: string): string | null {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(tag);
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : null;
+}
+
+/** Compare two MAJOR.MINOR.PATCH strings: -1 / 0 / 1. Unparseable → 0. */
+function compareSemver(a: string, b: string): number {
+  const pa = versionFromTag(a);
+  const pb = versionFromTag(b);
+  if (!pa || !pb) return 0;
+  const x = pa.split(".").map(Number);
+  const y = pb.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1;
+  }
+  return 0;
 }
 
 /** Run a git command from the server cwd; returns trimmed stdout or null. */
@@ -140,6 +174,8 @@ interface LatestRelease {
   name: string;
   url: string;
   publishedAt: string;
+  /** SemVer parsed from the tag, or null. */
+  version: string | null;
 }
 
 /** GET the latest (non-draft, non-prerelease) release for a repo, or null. */
@@ -173,6 +209,7 @@ async function fetchLatestRelease(repo: string): Promise<LatestRelease | null> {
       name: body.name || body.tag_name,
       url: body.html_url || `https://github.com/${repo}/releases/latest`,
       publishedAt: body.published_at,
+      version: versionFromTag(body.tag_name),
     };
   } finally {
     clearTimeout(t);
