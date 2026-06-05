@@ -21,6 +21,7 @@ import {
   PLAYER_KILL_XP,
   TREE_XP_REWARD,
   ROCK_XP_REWARD,
+  STRUCTURE_XP_REWARD,
 } from "@rpg/shared";
 
 /** Sink for XP events so the room can broadcast floating "+N XP" to clients. */
@@ -104,5 +105,6 @@ export function killXp(state: GameState, victimId: string): number {
   if (state.players.has(victimId)) return PLAYER_KILL_XP;
   if (state.trees.has(victimId)) return TREE_XP_REWARD;
   if (state.rocks.has(victimId)) return ROCK_XP_REWARD;
+  if (state.structures.has(victimId)) return STRUCTURE_XP_REWARD;
   return 0;
 }

@@ -20,6 +20,7 @@ import {
   ATTACK_VARIANCE,
   ARMOR_K,
   statsForLevel,
+  type BrainId,
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
 import { applyDeathXpPenalty } from "./leveling";
@@ -27,6 +28,7 @@ import { dropEntityLoot, dropStructureLoot } from "./resources";
 import type { EmitKill } from "./combat";
 import { brainOf, configureEnemy } from "./enemyConfig";
 import { devTuning } from "./devTuning";
+import { customWave, type WaveEntry } from "./waves";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -84,6 +86,75 @@ interface ScheduledGoblin {
   x: number;
   z: number;
   level: number;
+  kind?: string; // custom-wave override (defaults to a plain goblin)
+  defId?: string; // character def id when kind is a custom character
+  brain?: BrainId;
+}
+
+/** Spawn one scheduled unit: a plain goblin (the fast path), or a custom-wave
+ *  entry (specific kind/character + brain), all pointed at the home. */
+function spawnScheduled(state: GameState, g: ScheduledGoblin, waveNumber: number): Enemy {
+  const kind = g.kind || "goblin";
+  if (kind === "goblin" && !g.brain) return makeGoblin(state, g.x, g.z, g.level, waveNumber);
+  const spot = nearestFreeWorld(g.x, g.z);
+  const e = new Enemy();
+  const cfgKind = kind === "goblin" || kind === "dummy" ? kind : "npc";
+  configureEnemy(e, {
+    kind: cfgKind,
+    id: `wave-${seq++}`,
+    x: spot.x,
+    z: spot.z,
+    modelId: cfgKind === "npc" ? g.defId ?? kind : undefined,
+    brain: g.brain ?? "attacks_home",
+    stats: g.level != null ? { level: g.level } : undefined,
+  });
+  e.waveNumber = Math.max(0, Math.round(waveNumber));
+  const home = homeOf(state);
+  e.targetX = home ? home.x : 0;
+  e.targetZ = home ? home.z : 0;
+  state.enemies.set(e.id, e);
+  return e;
+}
+
+/** Build a custom (dev-authored) wave: each entry → `count` units of a kind, with
+ *  an optional brain (default attacks_home) and level, fanned across the spawn arc. */
+function scheduleCustomWave(state: GameState, waveNumber: number, entries: WaveEntry[]): ScheduledGoblin[] {
+  const tuning = devTuning();
+  const home = homeOf(state);
+  const hx = home ? home.x : 0;
+  const hz = home ? home.z : 0;
+  const units: Array<{ kind: string; defId?: string; brain?: BrainId; level?: number }> = [];
+  for (const e of entries) for (let i = 0; i < e.count; i++) units.push(e);
+  const total = units.length;
+  if (total <= 0) return [];
+  const baseAng = Math.random() * Math.PI * 2;
+  const { avg, max } = playerLevelStats(state);
+  const lo = Math.max(1, Math.round(avg));
+  const hi = Math.max(lo, max) + Math.floor(waveNumber / 3);
+  const delays =
+    total === 1
+      ? [0]
+      : [
+          0,
+          tuning.waveSpawnSpreadMs,
+          ...Array.from({ length: total - 2 }, () => Math.random() * tuning.waveSpawnSpreadMs),
+        ].sort((a, b) => a - b);
+  const out: ScheduledGoblin[] = [];
+  for (let i = 0; i < total; i++) {
+    const u = units[i];
+    const ang = baseAng + (Math.random() - 0.5) * WAVE_SPAWN_ARC * 1.25;
+    const r = WAVE_SPAWN_DISTANCE * (0.78 + Math.random() * 0.44);
+    out.push({
+      delayMs: delays[i],
+      x: clampRange(hx + Math.cos(ang) * r),
+      z: clampRange(hz + Math.sin(ang) * r),
+      level: u.level ?? lo + Math.floor(Math.random() * (hi - lo + 1)),
+      kind: u.kind,
+      defId: u.defId,
+      brain: u.brain,
+    });
+  }
+  return out;
 }
 
 /** Build one wave: a horde a long march out from the home, fanned across an arc so
@@ -91,6 +162,8 @@ interface ScheduledGoblin {
  *  all at once. The first goblin is immediate, the last is +40s, and the rest land
  *  randomly between those endpoints so the final experience stays predictable. */
 function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
+  const custom = customWave(waveNumber);
+  if (custom) return scheduleCustomWave(state, waveNumber, custom); // dev-authored override
   const tuning = devTuning();
   const home = homeOf(state);
   const hx = home ? home.x : 0;
@@ -186,7 +259,7 @@ export function waveSystem(state: GameState, dt: number) {
     clock.pending.forEach((g) => (g.delayMs -= dtMs));
     const ready = clock.pending.filter((g) => g.delayMs <= 0);
     clock.pending = clock.pending.filter((g) => g.delayMs > 0);
-    ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level, clock.number));
+    ready.forEach((g) => spawnScheduled(state, g, clock.number));
   }
 
   clock.timer -= dtMs;
@@ -230,7 +303,18 @@ export function forceNextWave(state: GameState) {
   clock.pending = scheduleWave(state, clock.number);
   const ready = clock.pending.filter((g) => g.delayMs <= 0);
   clock.pending = clock.pending.filter((g) => g.delayMs > 0);
-  ready.forEach((g) => makeGoblin(state, g.x, g.z, g.level, clock.number));
+  ready.forEach((g) => spawnScheduled(state, g, clock.number));
+  clock.timer = intervalAfterWave(clock.number);
+  syncWaveState(state, clock);
+}
+
+/** Dev-only: rewind the wave counter by one (drops any queued spawns and resets
+ *  the rest timer for the new, lower wave number). No-op at wave 0. */
+export function previousWave(state: GameState) {
+  const clock = waveClocks.get(state);
+  if (!clock || clock.number <= 0) return;
+  clock.number -= 1;
+  clock.pending = [];
   clock.timer = intervalAfterWave(clock.number);
   syncWaveState(state, clock);
 }

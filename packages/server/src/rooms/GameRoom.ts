@@ -18,10 +18,12 @@ import {
   DevDeleteMessage,
   DevSetMessage,
   DevGiveItemMessage,
+  DevSetSlotMessage,
   DevTimeMessage,
   DevActionMessage,
   DevTuneMessage,
   CHAT_MAX_LEN,
+  INV_SLOTS,
   InventorySlot,
   ItemType,
   DamageEvent,
@@ -34,19 +36,12 @@ import {
   BANANA_MAX_THROW,
   STARTING_BANANAS,
   xpForLevel,
-  PLAYER_MAX_HP,
   PLAYER_MAX_STAMINA,
-  PLAYER_ATTACK,
-  PLAYER_ARMOR,
-  PLAYER_CRIT_CHANCE,
-  MOVE_SPEED,
   REALM_RESTART_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
   CRIT_MULTIPLIER,
-  BERSERKER_DURATION_MS,
   BERSERKER_SPEED_MULT,
-  BERSERKER_ATTACK_MULT,
   BERSERKER_CRIT_CHANCE_ADD,
   BERSERKER_CRIT_DAMAGE_MULT,
   BERSERKER_ARMOR_MULT,
@@ -76,13 +71,15 @@ import {
 } from "../systems/resources";
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
-import { goblinAiSystem, waveSystem, resetWaves, forceNextWave } from "../systems/goblins";
+import { goblinAiSystem, waveSystem, resetWaves, forceNextWave, previousWave } from "../systems/goblins";
 import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
 import { houseRegenSystem, noteHouseDamage, spawnHouse, type HouseRegenTimers } from "../systems/houses";
 import { healingTowerPosition } from "../systems/healingTower";
-import { loadPropObstacles } from "../systems/props";
+import { loadPropObstacles, onPropsChange } from "../systems/props";
+import { applyStructures } from "../systems/structures";
 import { loadSpawners, resetSpawners, spawnerSystem } from "../systems/spawners";
+import { loadWaves } from "../systems/waves";
 import { loadResourceDrops } from "../systems/resourceDrops";
 import { loadStructureLoot } from "../systems/structureDrops";
 import { loadEntityFeatures } from "../systems/entityFeatures";
@@ -158,8 +155,13 @@ export class GameRoom extends Room<GameState> {
   onCreate() {
     this.setState(new GameState());
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
-    loadEntityFeatures(() => applyResourceConfig(this.state));
+    onPropsChange(() => applyStructures(this.state)); // re-sync destructible structures on props edit
+    loadEntityFeatures(() => {
+      applyResourceConfig(this.state);
+      applyStructures(this.state); // per-model HP edits re-stamp every structure instance
+    });
     loadSpawners(); // dev-placed goblin spawners (+ live reload of spawners.json)
+    loadWaves(); // dev-authored custom wave compositions (+ live reload of waves.json)
     // per-kind tree/rock drop config (+ live reload of resources.json). The callback
     // re-applies the configured HP to every existing tree/rock on each edit.
     loadResourceDrops(() => applyResourceConfig(this.state));
@@ -168,6 +170,7 @@ export class GameRoom extends Room<GameState> {
     spawnTrees(this.state);
     spawnRocks(this.state);
     applyResourceConfig(this.state); // stamp configured HP onto the freshly-spawned resources
+    applyStructures(this.state); // build destructible structures from the loaded concrete props
     this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
     spawnHouse(this.state);
@@ -262,6 +265,21 @@ export class GameRoom extends Room<GameState> {
       const type = String(msg?.type || "").trim();
       if (!inv || !/^[a-z0-9_-]{1,48}$/.test(type)) return;
       addItem(inv, type, Math.max(1, Math.min(999, Math.round(Number(msg.amount) || 1))));
+      this.sendInventory(client.sessionId);
+    });
+    // Dev-only: directly overwrite one inventory slot (empty type clears it).
+    this.onMessage("dev_set_slot", (client, msg: DevSetSlotMessage) => {
+      const inv = this.inventories.get(client.sessionId);
+      const slot = Math.trunc(Number(msg?.slot));
+      if (!inv || !Number.isInteger(slot) || slot < 0 || slot >= INV_SLOTS) return;
+      const type = String(msg?.type || "").trim();
+      if (!type) {
+        inv[slot] = { type: "", count: 0 };
+      } else {
+        if (!/^[a-z0-9_-]{1,48}$/.test(type)) return;
+        const count = Math.max(1, Math.min(999, Math.round(Number(msg.count) || 1)));
+        inv[slot] = { type: type as ItemType, count };
+      }
       this.sendInventory(client.sessionId);
     });
     // Pause / set game speed: scales the simulation for everyone (0 = paused).
@@ -359,7 +377,7 @@ export class GameRoom extends Room<GameState> {
           maxHp: p.maxHp,
         });
         // Apply the berserker multipliers.
-        p.attack = p.attack * BERSERKER_ATTACK_MULT;
+        p.attack = p.attack * devTuning().berserkerAttackMult;
         p.armor = p.armor * BERSERKER_ARMOR_MULT;
         p.critChance = Math.min(1, p.critChance + BERSERKER_CRIT_CHANCE_ADD);
         const baseCrit = p.critMultiplier > 0 ? p.critMultiplier : CRIT_MULTIPLIER;
@@ -368,7 +386,7 @@ export class GameRoom extends Room<GameState> {
         const hpFraction = p.hp / p.maxHp;
         p.maxHp = Math.round(p.maxHp * BERSERKER_HP_MULT);
         p.hp = Math.min(p.maxHp, Math.round(hpFraction * p.maxHp));
-        p.berserkerMs = BERSERKER_DURATION_MS;
+        p.berserkerMs = devTuning().berserkerDurationMs;
         slot.count -= 1;
         if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
         this.sendInventory(client.sessionId);
@@ -457,10 +475,14 @@ export class GameRoom extends Room<GameState> {
           this.sendInventory(pid);
         }
       };
-      perfTracker.span("pickups", () => {
-        itemPickupSystem(this.state, dt, collect); // walk-onto a clicked item
-        autoGrabSystem(this.state, collect); // auto-collect anything nearby
-      });
+      // Skip pickups while paused: the dev's ghost roams over items but must NOT
+      // collect them. Auto-grab / walk-onto are proximity-based (no dt), so a
+      // scaled dt of 0 won't stop them — gate the whole span on the clock instead.
+      if (this.state.timeScale > 0)
+        perfTracker.span("pickups", () => {
+          itemPickupSystem(this.state, dt, collect); // walk-onto a clicked item
+          autoGrabSystem(this.state, collect); // auto-collect anything nearby
+        });
       // Tally each death the instant a player flips into the DEAD state (any cause).
       this.state.players.forEach((p) => {
         const dead = p.state === AnimState.DEAD;
@@ -627,13 +649,14 @@ export class GameRoom extends Room<GameState> {
       // back to a brand-new level-1 character (the schema defaults)
       p.level = 1;
       p.xp = 0;
-      p.maxHp = PLAYER_MAX_HP;
+      const tune = devTuning();
+      p.maxHp = tune.playerMaxHp;
       p.maxStamina = PLAYER_MAX_STAMINA;
       p.stamina = PLAYER_MAX_STAMINA;
-      p.attack = PLAYER_ATTACK;
-      p.armor = PLAYER_ARMOR;
-      p.critChance = PLAYER_CRIT_CHANCE;
-      p.moveSpeed = MOVE_SPEED;
+      p.attack = tune.playerAttack;
+      p.armor = tune.playerArmor;
+      p.critChance = tune.playerCritChance;
+      p.moveSpeed = tune.playerMoveSpeed;
       p.throwPower = 1;
       p.godMode = false;
       p.berserkerMs = 0;
@@ -685,8 +708,17 @@ export class GameRoom extends Room<GameState> {
       case "force_next_wave":
         forceNextWave(this.state);
         break;
+      case "previous_wave":
+        previousWave(this.state);
+        break;
       case "kill_all_enemies":
         this.state.enemies.clear();
+        break;
+      case "kick_players":
+        // Disconnect everyone except the dev issuing the command.
+        for (const c of this.clients.slice()) {
+          if (c.sessionId !== client.sessionId) c.leave();
+        }
         break;
       case "level_up_player": {
         const p = this.state.players.get(client.sessionId);
@@ -763,6 +795,15 @@ export class GameRoom extends Room<GameState> {
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
       p.hue = Math.floor(Math.random() * 360);
+      // Fresh (non-restored) joiners pick up the current tuned starting stats,
+      // so Gameplay Options changes apply live without a server restart.
+      const tune = devTuning();
+      p.maxHp = tune.playerMaxHp;
+      p.hp = tune.playerMaxHp;
+      p.attack = tune.playerAttack;
+      p.armor = tune.playerArmor;
+      p.critChance = tune.playerCritChance;
+      p.moveSpeed = tune.playerMoveSpeed;
     }
 
     this.state.players.set(client.sessionId, p);

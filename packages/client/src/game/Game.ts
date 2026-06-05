@@ -21,6 +21,7 @@ import {
   Banana,
   Item,
   House,
+  Structure,
   AnimState,
   DamageEvent,
   KillEvent,
@@ -181,6 +182,10 @@ export class Game {
   private houses = new Map<string, { hp: number; maxHp: number; alive: boolean; anchor: TransformNode; visual?: TransformNode; meshes?: AbstractMesh[] }>();
   private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
   private housePickable = false;
+  // Destructible concrete structures (the prop is the visual; this tracks HP + the
+  // floating HP bar). On destroy we hide the prop via the prop manager.
+  private structures = new Map<string, { hp: number; maxHp: number; anchor: TransformNode }>();
+  private structureProps: { get(id: string): { loaded: { root: TransformNode } } | undefined } | null = null;
   private healingCircle: SacredCircleFx | null = null;
   private thrown: ThrownBanana[] = [];
   private particleFx: ParticleFx[] = []; // expiring banana trails/puffs
@@ -551,6 +556,47 @@ export class Game {
     tree.dispose();
     this.trees.delete(id);
     this.footprints.remove("tree", id);
+  }
+
+  // ---- destructible structure callbacks (concrete props with HP) ----
+  /** Wire the prop manager so a destroyed structure can hide its prop visual. */
+  setStructureProps(pm: { get(id: string): { loaded: { root: TransformNode } } | undefined }) {
+    this.structureProps = pm;
+  }
+
+  private setPropVisible(id: string, on: boolean) {
+    this.structureProps?.get(id)?.loaded.root.setEnabled(on);
+  }
+
+  addStructure(s: Structure, id: string): void {
+    this.setPropVisible(id, true); // (re)show in case it was a destroyed instance coming back
+    if (this.structures.has(id)) return this.changeStructure(s, id);
+    const scene = this.camera.getScene();
+    const anchor = new TransformNode(`structBar-${id}`, scene);
+    anchor.position.set(s.x, Math.max(3, s.radius * 1.6), s.z);
+    const sm = { hp: s.hp, maxHp: s.maxHp, anchor };
+    this.structures.set(id, sm);
+    this.hud.addResource(id, anchor, () => sm.hp, () => sm.maxHp, "#d98c54");
+    this.upsertCircleFootprint("structure", id, s.x, s.z, Math.max(1, s.radius), PICK_PRIORITY.resource, s.alive && s.hp > 0);
+  }
+
+  changeStructure(s: Structure, id: string): void {
+    const sm = this.structures.get(id);
+    if (!sm) return this.addStructure(s, id);
+    sm.hp = s.hp;
+    sm.maxHp = s.maxHp;
+    sm.anchor.position.set(s.x, Math.max(3, s.radius * 1.6), s.z);
+    this.upsertCircleFootprint("structure", id, s.x, s.z, Math.max(1, s.radius), PICK_PRIORITY.resource, s.alive && s.hp > 0);
+    if (!s.alive) this.setPropVisible(id, false); // destroyed → hide the prop visual
+  }
+
+  removeStructure(id: string) {
+    const sm = this.structures.get(id);
+    if (!sm) return;
+    this.hud.remove(id);
+    sm.anchor.dispose();
+    this.structures.delete(id);
+    this.footprints.remove("structure", id);
   }
 
   // ---- log callbacks ----

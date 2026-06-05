@@ -958,6 +958,18 @@ const DEV_TUNING_CONSTANTS: Record<string, { name: string; min: number; max: num
   goblinHouseDamage: { name: "GOBLIN_HOUSE_DAMAGE", min: 0, max: 1_000 },
   damageDivisor: { name: "DAMAGE_DIVISOR", min: 0.1, max: 100 },
   playerRespawnMs: { name: "PLAYER_RESPAWN_MS", min: 0, max: 120_000, integer: true },
+  playerMaxHp: { name: "PLAYER_MAX_HP", min: 1, max: 100_000, integer: true },
+  playerAttack: { name: "PLAYER_ATTACK", min: 0, max: 100_000 },
+  playerArmor: { name: "PLAYER_ARMOR", min: 0, max: 100_000 },
+  playerCritChance: { name: "PLAYER_CRIT_CHANCE", min: 0, max: 1 },
+  playerMoveSpeed: { name: "MOVE_SPEED", min: 0.1, max: 100 },
+  sprintSpeedMult: { name: "SPRINT_SPEED_MULT", min: 1, max: 10 },
+  enemyMaxHp: { name: "GOBLIN_MAX_HP", min: 1, max: 100_000, integer: true },
+  enemyAttack: { name: "GOBLIN_ATTACK", min: 0, max: 100_000 },
+  enemyMoveSpeed: { name: "GOBLIN_CHASE_SPEED", min: 0, max: 100 },
+  berserkerAttackMult: { name: "BERSERKER_ATTACK_MULT", min: 1, max: 50 },
+  berserkerDurationMs: { name: "BERSERKER_DURATION_MS", min: 0, max: 600_000, integer: true },
+  dropRateMult: { name: "DROP_RATE_MULT", min: 0, max: 10 },
 };
 
 function formatConstantValue(value: number, integer?: boolean): string {
@@ -1030,6 +1042,7 @@ interface Placement {
 const charsPathFor = (root: string) => resolve(root, "public/characters.json");
 const npcsPathFor = (root: string) => resolve(root, "public/npcs.json");
 const spawnersPathFor = (root: string) => resolve(root, "public/spawners.json");
+const wavesPathFor = (root: string) => resolve(root, "public/waves.json");
 const resourcesPathFor = (root: string) => resolve(root, "public/resources.json");
 const structuresPathFor = (root: string) => resolve(root, "public/structures.json");
 const entityFeaturesPathFor = (root: string) => resolve(root, "public/entity-features.json");
@@ -1674,6 +1687,25 @@ function modelImporter(): Plugin {
               list.filter((x) => x.id !== id && x.ownerId !== ownerId),
             );
             sendJson(res, { ok: true });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
+      // ======== Custom wave compositions (dev-authored per-wave overrides) ========
+      server.middlewares.use("/__waves/list", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        sendJson(res, readJsonArray<Record<string, unknown>>(wavesPathFor(root)));
+      });
+      server.middlewares.use("/__waves/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const arr = JSON.parse(buf.toString("utf8") || "[]");
+            if (!Array.isArray(arr)) return fail(res, 400, "expected an array of waves");
+            writeJsonArray(wavesPathFor(root), arr as unknown[]);
+            sendJson(res, { ok: true, count: arr.length });
           } catch (e) {
             fail(res, 500, String(e));
           }

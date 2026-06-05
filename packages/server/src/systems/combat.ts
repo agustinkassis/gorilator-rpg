@@ -5,6 +5,7 @@ import {
   Tree,
   Rock,
   House,
+  Structure,
   AnimState,
   DamageEvent,
   KillEvent,
@@ -37,11 +38,12 @@ import {
 import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 import { devTuning } from "./devTuning";
+import { destroyPropObstacle } from "./props";
 
 /** Anything that can be attacked or repaired by a player. */
-type Target = Player | Enemy | Tree | Rock | House;
+type Target = Player | Enemy | Tree | Rock | House | Structure;
 /** Damageable targets all have hp + armor. Houses are repaired instead. */
-type Damageable = Player | Enemy | Tree | Rock;
+type Damageable = Player | Enemy | Tree | Rock | Structure;
 
 /** Sink for damage events so the room can broadcast floating numbers to clients. */
 export type EmitDamage = (ev: DamageEvent) => void;
@@ -80,7 +82,8 @@ function resolveTarget(state: GameState, id: string): Target | undefined {
     state.enemies.get(id) ??
     state.trees.get(id) ??
     state.rocks.get(id) ??
-    state.houses.get(id)
+    state.houses.get(id) ??
+    state.structures.get(id)
   );
 }
 
@@ -88,7 +91,7 @@ function resolveTarget(state: GameState, id: string): Target | undefined {
  *  not the centre, so the reach must include it. Other targets are points. */
 function targetRadius(t: Target): number {
   const r = (t as { radius?: number }).radius;
-  if (t instanceof House) return typeof r === "number" ? r : 0;
+  if (t instanceof House || t instanceof Structure) return typeof r === "number" ? r : 0;
   // Rocks carry a radius; use a fraction of it so the player walks right up to
   // the boulder to mine it (and ends up amid the stones it drops).
   return typeof r === "number" ? r * ROCK_COLLISION_SCALE : 0;
@@ -257,7 +260,7 @@ function connectHit(
   const tree = state.trees.get(targetId);
   if (tree) {
     // every chop has a chance to shake a banana loose
-    if (Math.random() < TREE_BANANA_DROP_CHANCE) spawnBanana(state, tree.x, tree.z);
+    if (Math.random() < TREE_BANANA_DROP_CHANCE * devTuning().dropRateMult) spawnBanana(state, tree.x, tree.z);
     onTreeDamaged(state, tree, amount); // progressive-drop trees shed as they're chopped
     if (tree.hp <= 0) {
       onTreeCut(state, tree); // kill-drop trees yield their full amount here
@@ -271,6 +274,18 @@ function connectHit(
     if (rock.hp <= 0) {
       onRockMined(state, rock); // kill-drop rocks yield their full amount here
       grantXp(attacker, killXp(state, targetId), emitXp); // mining a rock grants XP
+    }
+    return;
+  }
+  const structure = state.structures.get(targetId);
+  if (structure) {
+    applyDamageDrops(state, structure, "structure", targetId, structure.modelId, structure.x, structure.z, structure.maxHp, amount, 1.5);
+    if (structure.hp <= 0) {
+      structure.alive = false;
+      dropEntityLoot(state, "structure", targetId, structure.modelId, structure.x, structure.z, 1.5); // kill-drop loot
+      grantXp(attacker, killXp(state, targetId), emitXp);
+      destroyPropObstacle(targetId); // rubble is walkable
+      state.structures.delete(targetId);
     }
     return;
   }
