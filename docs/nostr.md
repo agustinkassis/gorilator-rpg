@@ -15,6 +15,9 @@ the discovery event with that key, so it must stay stable across restarts.
 A challenge-response so the server trusts your pubkey (and, optionally, your
 name/avatar) without ever seeing your secret key (the browser signs via NIP-07).
 
+> **Authentication deep-dive:** for the full verification details and the separate
+> admin HTTP auth (NIP-98), see [nostr-auth.md](nostr-auth.md).
+
 ```
 client                                    server
   │  GET /nostr/challenge                   │

@@ -28,6 +28,7 @@ import {
   printSection,
   readEnvInfo,
 } from "../lib/summary.js";
+import { fetchUpdateStatus } from "../lib/updateStatus.js";
 
 export async function startCmd(ctx?: RuntimeContext, opts?: Options): Promise<void> {
   if (ctx?.kind === "project") {
@@ -119,6 +120,7 @@ export async function statusCmd(ctx?: RuntimeContext, opts?: Options): Promise<v
     printPorts(info, healthy);
     process.stdout.write("\n");
     printPackageVersions(cfg.appDir, { heading: true });
+    if (healthy) await printUpdateLine(info.port);
     printPublic(info, { heading: true });
   } else {
     process.stdout.write("\n");
@@ -131,4 +133,18 @@ export async function statusCmd(ctx?: RuntimeContext, opts?: Options): Promise<v
 function requireOptions(opts: Options | undefined): Options {
   if (!opts) log.die("Internal error: project commands require resolved options.");
   return opts;
+}
+
+/** Ask the running daemon (/api/update) whether a newer release exists and print
+ *  a one-line verdict. Best-effort: prints nothing if the endpoint is missing
+ *  (older server) or unreachable. */
+async function printUpdateLine(port: number): Promise<void> {
+  const u = await fetchUpdateStatus(port);
+  if (!u) return;
+  if (u.updateAvailable && u.latest) {
+    printField("Update", `${log.yellow(`⬆ ${u.latest.tag} available`)} — run 'gorilator update'`);
+    process.stdout.write(`  ${" ".repeat(11)}  ${log.dim(u.latest.url)}\n`);
+  } else if (u.enabled) {
+    printField("Update", u.error ? log.dim("(check failed)") : log.green("up to date"));
+  }
 }

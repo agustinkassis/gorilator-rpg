@@ -1,8 +1,22 @@
 import { SimplePool } from "nostr-tools/pool";
 import { npubEncode } from "nostr-tools/nip19";
+import { getToken } from "nostr-tools/nip98";
 import { SERVER_PORT, NOSTR_SAVE_KIND, saveDTag, PlayerSave } from "@rpg/shared";
 
 export type { PlayerSave };
+
+/**
+ * Build a NIP-98 `Authorization: Nostr …` header for an HTTP request, signed by
+ * the connected NIP-07 extension. Used to call the server's protected
+ * /api/admin/* endpoints. Throws if no extension is available.
+ */
+export async function nip98AuthHeader(url: string, method: string): Promise<string> {
+  const signer = window.nostr;
+  if (!signer) throw new Error("no Nostr extension");
+  // getToken signs a kind-27235 event tagging the URL + method; the `true` flag
+  // prefixes the returned token with the "Nostr " auth scheme.
+  return getToken(url, method, (e) => signer.signEvent(e), true);
+}
 
 /** A signed Nostr event (NIP-01 shape). */
 export interface NostrEvent {
