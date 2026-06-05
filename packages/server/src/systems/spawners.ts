@@ -4,7 +4,7 @@ import { GameState, AnimState, Enemy, SpawnRuleConfig } from "@rpg/shared";
 import { makeGoblin } from "./goblins";
 import { configureEnemy } from "./enemyConfig";
 import { devSpawn } from "./devEdit";
-import { propPosition } from "./props";
+import { propPosition, concreteProps } from "./props";
 
 /**
  * Dev-placed spawners: objects (a house, a prop, …) that spawn goblins on a timer.
@@ -127,25 +127,38 @@ export function resetSpawners(): void {
   for (const s of spawners) timers.set(s.id, s.intervalMs);
 }
 
-/** Tick every spawner; spawn at its owner structure when due + under its cap. */
+/** Tick every spawner; spawn at each owner when due + under its cap. A spawner
+ *  whose ownerId is a MODEL path acts as a per-model template: it spawns from
+ *  EVERY concrete prop of that model, so a newly-placed structure inherits it. */
 export function spawnerSystem(state: GameState, dt: number): void {
   if (!spawners.length || dt <= 0) return; // paused (dt 0) freezes spawning
   const dtMs = dt * 1000;
   for (const s of spawners) {
-    const pos = ownerPosition(state, s.ownerId);
-    if (!pos) {
-      timers.set(s.id, s.intervalMs);
-      continue;
+    for (const tgt of spawnerTargets(state, s)) {
+      const key = `${s.id}:${tgt.id}`; // per-owner timer/cap (one template → many props)
+      let t = (timers.get(key) ?? s.intervalMs) - dtMs;
+      if (t <= 0) {
+        if (liveCountFor(state, key) < s.cap) spawnFrom(state, s, tgt, key);
+        t = s.intervalMs;
+      }
+      timers.set(key, t);
     }
-    let t = (timers.get(s.id) ?? s.intervalMs) - dtMs;
-    if (t <= 0) {
-      let live = 0;
-      live = liveCount(state, s);
-      if (live < s.cap) spawnFrom(state, s, pos);
-      t = s.intervalMs;
-    }
-    timers.set(s.id, t);
   }
+}
+
+interface SpawnTarget {
+  id: string;
+  x: number;
+  z: number;
+}
+
+/** Where a spawner spawns from: every concrete prop of the owner MODEL (template),
+ *  else the single owner entity by id. */
+function spawnerTargets(state: GameState, s: SpawnerRule): SpawnTarget[] {
+  const byModel = concreteProps().filter((c) => c.model === s.ownerId);
+  if (byModel.length) return byModel.map((c) => ({ id: c.id, x: c.x, z: c.z }));
+  const pos = ownerPosition(state, s.ownerId);
+  return pos ? [{ id: s.ownerId, x: pos.x, z: pos.z }] : [];
 }
 
 function ownerPosition(state: GameState, ownerId: string): { x: number; z: number } | null {
@@ -161,19 +174,19 @@ function ownerPosition(state: GameState, ownerId: string): { x: number; z: numbe
   return null;
 }
 
-function liveCount(state: GameState, s: SpawnerRule): number {
+function liveCountFor(state: GameState, key: string): number {
   let live = 0;
   state.enemies.forEach((e) => {
-    if (e.spawnerId === s.id && e.state !== AnimState.DEAD) live++;
+    if (e.spawnerId === key && e.state !== AnimState.DEAD) live++;
   });
   return live;
 }
 
-function spawnFrom(state: GameState, s: SpawnerRule, pos: { x: number; z: number }): void {
+function spawnFrom(state: GameState, s: SpawnerRule, pos: SpawnTarget, key: string): void {
   const type = String(s.type || "goblin");
   if (type === "goblin" && !s.modelId && !s.brain && !s.stats) {
     const g = makeGoblin(state, pos.x, pos.z);
-    g.spawnerId = s.id;
+    g.spawnerId = key;
     return;
   }
   if (type === "goblin" || type === "dummy" || type === "npc" || type === "character" || s.modelId) {
@@ -189,7 +202,7 @@ function spawnFrom(state: GameState, s: SpawnerRule, pos: { x: number; z: number
       brain: s.brain,
       stats: s.stats,
     });
-    e.spawnerId = s.id;
+    e.spawnerId = key;
     e.aggroRadius = s.aggroRadius || 0;
     e.atkCooldownMs = s.attackCooldownMs || 0;
     e.houseDamage = s.houseDamage || 0;

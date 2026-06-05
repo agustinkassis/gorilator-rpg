@@ -325,5 +325,22 @@ export function devSet(
     }
     return false;
   }
+  if (kind === "structure") {
+    const s = state.structures.get(id);
+    if (!s) return false;
+    if (field === "maxHp") {
+      const v = Math.max(0, Math.round(Number(value) || 0));
+      s.maxHp = v;
+      s.hp = v; // refill to the new HP (0 = indestructible, combat reduces but never kills)
+      s.alive = true;
+      return true;
+    }
+    if (field === "alive") {
+      s.alive = !!value;
+      s.hp = s.alive ? s.maxHp : 0;
+      return true;
+    }
+    return false;
+  }
   return false;
 }

@@ -1167,12 +1167,14 @@ new GameMenu({
 // Imported-prop registry (loads props.json into the world). In dev builds it also
 // backs Dev Mode, the in-game world editor (toggle with the button or ` backtick).
 const propManager = new PropManager(scene, shadow);
+game.setStructureProps(propManager); // destroyed structures hide their prop visual
 // Placed custom characters (imported Meshy zips) — loads npcs.json + renders them.
 const characterManager = new CharacterManager(scene, shadow);
 minimap.setProps(propManager); // so the map can icon imported trees/rocks/concrete props
 const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
 devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
 devMode?.setGame(game); // library explorer can select + camera-focus world entities
+devMode?.setInventoryUI(inventory); // Dev Mode: click an inventory slot to set its item/qty
 
 setupClickToMove({
   scene,
@@ -1342,6 +1344,9 @@ async function start() {
     onHouseAdd: (h, id) => game.addHouse(h, id),
     onHouseChange: (h, id) => game.changeHouse(h, id),
     onHouseRemove: (id) => game.removeHouse(id),
+    onStructureAdd: (s, id) => game.addStructure(s, id),
+    onStructureChange: (s, id) => game.changeStructure(s, id),
+    onStructureRemove: (id) => game.removeStructure(id),
     onBananaThrow: (ev) => game.showBananaThrow(ev),
     onDamage: (ev) => game.onDamage(ev),
     onKill: (ev) => game.onKill(ev),
@@ -1453,6 +1458,8 @@ if (import.meta.env.DEV) {
     playClip: (state) => game.playAnimationTestClip(state),
     clearClip: () => game.clearAnimationTestClip(),
   });
+  devMode?.setAnimationTester(animationTester);
+  devMode?.setCharacterImporter(characterImporter); // Library "Add Character" opens it
   devMode?.onVisibilityChange((on) => {
     document.body.classList.toggle("devMode", on);
     characterImporter.setVisible(on);

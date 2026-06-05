@@ -139,8 +139,8 @@ export const DUMMY_CRIT_CHANCE = 0.05;
 export const GOBLIN_COUNT = 8; // starting goblin seed (centre guardian + a pack or two); the spawner ramps the rest up to the live cap
 export const GOBLIN_PACK_SIZE = 3; // goblins spawn in clustered packs of this many
 export const GOBLIN_PACK_SPREAD = 5; // pack-mates spawn within this radius of the pack centre
-export const GOBLIN_MAX_HP = 45;
-export const GOBLIN_ATTACK = 70; // −10% (was 78) → ~7 dmg/hit after player armor & DAMAGE_DIVISOR
+export const GOBLIN_MAX_HP = 31;
+export const GOBLIN_ATTACK = 49; // −10% (was 78) → ~7 dmg/hit after player armor & DAMAGE_DIVISOR
 export const GOBLIN_ARMOR = 8;
 export const GOBLIN_CRIT_CHANCE = 0; // (goblin hits on players don't crit)
 export const GOBLIN_PATROL_SPEED = 2.0; // units/s while wandering
@@ -177,11 +177,11 @@ export const WAVE_SPAWN_SPREAD_MS = 30000; // a wave drips in over this window (
 export const WAVE_MARCH_SECONDS = 30; // a wave spawns this many seconds' walk from home...
 export const WAVE_SPAWN_DISTANCE = GOBLIN_CHASE_SPEED * WAVE_MARCH_SECONDS; // ...i.e. this far out (≈108u)
 export const WAVE_SPAWN_ARC = Math.PI * 0.7; // the horde fans out across this arc (approaches from ~one side)
-export const WAVE_SIZE_BASE = 4; // goblins in the first wave...
+export const WAVE_SIZE_BASE = 3; // goblins in the first wave...
 export const WAVE_SIZE_PER_PLAYER = 2; // ...plus this many per live defender...
 export const WAVE_SIZE_PER_WAVE = 1; // ...plus this many more each successive wave (escalation)
-export const WAVE_SIZE_MAX = 25; // hard cap on a single wave
-export const GOBLIN_LIVE_CAP = 50; // hold the next wave while this many goblins are already alive (perf + fairness)
+export const WAVE_SIZE_MAX = 18; // hard cap on a single wave
+export const GOBLIN_LIVE_CAP = 35; // hold the next wave while this many goblins are already alive (perf + fairness)
 export const GOBLIN_HOUSE_DAMAGE = 5; // flat HP a goblin's hit chips off the house
 export const HOUSE_REPAIR_MIN_HP = 5; // HP restored by one log, lower roll
 export const HOUSE_REPAIR_MAX_HP = 15; // HP restored by one log, upper roll
@@ -193,6 +193,7 @@ export const PICKUP_RADIUS = 1.3; // how close you must walk to grab one
 export const POTION_RESPAWN_MS = 7000; // delay before a collected potion is replaced
 export const GOBLIN_POTION_DROP_CHANCE = 0.6; // a slain goblin drops a health potion this often
 export const GOBLIN_BERSERKER_POTION_DROP_CHANCE = 0.16; // rare berserker flask drop from slain goblins
+export const DROP_RATE_MULT = 1; // global multiplier on ALL drop chances (Dev Mode → Resources)
 export const AMBIENT_ITEM_SPAWN_CLEAR_RADIUS = 24; // random pickups stay out of the central player spawn ring
 
 // Trees are choppable resources scattered across the map.
@@ -225,6 +226,10 @@ export const HOUSE_REGEN_FULL_MS = 15_000; // once healing begins, the house is 
 export const HOUSE_REGEN_START_PER_SEC = 4;
 export const HOUSE_REGEN_RATE_STEP_PER_SEC = 4;
 export const HOUSE_REGEN_MAX_PER_SEC = 20;
+// Concrete props become destructible "structures" with this default HP (per-model
+// override via entityFeatures). XP awarded for destroying one.
+export const STRUCTURE_HP = 200;
+export const STRUCTURE_XP_REWARD = 20;
 export const TOWER_PROP_NAME = "Meshy_AI_Timberstone_Tow";
 export const SACRED_CIRCLE_RADIUS = 8;
 export const SACRED_CIRCLE_HEAL_PER_SEC_MIN = 3;

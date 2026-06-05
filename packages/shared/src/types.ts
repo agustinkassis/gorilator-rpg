@@ -140,6 +140,14 @@ export interface DevGiveItemMessage {
   amount?: number;
 }
 
+/** Dev-only: overwrite a specific inventory slot with an item + count
+ *  (empty `type` clears the slot). */
+export interface DevSetSlotMessage {
+  slot: number;
+  type: string;
+  count: number;
+}
+
 /** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */
 export interface DevTimeMessage {
   scale: number;
@@ -148,7 +156,9 @@ export interface DevTimeMessage {
 export type DevActionId =
   | "reset_realm"
   | "force_next_wave"
+  | "previous_wave"
   | "kill_all_enemies"
+  | "kick_players"
   | "level_up_player";
 
 /** Trigger one high-level dev-only gameplay action. */
@@ -176,7 +186,19 @@ export type DevTuningKey =
   | "enemyDeaggroRadius"
   | "goblinHouseDamage"
   | "damageDivisor"
-  | "playerRespawnMs";
+  | "playerRespawnMs"
+  | "playerMaxHp"
+  | "playerAttack"
+  | "playerArmor"
+  | "playerCritChance"
+  | "playerMoveSpeed"
+  | "sprintSpeedMult"
+  | "enemyMaxHp"
+  | "enemyAttack"
+  | "enemyMoveSpeed"
+  | "berserkerAttackMult"
+  | "berserkerDurationMs"
+  | "dropRateMult";
 
 /** Runtime-only dev tuning override for gameplay constants. */
 export interface DevTuneMessage {
@@ -205,6 +227,7 @@ export type ClientMessages = {
   dev_delete: DevDeleteMessage;
   dev_set: DevSetMessage;
   dev_give_item: DevGiveItemMessage;
+  dev_set_slot: DevSetSlotMessage;
   dev_time: DevTimeMessage;
   dev_action: DevActionMessage;
   dev_tune: DevTuneMessage;

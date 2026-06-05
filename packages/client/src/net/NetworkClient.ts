@@ -12,6 +12,7 @@ import {
   Banana,
   Item,
   House,
+  Structure,
   DamageEvent,
   KillEvent,
   HealEvent,
@@ -58,6 +59,9 @@ export interface NetHandlers {
   onHouseAdd(h: House, id: string): void;
   onHouseChange(h: House, id: string): void;
   onHouseRemove(id: string): void;
+  onStructureAdd(s: Structure, id: string): void;
+  onStructureChange(s: Structure, id: string): void;
+  onStructureRemove(id: string): void;
   onBananaThrow(ev: BananaThrowEvent): void;
   onDamage(ev: DamageEvent): void;
   onHeal(ev: HealEvent): void;
@@ -286,6 +290,21 @@ export class NetworkClient {
         handlers.onHouseRemove(id);
       });
 
+      phase = "bind structures";
+      const seenStructures = new Set<string>();
+      const bindStructure = (s: Structure, id: string) => {
+        if (seenStructures.has(id)) return;
+        seenStructures.add(id);
+        handlers.onStructureAdd(s, id);
+        $(s).onChange(() => handlers.onStructureChange(s, id));
+      };
+      $(room.state).structures.onAdd(bindStructure);
+      room.state.structures?.forEach((s, id) => bindStructure(s, id));
+      $(room.state).structures.onRemove((_s, id) => {
+        seenStructures.delete(id);
+        handlers.onStructureRemove(id);
+      });
+
       phase = "bind messages";
       room.onMessage("damage", (ev: DamageEvent) => handlers.onDamage(ev));
       room.onMessage("kill", (ev: KillEvent) => handlers.onKill(ev));
@@ -387,6 +406,11 @@ export class NetworkClient {
   /** Grant an item stack to the local player's inventory. */
   sendDevGiveItem(type: string, amount = 1) {
     this.room?.send("dev_give_item", { type, amount });
+  }
+
+  /** Dev-only: overwrite a specific inventory slot (empty type clears it). */
+  sendDevSetSlot(slot: number, type: string, count: number) {
+    this.room?.send("dev_set_slot", { slot, type, count });
   }
 
   /** Set the simulation speed (1 = normal, 0 = paused, 2 = double, …). */

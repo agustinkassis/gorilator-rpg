@@ -20,6 +20,18 @@ import {
   GOBLIN_HOUSE_DAMAGE,
   DAMAGE_DIVISOR,
   PLAYER_RESPAWN_MS,
+  PLAYER_MAX_HP,
+  PLAYER_ATTACK,
+  PLAYER_ARMOR,
+  PLAYER_CRIT_CHANCE,
+  MOVE_SPEED,
+  SPRINT_SPEED_MULT,
+  GOBLIN_MAX_HP,
+  GOBLIN_ATTACK,
+  GOBLIN_CHASE_SPEED,
+  BERSERKER_ATTACK_MULT,
+  BERSERKER_DURATION_MS,
+  DROP_RATE_MULT,
 } from "@rpg/shared";
 
 export type DevTuningValues = Record<DevTuningKey, number>;
@@ -45,6 +57,18 @@ export const devTuningDefaults: DevTuningValues = {
   goblinHouseDamage: GOBLIN_HOUSE_DAMAGE,
   damageDivisor: DAMAGE_DIVISOR,
   playerRespawnMs: PLAYER_RESPAWN_MS,
+  playerMaxHp: PLAYER_MAX_HP,
+  playerAttack: PLAYER_ATTACK,
+  playerArmor: PLAYER_ARMOR,
+  playerCritChance: PLAYER_CRIT_CHANCE,
+  playerMoveSpeed: MOVE_SPEED,
+  sprintSpeedMult: SPRINT_SPEED_MULT,
+  enemyMaxHp: GOBLIN_MAX_HP,
+  enemyAttack: GOBLIN_ATTACK,
+  enemyMoveSpeed: GOBLIN_CHASE_SPEED,
+  berserkerAttackMult: BERSERKER_ATTACK_MULT,
+  berserkerDurationMs: BERSERKER_DURATION_MS,
+  dropRateMult: DROP_RATE_MULT,
 };
 
 const rules: Record<DevTuningKey, { min: number; max: number; integer?: boolean }> = {
@@ -68,6 +92,18 @@ const rules: Record<DevTuningKey, { min: number; max: number; integer?: boolean 
   goblinHouseDamage: { min: 0, max: 1_000 },
   damageDivisor: { min: 0.1, max: 100 },
   playerRespawnMs: { min: 0, max: 120_000, integer: true },
+  playerMaxHp: { min: 1, max: 100_000, integer: true },
+  playerAttack: { min: 0, max: 100_000 },
+  playerArmor: { min: 0, max: 100_000 },
+  playerCritChance: { min: 0, max: 1 },
+  playerMoveSpeed: { min: 0.1, max: 100 },
+  sprintSpeedMult: { min: 1, max: 10 },
+  enemyMaxHp: { min: 1, max: 100_000, integer: true },
+  enemyAttack: { min: 0, max: 100_000 },
+  enemyMoveSpeed: { min: 0, max: 100 },
+  berserkerAttackMult: { min: 1, max: 50 },
+  berserkerDurationMs: { min: 0, max: 600_000, integer: true },
+  dropRateMult: { min: 0, max: 10 },
 };
 
 let current: DevTuningValues = { ...devTuningDefaults };

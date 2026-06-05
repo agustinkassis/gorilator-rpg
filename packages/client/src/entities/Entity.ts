@@ -34,8 +34,12 @@ const CORPSE_FADE = 0.9; // seconds to fade the corpse to nothing
 const SELECT_FLASH_MS = 0.6; // total duration of the select flash
 const SELECT_BLINK_MS = 0.1; // overlay toggles every this long → "flash, flash, flash"
 const DMG_BLINK_MS = 0.08; // local player's dark-red damage flash toggles this fast
-const GHOST_FLOAT = 0.5; // units a paused "ghost" player floats off the floor (~1ft+)
+const GHOST_FLOAT = 0.65; // units a paused "ghost" player floats off the floor (0.5 + 30%)
 const GHOST_VISIBILITY = 0.7; // translucency of a ghosting player
+const GHOST_BOB_AMPL = 0.08; // how far the ghost drifts up/down around its float height
+const GHOST_BOB_HZ = 0.6; // gentle bob cycles per second
+const GHOST_FLY_TILT = 0.6; // radians the ghost pitches forward when flying (~34°)
+const GHOST_FLY_MIN_SPEED = 0.3; // units/sec of motion before the flight tilt kicks in
 
 /**
  * Client-side view of one networked character (player or dummy). Interpolates
@@ -78,6 +82,7 @@ export class Entity {
   private facingY = 0;
   private yawFix = 0; // current (blended) clip-orientation correction
   private yawFixTarget = 0; // correction the current clip wants
+  private ghostTilt = 0; // blended forward pitch while ghost-flying
   // Real-motion tracking, so a body that isn't actually translating (stuck on
   // geometry, blocked, or arrived) stands in IDLE rather than walking in place.
   private lastX = 0;
@@ -170,6 +175,10 @@ export class Entity {
     this.ghost = on;
     this.setVisibility(on ? GHOST_VISIBILITY : 1);
     this.root.position.y = on ? GHOST_FLOAT : 0;
+    if (!on) {
+      this.ghostTilt = 0;
+      this.root.rotation.x = 0; // drop the flight pitch back upright
+    }
   }
 
   /** Snap to a position with no interpolation (used on spawn). */
@@ -287,6 +296,13 @@ export class Entity {
     this.root.position.x = Scalar.Lerp(this.root.position.x, this.targetX, f);
     this.root.position.z = Scalar.Lerp(this.root.position.z, this.targetZ, f);
 
+    // Ghost free-roam: gently bob up and down around the float height so the
+    // paused local player visibly hovers rather than sitting at a fixed offset.
+    if (this.ghost) {
+      this.root.position.y =
+        GHOST_FLOAT + Math.sin(this.stateTime * GHOST_BOB_HZ * Math.PI * 2) * GHOST_BOB_AMPL;
+    }
+
     // Measure real motion (smoothed units/sec) and re-pick the clip, so a body
     // that has stopped translating drops out of WALK into IDLE.
     const dx = this.root.position.x - this.lastX;
@@ -357,6 +373,21 @@ export class Entity {
     // in at ~the animation cross-fade rate so attack/throw don't snap-turn.
     this.facingY = lerpAngle(this.facingY, this.targetRotY, smooth(dt, 0.05));
     this.yawFix = Scalar.Lerp(this.yawFix, this.yawFixTarget, smooth(dt, 0.12));
+
+    // Ghost flight: while drifting, face the direction of travel and pitch the
+    // body forward like Superman flying. The moment the ghost stops (or leaves
+    // ghost mode) it levels back out promptly and settles exactly upright.
+    const flying = this.ghost && this.moveSpeed > GHOST_FLY_MIN_SPEED;
+    let tiltTarget = 0;
+    if (flying) {
+      const heading = Math.atan2(dx, dz) * this.yawSign; // root forward is +Z
+      this.facingY = lerpAngle(this.facingY, heading, smooth(dt, 0.08));
+      tiltTarget = GHOST_FLY_TILT;
+    }
+    // Ease into the lean, but snap back upright faster when stopping.
+    this.ghostTilt = Scalar.Lerp(this.ghostTilt, tiltTarget, smooth(dt, flying ? 0.12 : 0.05));
+    if (!flying && this.ghostTilt < 0.01) this.ghostTilt = 0; // fully level when at rest
+    this.root.rotation.x = this.ghostTilt;
     this.root.rotation.y = this.facingY + this.yawFix;
 
     if (!this.spawned.hasAnims) this.spawned.pose?.(this.state, this.stateTime);

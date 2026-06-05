@@ -19,6 +19,7 @@ import {
   statsForLevel,
 } from "@rpg/shared";
 import { entityBrain, entityFeature, entityStats } from "./entityFeatures";
+import { devTuning } from "./devTuning";
 
 const KIND_DEFAULTS: Record<string, {
   level: number;
@@ -84,7 +85,19 @@ export function configureEnemy(
   },
 ): Enemy {
   const kind = opts.kind || "dummy";
-  const defaults = KIND_DEFAULTS[kind] ?? KIND_DEFAULTS.npc;
+  const baseDefaults = KIND_DEFAULTS[kind] ?? KIND_DEFAULTS.npc;
+  // Goblins (the wave enemies) read their base stats from live Gameplay Options
+  // tuning so HP / attack / speed can be tuned without a restart. A per-entity
+  // manifest stat still wins, since it's applied via `stats.xxx ?? defaults.xxx`.
+  const defaults =
+    kind === "goblin"
+      ? {
+          ...baseDefaults,
+          maxHp: devTuning().enemyMaxHp,
+          attack: devTuning().enemyAttack,
+          moveSpeed: devTuning().enemyMoveSpeed,
+        }
+      : baseDefaults;
   const feature = entityFeature(kind, opts.id, opts.modelId);
   const manifestStats = entityStats(kind, opts.id, opts.modelId);
   const stats = { ...manifestStats, ...(opts.stats ?? {}) };

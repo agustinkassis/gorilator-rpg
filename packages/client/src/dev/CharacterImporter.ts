@@ -171,6 +171,12 @@ export class CharacterImporter {
   private toggle() {
     this.open ? this.close() : this.openPanel();
   }
+
+  /** Open the importer panel (called by the Library's "Add Character" button). */
+  openImporter() {
+    if (!this.open) this.openPanel();
+  }
+
   private openPanel() {
     this.open = true;
     this.panel.style.display = "flex";

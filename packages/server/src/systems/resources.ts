@@ -24,6 +24,7 @@ import {
 import { nearestFreeWorld } from "./pathfinding";
 import { spawnBanana } from "./bananas";
 import { dropConfig } from "./resourceDrops";
+import { devTuning } from "./devTuning";
 import { structureLoot } from "./structureDrops";
 import { entityDrops, entityFeature, entityHp } from "./entityFeatures";
 import { hasCustomItem, spawnCustomItem } from "./items";
@@ -133,9 +134,10 @@ export function dropEntityLoot(
   z: number,
   radius = 1.5,
 ): void {
+  const mult = devTuning().dropRateMult;
   for (const rule of rulesFor(kind, id, modelId)) {
     if (rule.trigger !== "kill") continue;
-    if (Math.random() >= rule.probability) continue;
+    if (Math.random() >= rule.probability * mult) continue;
     for (let i = 0; i < rule.quantity; i++) scatterDrop(state, rule.item, x, z, radius);
   }
 }
@@ -168,7 +170,7 @@ export function applyDamageDrops(
     rec![key] = (rec![key] ?? 0) + amount;
     while (rec![key] >= perItem) {
       rec![key] -= perItem;
-      if (Math.random() < rule.probability) scatterDrop(state, rule.item, x, z, radius);
+      if (Math.random() < rule.probability * devTuning().dropRateMult) scatterDrop(state, rule.item, x, z, radius);
     }
   });
 }
