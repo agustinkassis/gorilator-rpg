@@ -178,6 +178,42 @@ export function installAndBuild(
   log.ok("Build complete.");
 }
 
+export interface BuildCmd {
+  key: string;
+  label: string;
+  cmd: string;
+  args: string[];
+  env?: Record<string, string>;
+  cwd: string;
+  estimateMs: number;
+  /** Non-fatal if it fails (e.g. the in-repo CLI build). */
+  optional?: boolean;
+}
+
+/** The ordered build commands (deps → shared → client → cli) as data, so a
+ *  progress UI (see commands/update.ts) can run them quietly with its own
+ *  spinner. Mirrors pnpmInstall/buildShared/buildClient/buildCli above — keep
+ *  the two in sync. */
+export function buildPlan(
+  appDir: string,
+  opts: { serverUrl?: string; serverPort?: number } = {},
+): BuildCmd[] {
+  const clientEnv: Record<string, string> = opts.serverUrl
+    ? { VITE_SERVER_URL: opts.serverUrl }
+    : opts.serverPort
+      ? { VITE_SERVER_PORT: String(opts.serverPort) }
+      : { VITE_SAME_ORIGIN: "1" };
+  const steps: BuildCmd[] = [
+    { key: "install", label: "Install dependencies", cmd: "pnpm", args: ["install"], cwd: appDir, estimateMs: 30_000 },
+    { key: "shared", label: "Build @rpg/shared", cmd: "pnpm", args: ["--filter", "@rpg/shared", "build"], cwd: appDir, estimateMs: 8_000 },
+    { key: "client", label: "Build client", cmd: "pnpm", args: ["--filter", "@rpg/client", "build"], env: clientEnv, cwd: appDir, estimateMs: 45_000 },
+  ];
+  if (existsSync(join(appDir, "packages", "cli", "package.json"))) {
+    steps.push({ key: "cli", label: "Build gorilator CLI", cmd: "pnpm", args: ["--filter", "gorilator", "build"], cwd: appDir, estimateMs: 6_000, optional: true });
+  }
+  return steps;
+}
+
 /** Absolute path to the node binary + the CLI entry used to build service
  *  ExecStart lines that don't depend on the service's PATH. Prefer the
  *  self-contained in-repo build; fall back to the globally-installed package,
