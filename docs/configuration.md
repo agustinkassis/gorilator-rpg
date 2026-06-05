@@ -52,6 +52,7 @@ the section comments in the file:
 | `UPDATE_REPO` | `owner/repo` the auto-update check queries (default `agustinkassis/gorilator-rpg`) |
 | `GITHUB_TOKEN` | optional — raises the GitHub API rate limit for the auto-update check |
 | `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → Server settings → Manage admins`. See [admin.md](admin.md). |
+| `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer`. Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
 
 ## 3. Runtime content files (live-reloaded JSON)
 

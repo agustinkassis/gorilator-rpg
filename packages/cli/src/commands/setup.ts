@@ -88,6 +88,10 @@ async function runSetupMenu(opts: Options): Promise<void> {
         label: "Colyseus and environment",
         hint: "monitor auth, server name, stats files",
       },
+      {
+        label: "Developer",
+        hint: ctx.env.GORILATOR_DEV === "1" ? "dev mode ON" : "dev mode off",
+      },
       { label: "Show current settings" },
       { label: "Exit" },
     ]);
@@ -109,6 +113,9 @@ async function runSetupMenu(opts: Options): Promise<void> {
         await environmentMenu(opts);
         break;
       case 5:
+        await developerMenu(opts);
+        break;
+      case 6:
         showCurrentSettings(requireInstall(opts));
         pause();
         break;
@@ -116,6 +123,36 @@ async function runSetupMenu(opts: Options): Promise<void> {
         return;
     }
   }
+}
+
+/** Developer tools. Currently a single toggle: when ON, `gorilator serve` runs
+ *  the live dev server (Vite HMR + tsx, in-game Dev Mode editor) instead of the
+ *  production build — see commands/serve.ts. Mock Nostr login stays disabled. */
+async function developerMenu(opts: Options): Promise<void> {
+  for (;;) {
+    const ctx = requireInstall(opts);
+    const on = ctx.env.GORILATOR_DEV === "1";
+    const choice = await selectMenu(`Developer\n  Dev mode is ${on ? "ON" : "off"}\n`, [
+      { label: on ? "Turn dev mode OFF" : "Turn dev mode ON", hint: on ? "back to production build" : "live dev server (Vite + tsx)" },
+      { label: "Back" },
+    ]);
+    if (choice === 0) toggleDevMode(opts, !on);
+    else return;
+  }
+}
+
+function toggleDevMode(opts: Options, on: boolean): void {
+  const ctx = requireInstall(opts);
+  if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
+    return;
+  }
+  writeEnvPatch(
+    ctx,
+    { GORILATOR_DEV: on ? "1" : "" },
+    on ? "Dev mode ON — the daemon will run the live dev server." : "Dev mode off — back to the production build.",
+  );
+  restartDaemon();
+  pause();
 }
 
 async function logsMenu(): Promise<void> {
