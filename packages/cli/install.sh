@@ -68,6 +68,27 @@ ensure_command() {
   command -v "$_cmd" >/dev/null 2>&1 || die "$_cmd was not found after installation."
 }
 
+resolve_cli_wrapper() {
+  for _path in \
+    "$INSTALL_DIR/packages/cli/gorilator" \
+    "$INSTALL_DIR/cli/gorilator"
+  do
+    if [ -f "$_path" ]; then
+      echo "$_path"
+      return 0
+    fi
+  done
+  die "Gorilator CLI wrapper was not found in $INSTALL_DIR. Expected packages/cli/gorilator."
+}
+
+checkout_fetched_ref() {
+  if grep -q "[[:space:]]branch '$REF' of " "$INSTALL_DIR/.git/FETCH_HEAD" 2>/dev/null; then
+    "$@" checkout -B "$REF" FETCH_HEAD
+  else
+    "$@" -c advice.detachedHead=false checkout -f FETCH_HEAD
+  fi
+}
+
 echo "🦍 Gorilator bootstrap"
 echo "   repo: $REPO ($REF)"
 echo "   dir:  $INSTALL_DIR"
@@ -83,10 +104,10 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   echo "==> Updating existing checkout…"
   if [ -w "$INSTALL_DIR/.git" ]; then
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$REF"
-    git -C "$INSTALL_DIR" checkout -f FETCH_HEAD
+    checkout_fetched_ref git -C "$INSTALL_DIR"
   else
     run_privileged git -C "$INSTALL_DIR" fetch --depth 1 origin "$REF"
-    run_privileged git -C "$INSTALL_DIR" checkout -f FETCH_HEAD
+    checkout_fetched_ref run_privileged git -C "$INSTALL_DIR"
   fi
 elif [ -e "$INSTALL_DIR" ] && [ ! -d "$INSTALL_DIR" ]; then
   echo "$INSTALL_DIR already exists and is not a directory. Move it aside and re-run." >&2
@@ -109,8 +130,9 @@ fi
 if [ "$TARGET_USER" != "root" ]; then
   chown -R "$TARGET_USER" "$INSTALL_DIR" 2>/dev/null || run_privileged chown -R "$TARGET_USER" "$INSTALL_DIR" 2>/dev/null || true
 fi
-chmod +x "$INSTALL_DIR/packages/cli/gorilator" "$INSTALL_DIR/packages/cli/install.sh" 2>/dev/null \
-  || run_privileged chmod +x "$INSTALL_DIR/packages/cli/gorilator" "$INSTALL_DIR/packages/cli/install.sh" 2>/dev/null \
+CLI_WRAPPER="$(resolve_cli_wrapper)"
+chmod +x "$CLI_WRAPPER" "$INSTALL_DIR/packages/cli/install.sh" 2>/dev/null \
+  || run_privileged chmod +x "$CLI_WRAPPER" "$INSTALL_DIR/packages/cli/install.sh" 2>/dev/null \
   || true
 
 # Use this checkout as the install dir (no second clone), then hand off to the
@@ -121,7 +143,7 @@ export GORILATOR_REF="$REF"
 export GORILATOR_DIR="$INSTALL_DIR"
 echo "==> Launching the installer…"
 if { true </dev/tty; } 2>/dev/null; then
-  bash "$INSTALL_DIR/packages/cli/gorilator" install </dev/tty
+  bash "$CLI_WRAPPER" install </dev/tty
 else
-  bash "$INSTALL_DIR/packages/cli/gorilator" install
+  bash "$CLI_WRAPPER" install
 fi

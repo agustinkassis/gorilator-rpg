@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, platform, userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, extname, join } from "node:path";
 
 export interface RunOpts {
   cwd?: string;
@@ -31,12 +31,22 @@ export function targetUser(): string {
   return userInfo().username;
 }
 
-/** Locate an executable on PATH (POSIX). Returns its absolute path or null. */
+/** Locate an executable on PATH. Returns its absolute path or null. */
 export function which(cmd: string): string | null {
-  for (const dir of (process.env.PATH ?? "").split(":")) {
+  return resolveExecutable(cmd);
+}
+
+export function resolveExecutable(
+  cmd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platformName = platform(),
+): string | null {
+  for (const dir of pathDirs(env, platformName)) {
     if (!dir) continue;
-    const full = join(dir, cmd);
-    if (existsSync(full)) return full;
+    for (const candidate of executableCandidates(cmd, platformName, env)) {
+      const full = join(dir, candidate);
+      if (existsSync(full)) return full;
+    }
   }
   return null;
 }
@@ -217,7 +227,9 @@ export function canPrompt(): boolean {
  *  than `bin -g`; `root -g` covers older/custom layouts. */
 export function npmGlobalBinDir(): string | null {
   const prefix = capture("npm", ["config", "get", "prefix", "--global"]);
-  if (prefix && prefix !== "undefined" && prefix !== "null") return join(prefix, "bin");
+  if (prefix && prefix !== "undefined" && prefix !== "null") {
+    return platform() === "win32" ? prefix : join(prefix, "bin");
+  }
   const root = capture("npm", ["root", "-g"]);
   if (root) return dirname(dirname(root));
   return null;
@@ -226,12 +238,13 @@ export function npmGlobalBinDir(): string | null {
 /** Prepend a directory to PATH for commands spawned later in this installer. */
 export function prependPathDir(dir: string): void {
   if (!dir || !existsSync(dir)) return;
-  const parts = (process.env.PATH ?? "").split(":").filter((part) => part && part !== dir);
-  process.env.PATH = [dir, ...parts].join(":");
+  const key = pathEnvKey(process.env, platform());
+  const parts = pathDirs(process.env, platform()).filter((part) => part && !samePathDir(part, dir, platform()));
+  process.env[key] = [dir, ...parts].join(delimiter);
 }
 
 function pathHasDir(dir: string): boolean {
-  return (process.env.PATH ?? "").split(":").includes(dir);
+  return pathDirs(process.env, platform()).some((part) => samePathDir(part, dir, platform()));
 }
 
 function targetHome(): string {
@@ -304,4 +317,31 @@ export function activateSudoNpmGlobalBin(): string | null {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function pathDirs(env: NodeJS.ProcessEnv = process.env, platformName = platform()): string[] {
+  return pathEnvValue(env, platformName).split(platformName === "win32" ? ";" : delimiter).filter(Boolean);
+}
+
+function pathEnvKey(env: NodeJS.ProcessEnv, platformName: string): string {
+  if (platformName === "win32" && env.Path !== undefined) return "Path";
+  return "PATH";
+}
+
+function pathEnvValue(env: NodeJS.ProcessEnv, platformName: string): string {
+  if (platformName === "win32") return env.Path ?? env.PATH ?? "";
+  return env.PATH ?? "";
+}
+
+function executableCandidates(cmd: string, platformName: string, env: NodeJS.ProcessEnv): string[] {
+  if (platformName !== "win32" || extname(cmd)) return [cmd];
+  const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((ext) => ext.trim())
+    .filter(Boolean);
+  return [cmd, ...exts.map((ext) => `${cmd}${ext.startsWith(".") ? ext : `.${ext}`}`)];
+}
+
+function samePathDir(a: string, b: string, platformName: string): boolean {
+  return platformName === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }

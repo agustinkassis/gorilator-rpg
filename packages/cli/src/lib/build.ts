@@ -5,7 +5,7 @@
 // server then runs from TS via tsx (see commands/serve.ts) — `node dist/index.js`
 // is intentionally NOT used because tsc emits extensionless ESM imports Node's
 // loader rejects.
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as log from "./log.js";
 import { cliEntryPath, isLinux } from "./paths.js";
@@ -86,10 +86,26 @@ export function cloneOrUpdate(repo: string, ref: string, appDir: string): void {
   if (existsSync(join(appDir, ".git"))) {
     log.info(`Updating ${appDir} → ${ref}…`);
     runAsTargetUser("git", ["-C", appDir, "fetch", "--depth", "1", "origin", ref]);
-    runAsTargetUser("git", ["-C", appDir, "checkout", "-f", "FETCH_HEAD"]);
+    checkoutFetchedRef(appDir, ref);
   } else {
     log.info(`Cloning ${repo} (${ref}) → ${appDir}…`);
     runAsTargetUser("git", ["clone", "--depth", "1", "--branch", ref, repo, appDir]);
+  }
+}
+
+function checkoutFetchedRef(appDir: string, ref: string): void {
+  if (fetchedRefIsBranch(appDir, ref)) {
+    runAsTargetUser("git", ["-C", appDir, "checkout", "-B", ref, "FETCH_HEAD"]);
+  } else {
+    runAsTargetUser("git", ["-C", appDir, "-c", "advice.detachedHead=false", "checkout", "-f", "FETCH_HEAD"]);
+  }
+}
+
+function fetchedRefIsBranch(appDir: string, ref: string): boolean {
+  try {
+    return readFileSync(join(appDir, ".git", "FETCH_HEAD"), "utf8").includes(`\tbranch '${ref}' of `);
+  } catch {
+    return false;
   }
 }
 
