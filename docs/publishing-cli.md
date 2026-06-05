@@ -14,8 +14,8 @@ The workflow lives at [`.github/workflows/publish-cli.yml`](../.github/workflows
    `workflow_dispatch` so it can be run manually from the **Actions** tab as a fallback.
 2. **Version gate** — the job first checks `npm view gorilator@<version>`. If that exact
    CLI version is **already on npm, it skips** build/test/publish (the job still passes).
-   So it publishes **only when the CLI version changed** — a release that bumps just the
-   app umbrella version (or doesn't touch the CLI) is a clean no-op here.
+   The CLI package version should match the app release tag, so npm and GitHub
+   publish the same SemVer version.
 3. **Build & test** — in `packages/cli`: `npm install`, `npm run build` (tsc), `npm test`.
 4. **Publish** — `npm publish`. No `NODE_AUTH_TOKEN`; the runner authenticates to npm
    via OIDC. Provenance is attached automatically (the job has `id-token: write`).
@@ -40,14 +40,14 @@ Two things had to be configured once; they're in place and don't need redoing:
 
 ## Versioning
 
-Each workspace package keeps its **own** version. The root `package.json` version is
-the project-wide **umbrella ("app") version** — it advances by the same semver level
-whenever any package is bumped. Always bump with the helper so the two move together:
+The root `package.json` version is the project-wide **app release version**.
+GitHub Release tags use that version, and the npm `gorilator` package must match
+it. Always bump with the helper so the CLI package and app release move together:
 
 ```
 pnpm bump <cli|client|server|shared|landing> <major|minor|patch>
-# e.g. pnpm bump cli minor   →  cli 1.4.0→1.5.0  AND  app 0.3.0→0.4.0
-pnpm bump app <level>        # bump only the umbrella version (catch-up)
+# e.g. pnpm bump cli minor   →  cli 1.4.0→1.5.0  AND  app 1.4.0→1.5.0
+pnpm bump app <level>        # bump the app release version
 ```
 
 (See [`scripts/bump.mjs`](../scripts/bump.mjs). It rewrites just the `version` field,
@@ -55,15 +55,16 @@ so all other package.json formatting is preserved.)
 
 A PR CI check enforces this — [`version-guard.yml`](../.github/workflows/version-guard.yml)
 fails if a package version changed without the app version bumping by at least the same
-level. Run it locally with `pnpm version:check` (compares against `origin/main`).
+level, or if the CLI/npm package version differs from the app release version.
+Run it locally with `pnpm version:check` (compares against `origin/main`).
 
 ## Releasing a new version
 
 1. **Bump the CLI:** `pnpm bump cli <major|minor|patch>` (this also bumps the app
-   umbrella version). Bumping the CLI is what makes CI actually publish (the version
-   gate skips when the CLI version is unchanged).
+   release version). The CLI package version and app version must match before
+   releasing.
 2. Commit and merge to `main`.
-3. Create a **GitHub Release** tagged with the **app (umbrella) version**, e.g.
+3. Create a **GitHub Release** tagged with the **app release version**, e.g.
    `vX.Y.Z` — the daemon auto-update compares the release tag's version against the
    app version (see [Auto-update check](#auto-update-check) below). Publishing the
    release fires CI.

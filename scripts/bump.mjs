@@ -1,16 +1,15 @@
 // Bump a workspace package's version AND the umbrella "app" (root package.json)
-// version by the same semver level, in one step. Each package keeps its own
-// independent version; the app version is the project-wide roll-up that advances
-// whenever any package does — a `patch` package bump bumps the app patch, a
-// `minor` bumps the app minor, a `major` bumps the app major.
+// version by the same semver level, in one step. The app version is the release
+// version. The published npm CLI package (`gorilator`) must use that same
+// version, so CLI release bumps keep the package and app versions aligned.
 //
 // Usage:
 //   node scripts/bump.mjs <package> <major|minor|patch>
 //     <package> ∈ cli | client | server | shared | landing
-//   node scripts/bump.mjs app <major|minor|patch>   # bump only the app (catch-up)
+//   node scripts/bump.mjs app <major|minor|patch>   # bump the app release
 //
 // Examples:
-//   node scripts/bump.mjs cli minor     # cli 1.4.0→1.5.0  AND  app 0.3.0→0.4.0
+//   node scripts/bump.mjs cli minor     # cli 1.4.0→1.5.0  AND  app 1.4.0→1.5.0
 //   node scripts/bump.mjs server patch  # server 0.2.1→0.2.2 AND app 0.4.0→0.4.1
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
