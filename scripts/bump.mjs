@@ -29,14 +29,29 @@ const PACKAGES = {
 const APP = "package.json";
 const LEVELS = ["major", "minor", "patch"];
 
+// Official SemVer 2.0.0 grammar (semver.org). Captures major/minor/patch +
+// optional prerelease + build metadata, and forbids leading zeros.
+const SEMVER_RE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+
+function parse(version) {
+  const m = SEMVER_RE.exec(String(version).trim());
+  if (!m) throw new Error(`not a valid SemVer version: "${version}"`);
+  return { major: +m[1], minor: +m[2], patch: +m[3], prerelease: m[4] ?? null };
+}
+
+/** SemVer increment matching npm's `semver.inc` for the major/minor/patch release
+ *  types — including finalizing a prerelease (e.g. 1.4.0-rc.1 + patch → 1.4.0).
+ *  Build metadata is dropped (it has no precedence). */
 function nextVersion(version, level) {
-  const [maj, min, pat] = version.split("-")[0].split(".").map(Number);
-  if ([maj, min, pat].some((n) => !Number.isInteger(n))) {
-    throw new Error(`unparseable version "${version}"`);
+  const { major, minor, patch, prerelease } = parse(version);
+  if (level === "major") {
+    return prerelease && minor === 0 && patch === 0 ? `${major}.0.0` : `${major + 1}.0.0`;
   }
-  if (level === "major") return `${maj + 1}.0.0`;
-  if (level === "minor") return `${maj}.${min + 1}.0`;
-  return `${maj}.${min}.${pat + 1}`;
+  if (level === "minor") {
+    return prerelease && patch === 0 ? `${major}.${minor}.0` : `${major}.${minor + 1}.0`;
+  }
+  return prerelease ? `${major}.${minor}.${patch}` : `${major}.${minor}.${patch + 1}`;
 }
 
 /** Rewrite only the top-level "version" value so all other formatting is kept. */

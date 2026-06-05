@@ -49,16 +49,27 @@ function baseVersion(rel) {
   }
 }
 
-/** The semver level by which `oldV` → `newV` changed. */
+// Official SemVer 2.0.0 grammar (semver.org).
+const SEMVER_RE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+
+function parse(version) {
+  const m = version == null ? null : SEMVER_RE.exec(String(version).trim());
+  if (!m) throw new Error(`not a valid SemVer version: "${version}"`);
+  return { major: +m[1], minor: +m[2], patch: +m[3], prerelease: m[4] ?? null };
+}
+
+/** The SemVer release level by which `oldV` → `newV` changed (vs the fork point).
+ *  A prerelease-only change counts as "patch" so it still requires an app bump. */
 function levelOf(oldV, newV) {
   if (oldV === newV) return "none";
   if (!oldV) return "minor"; // newly added package → treat as a feature
-  const a = oldV.split("-")[0].split(".").map(Number);
-  const b = newV.split("-")[0].split(".").map(Number);
-  if (b[0] !== a[0]) return "major";
-  if (b[1] !== a[1]) return "minor";
-  if (b[2] !== a[2]) return "patch";
-  return "none";
+  const a = parse(oldV);
+  const b = parse(newV);
+  if (a.major !== b.major) return "major";
+  if (a.minor !== b.minor) return "minor";
+  if (a.patch !== b.patch) return "patch";
+  return a.prerelease !== b.prerelease ? "patch" : "none";
 }
 
 const changed = [];
