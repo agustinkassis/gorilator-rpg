@@ -1,6 +1,7 @@
 import {
   ArcRotateCamera,
   Color3,
+  DirectionalLight,
   ShadowGenerator,
   TransformNode,
   AbstractMesh,
@@ -67,6 +68,7 @@ import {
 } from "../input/FootprintPicker";
 import { smooth } from "../util/math";
 import { applyTransform, importModel } from "../scene/props";
+import { getCameraZoom } from "../scene/camera";
 import { itemDef, loadItemDefs } from "../items/itemRegistry";
 
 interface ServerView {
@@ -229,6 +231,12 @@ export class Game {
   /** Wire in the sound system (effects + music). */
   setAudio(audio: AudioManager) {
     this.audio = audio;
+  }
+
+  /** Dev Mode: suppress all local-player hurt feedback (red flash, camera shake,
+   *  low-HP vignette, white alert) so the screen stays clean while editing. */
+  setDamageFxSuppressed(on: boolean) {
+    this.damageFx?.setSuppressed(on);
   }
 
   /** Dev Mode: toggle the local player's ghost look (translucent + floating)
@@ -1473,18 +1481,25 @@ export class Game {
       t.z += (tz - t.z) * f;
       t.y = 1;
     }
-    if (local) {
-      // keep the (fixed-size) shadow frustum centred on the player so shadows stay
-      // crisp on the big map instead of being smeared across the whole world.
-      const sun = this.shadow.getLight();
+    {
+      // Keep the shadow frustum centred on the VIEW (camera target) and scale its
+      // whole size with the camera zoom. Otherwise, when zoomed way out in Dev/ghost
+      // mode, structures near the screen edge fall outside the fixed frustum and
+      // their shadows smear into long streaks (they "fix" as they near the centre).
+      const sun = this.shadow.getLight() as DirectionalLight;
+      const z = getCameraZoom();
+      const c = this.camera.target;
       const d = sun.direction;
       const len = Math.hypot(d.x, d.y, d.z) || 1;
-      const D = 130;
-      sun.position.set(
-        local.root.position.x - (d.x / len) * D,
-        local.root.position.y - (d.y / len) * D,
-        local.root.position.z - (d.z / len) * D,
-      );
+      const D = 130 * z;
+      sun.position.set(c.x - (d.x / len) * D, c.y - (d.y / len) * D, c.z - (d.z / len) * D);
+      const half = 40 * z;
+      sun.orthoLeft = -half;
+      sun.orthoRight = half;
+      sun.orthoTop = half;
+      sun.orthoBottom = -half;
+      sun.shadowMinZ = 80 * z;
+      sun.shadowMaxZ = 180 * z;
     }
 
     // local-player hurt feedback: persistent low-HP vignette + decaying flash/shake

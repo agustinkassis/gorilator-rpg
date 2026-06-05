@@ -336,8 +336,8 @@ export class NetworkClient {
     }
   }
 
-  sendMove(x: number, z: number) {
-    this.room?.send("move", { x, z });
+  sendMove(x: number, z: number, gz?: number) {
+    this.room?.send("move", gz !== undefined ? { x, z, gz } : { x, z });
   }
 
   sendAttack(targetId: string) {

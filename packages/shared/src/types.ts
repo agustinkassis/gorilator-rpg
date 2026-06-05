@@ -59,6 +59,7 @@ export interface PlayerSave {
 export interface MoveMessage {
   x: number;
   z: number;
+  gz?: number; // Dev ghost mode: the client's camera zoom → server scales the ghost glide speed
 }
 
 export interface AttackMessage {
