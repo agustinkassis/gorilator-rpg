@@ -2,20 +2,24 @@
 // Cloudflare path still wires one public hostname to the game port; the menu
 // also exposes server ports, Nostr identity, monitor auth, and supported env.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { buildClient } from "../lib/build.js";
+import { buildClient, pnpmInstall } from "../lib/build.js";
 import { logsCmd } from "./service.js";
 import { loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
 import type { RuntimeContext } from "../lib/context.js";
 import {
+  awaitQuickTunnelUrl,
   createTunnel,
   ensureCloudflared,
   getTunnelId,
+  installQuickTunnelService,
   installTunnelService,
   isAuthorized,
   login,
+  removeQuickTunnelService,
   removeTunnelLocalConfig,
   routeDns,
   TUNNEL_NAME,
+  type TunnelMode,
   tunnelLogin,
   tunnelRestart,
   tunnelStatus,
@@ -66,6 +70,12 @@ export async function runSetup(opts: Options, ctx?: RuntimeContext): Promise<voi
     await runSetupMenu(opts);
     return;
   }
+  await configureCloudflare(opts, { pauseAtEnd: false });
+}
+
+/** Post-install entry: go straight to the tunnel-type chooser (temporary by
+ *  default) rather than the whole setup menu. */
+export async function setupCloudflare(opts: Options): Promise<void> {
   await configureCloudflare(opts, { pauseAtEnd: false });
 }
 
@@ -151,6 +161,16 @@ function toggleDevMode(opts: Options, on: boolean): void {
   const ctx = requireInstall(opts);
   if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
     return;
+  }
+  if (on) {
+    // The dev server runs `pnpm dev` (Vite), whose build-only deps a prebuilt
+    // (slim) install skips. Ensure the full dependency set is present first.
+    log.info("Ensuring developer dependencies are installed (Vite + build tools)…");
+    try {
+      pnpmInstall(ctx.appDir);
+    } catch (e) {
+      log.warn(`Could not install dev dependencies: ${(e as Error).message}`);
+    }
   }
   writeEnvPatch(
     ctx,
@@ -335,40 +355,53 @@ function generateServerNsec(opts: Options): void {
 async function cloudflareMenu(opts: Options): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
-    const choice = await selectMenu("Cloudflare", [
-      { label: "Install Cloudflare tunnel", hint: ctx.env.SERVER_HOSTNAME ? "already configured" : "" },
-      { label: "Update Cloudflare hostname/settings", hint: ctx.env.SERVER_HOSTNAME || "game.<domain>" },
+    const choice = await selectMenu(`Cloudflare\n  ${tunnelStatusLine(ctx.env)}`, [
+      { label: "Set up / change tunnel", hint: "choose temporary or permanent" },
       { label: "Remove Cloudflare settings", hint: "local service/config only" },
-      { label: "Cloudflare tunnel status" },
-      { label: "Authorize Cloudflare login" },
-      { label: "Restart Cloudflare tunnel" },
+      { label: "Tunnel status" },
+      { label: "Authorize Cloudflare login", hint: "for permanent tunnels" },
+      { label: "Restart tunnel" },
       { label: "Back" },
     ]);
 
-    if (choice === 0 || choice === 1) await configureCloudflare(opts);
-    else if (choice === 2) removeCloudflare(opts);
-    else if (choice === 3) {
+    if (choice === 0) await configureCloudflare(opts);
+    else if (choice === 1) removeCloudflare(opts);
+    else if (choice === 2) {
       tunnelStatus();
       pause();
-    } else if (choice === 4) {
+    } else if (choice === 3) {
       tunnelLogin();
       pause();
-    } else if (choice === 5) {
+    } else if (choice === 4) {
       tunnelRestart();
       pause();
     } else return;
   }
 }
 
+/** A one-line description of the configured tunnel for the Cloudflare menu. */
+function tunnelStatusLine(env: EnvMap): string {
+  if (env.TUNNEL_MODE === "temporary") {
+    return `temporary${env.SERVER_HOSTNAME ? ` · https://${env.SERVER_HOSTNAME}` : " · starting…"}`;
+  }
+  if (env.TUNNEL_MODE === "permanent" || env.SERVER_HOSTNAME) {
+    return `permanent · https://${env.SERVER_HOSTNAME || "?"}`;
+  }
+  return "not configured";
+}
+
 function removeCloudflare(opts: Options): void {
   if (!confirm("Remove local Cloudflare tunnel service/config and clear public host env?")) return;
   const ctx = requireInstall(opts);
-  if (uninstallTunnelService()) log.ok("Cloudflare tunnel service stopped/removed.");
+  let removed = uninstallTunnelService();
+  removed = removeQuickTunnelService() || removed;
+  if (removed) log.ok("Cloudflare tunnel service stopped/removed.");
   else log.warn("No local Cloudflare tunnel service was removed.");
   removeTunnelLocalConfig();
   writeEnvPatch(
     ctx,
     {
+      TUNNEL_MODE: "",
       CLIENT_HOSTNAME: "",
       SERVER_HOSTNAME: "",
       PLAY_URL: "",
@@ -464,25 +497,110 @@ function updateCustomEnv(opts: Options): void {
   pause();
 }
 
+interface CloudflareCtx {
+  appDir: string;
+  port: number;
+  user: string;
+  env: EnvMap;
+  /** Whether the client bundle is already built same-origin (skip rebuild). */
+  sameOrigin: boolean;
+}
+
 async function configureCloudflare(
   opts: Options,
   { pauseAtEnd = true }: { pauseAtEnd?: boolean } = {},
 ): Promise<void> {
   const cfg = loadConfig();
   const appDir = cfg?.appDir ?? opts.appDir;
-  const port = cfg?.port ?? opts.port;
-  const user = cfg?.user ?? targetUser();
-
-  log.info("Configuring the Cloudflare tunnel (one public hostname -> the game port).");
-
-  const publicHost = resolvePublicHost();
-  log.ok(`Tunneling: ${publicHost} -> :${port} (client + WebSocket + monitor + API)`);
   const ef = envFile(appDir);
-  const beforeEnv = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
-  const clientAlreadySameOrigin =
-    beforeEnv.VITE_SAME_ORIGIN === "1" &&
-    !beforeEnv.VITE_SERVER_URL &&
-    !beforeEnv.CLIENT_PORT;
+  const env = existsSync(ef) ? parseEnv(readFileSync(ef, "utf8")) : {};
+  const cf: CloudflareCtx = {
+    appDir,
+    port: cfg?.port ?? opts.port,
+    user: cfg?.user ?? targetUser(),
+    env,
+    sameOrigin: env.VITE_SAME_ORIGIN === "1" && !env.VITE_SERVER_URL && !env.CLIENT_PORT,
+  };
+
+  const mode = await resolveTunnelMode(opts, env);
+  if (mode === "temporary") await setupTemporaryTunnel(cf);
+  else await setupPermanentTunnel(cf);
+  if (pauseAtEnd) pause();
+}
+
+/** Decide temporary vs permanent. A domain/host in the environment forces a
+ *  permanent (named) tunnel; otherwise temporary is the default — chosen
+ *  interactively when possible, else taken as the no-login default. */
+async function resolveTunnelMode(opts: Options, env: EnvMap): Promise<TunnelMode> {
+  if (CLOUDFLARE_ENV_KEYS.some((k) => Boolean(process.env[k]))) return "permanent";
+  if (!canPrompt() || opts.yes) return "temporary";
+  const current = (env.TUNNEL_MODE as TunnelMode) || undefined;
+  const choice = await selectMenu(
+    `Cloudflare tunnel type${current ? ` (current: ${current})` : ""}`,
+    [
+      { label: "Temporary", hint: "quick, no login — random …trycloudflare.com URL" },
+      { label: "Permanent", hint: "your own domain — requires a Cloudflare login" },
+    ],
+  );
+  return choice === 1 ? "permanent" : "temporary";
+}
+
+/** Temporary (quick) tunnel: a boot service runs `cloudflared tunnel --url`, no
+ *  Cloudflare account needed. The public URL is ephemeral (…trycloudflare.com)
+ *  and may change if the tunnel restarts; the same-origin client copes with that. */
+async function setupTemporaryTunnel(cf: CloudflareCtx): Promise<void> {
+  log.info("Setting up a temporary Cloudflare tunnel (quick, no Cloudflare account)…");
+  if (cf.env.TUNNEL_MODE === "permanent") {
+    if (uninstallTunnelService()) log.ok("Stopped the previous permanent tunnel service.");
+    removeTunnelLocalConfig();
+  }
+  installQuickTunnelService(cf.port);
+  log.info("Waiting for the tunnel URL…");
+  const url = await awaitQuickTunnelUrl();
+  const host = url ? url.replace(/^https?:\/\//, "") : "";
+
+  mergeEnv(
+    cf.appDir,
+    cf.user,
+    {
+      TUNNEL_MODE: "temporary",
+      VITE_SERVER_URL: "",
+      VITE_SAME_ORIGIN: "1",
+      CLIENT_PORT: "",
+      CLIENT_HOSTNAME: "",
+      SERVER_HOSTNAME: host,
+      PLAY_URL: url ?? "",
+    },
+    "Configured a temporary Cloudflare tunnel.",
+  );
+  updateConfig({ clientPort: undefined, clientHost: undefined, serverHost: host || undefined });
+
+  rebuildSameOriginIfNeeded(cf);
+  restartDaemonForTunnel();
+
+  process.stdout.write("\n");
+  if (url) {
+    log.ok(`Temporary tunnel is live: ${url}`);
+    log.info(
+      "This URL is ephemeral — it changes if the tunnel restarts. For a stable address, switch to a permanent tunnel.",
+    );
+  } else {
+    log.warn(
+      "The tunnel service started but no URL was captured yet — run 'gorilator tunnel status' in a few seconds.",
+    );
+  }
+}
+
+/** Permanent (named) tunnel: requires `cloudflared login` and your own domain;
+ *  routes a stable hostname's DNS at the tunnel. */
+async function setupPermanentTunnel(cf: CloudflareCtx): Promise<void> {
+  log.info("Configuring a permanent Cloudflare tunnel (one public hostname -> the game port).");
+  const publicHost = resolvePublicHost();
+  log.ok(`Tunneling: ${publicHost} -> :${cf.port} (client + WebSocket + monitor + API)`);
+
+  if (cf.env.TUNNEL_MODE === "temporary") {
+    if (removeQuickTunnelService()) log.ok("Stopped the previous temporary tunnel.");
+  }
 
   ensureCloudflared();
   if (!isAuthorized()) {
@@ -502,15 +620,16 @@ async function configureCloudflare(
   }
   if (!id) log.die("Could not determine the tunnel id.");
 
-  writeTunnelConfig(id, publicHost, port);
+  writeTunnelConfig(id, publicHost, cf.port);
   log.info("Creating DNS routes...");
   routeDns(publicHost);
   installTunnelService();
 
   mergeEnv(
-    appDir,
-    user,
+    cf.appDir,
+    cf.user,
     {
+      TUNNEL_MODE: "permanent",
       VITE_SERVER_URL: "",
       VITE_SAME_ORIGIN: "1",
       CLIENT_PORT: "",
@@ -522,27 +641,33 @@ async function configureCloudflare(
   );
   updateConfig({ clientPort: undefined, clientHost: undefined, serverHost: publicHost });
 
-  if (clientAlreadySameOrigin) {
-    log.ok("Client bundle is already same-origin; skipping rebuild.");
-  } else {
-    log.info("Rebuilding the client for same-origin HTTPS/WSS...");
-    buildClient(appDir);
-  }
+  rebuildSameOriginIfNeeded(cf);
+  restartDaemonForTunnel();
 
+  const info = readEnvInfo(cf.appDir, cf.port);
+  process.stdout.write("\n");
+  log.ok("Gorilator Cloudflare tunnel is live - the game is public.");
+  printPublic(info);
+  process.stdout.write("\n");
+  printPorts(info);
+}
+
+function rebuildSameOriginIfNeeded(cf: CloudflareCtx): void {
+  if (cf.sameOrigin) {
+    log.ok("Client bundle is already same-origin; skipping rebuild.");
+    return;
+  }
+  log.info("Rebuilding the client for same-origin HTTPS/WSS...");
+  buildClient(cf.appDir);
+}
+
+function restartDaemonForTunnel(): void {
   log.info("Restarting the daemon to serve the new client bundle...");
   try {
     restartService();
   } catch (e) {
     log.warn(`Restart failed: ${(e as Error).message}`);
   }
-
-  const info = readEnvInfo(appDir, port);
-  process.stdout.write("\n");
-  log.ok("Gorilator Cloudflare tunnel is live - the game is public.");
-  printPublic(info);
-  process.stdout.write("\n");
-  printPorts(info);
-  if (pauseAtEnd) pause();
 }
 
 function resolvePublicHost(): string {

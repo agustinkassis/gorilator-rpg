@@ -86,8 +86,22 @@ CLI as `npx gorilator install`. The installer, in order:
 gorilator setup
 ```
 
-It opens an arrow-key menu with categories for server settings, server NSEC, Cloudflare, and
-Colyseus/environment settings. Choosing Cloudflare install/update prompts for a base domain + one game
+It opens an arrow-key menu with categories for server settings, server NSEC, Cloudflare, Developer
+mode, and Colyseus/environment settings. Choosing **Cloudflare → Set up / change tunnel** asks which
+kind of tunnel you want:
+
+**Temporary tunnel (default — no Cloudflare account):**
+
+1. Runs `cloudflared tunnel --url http://localhost:<port>` as a boot service (systemd unit
+   `gorilator-tunnel.service` / launchd agent `com.gorilator.tunnel`).
+2. Captures the ephemeral `https://<random>.trycloudflare.com` URL it prints and stores it for `status`.
+3. Rebuilds the client same-origin and restarts the daemon, then prints the public URL.
+
+The URL is **ephemeral** — it changes if the tunnel restarts. Because the client is built same-origin,
+the game keeps working across URL changes; only the shareable address moves. Great for a quick share or
+a test deploy with zero Cloudflare setup.
+
+**Permanent tunnel (your own domain — requires login):** prompts for a base domain + one game
 subdomain (default `game.<domain>`), then:
 
 1. Installs & authorizes **cloudflared**, creates the `gorilator-rpg` tunnel, and routes DNS for that host.
@@ -98,8 +112,9 @@ subdomain (default `game.<domain>`), then:
    local client port, leaving one local game port behind the tunnel.
 4. Runs `cloudflared` as a boot service and prints your public URLs + monitor credentials.
 
-Re-run it anytime to change ports, update the server NSEC, change domains, remove local Cloudflare
-settings, or edit supported environment values. For non-interactive Cloudflare automation set
+The chosen kind is stored as `TUNNEL_MODE` in `.env`; switch anytime from the Cloudflare menu. Re-run
+setup to change ports, update the server NSEC, change domains, remove local Cloudflare settings, toggle
+Developer mode, or edit supported environment values. For non-interactive Cloudflare automation set
 `GORILATOR_DOMAIN` and optionally `GORILATOR_HOST`/`GORILATOR_GAME_HOST`.
 
 ---
