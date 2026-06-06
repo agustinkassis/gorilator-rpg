@@ -81,11 +81,12 @@ function printContextBanner(ctx: RuntimeContext): void {
       : t.installed
         ? log.blue("global install")
         : log.yellow("global · not installed");
-  const where = t.remote
-    ? `${log.bold(t.remote)}${t.ref ? log.dim(`@${t.ref}`) : ""}  ${log.dim(t.appDir)}`
-    : log.dim(t.appDir);
+  const head = t.remote
+    ? `${mode} ${log.dim("·")} ${log.bold(t.remote)}${t.ref ? log.dim(`@${t.ref}`) : ""}`
+    : mode;
   process.stdout.write(
-    `${log.dim(`🦍 gorilator ${VERSION}`)} ${log.dim("·")} ${mode} ${log.dim("·")} ${where}\n\n`,
+    `${log.dim(`🦍 gorilator ${VERSION}`)} ${log.dim("·")} ${head}\n` +
+      `  ${log.dim(t.appDir)}\n\n`,
   );
 }
 
