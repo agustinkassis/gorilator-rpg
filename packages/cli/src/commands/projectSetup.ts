@@ -30,7 +30,7 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
   for (;;) {
     const cfg = loadProjectConfig(ctx, opts);
     const env = readProjectEnv(ctx);
-    const choice = await selectMenu(`Gorilator project setup\n${ctx.appDir}`, [
+    const choice = await selectMenu("Gorilator project setup", [
       {
         label: "Server and client ports",
         hint: `server ${env.GAME_SERVER_PORT || cfg.port}, client ${

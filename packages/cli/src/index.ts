@@ -476,7 +476,7 @@ async function runMainMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveO
 
 async function runProjectMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
   for (;;) {
-    const choice = await selectMenu(`Gorilator project\n${ctx.appDir}`, [
+    const choice = await selectMenu("Gorilator project", [
       { label: "Status" },
       { label: "Start" },
       { label: "Stop" },
