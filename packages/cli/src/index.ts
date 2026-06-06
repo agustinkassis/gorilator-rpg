@@ -21,7 +21,7 @@ import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/se
 import { runSetup, tunnelCmd } from "./commands/setup.js";
 import { uninstall } from "./commands/uninstall.js";
 import { update } from "./commands/update.js";
-import { resolveRuntimeContext, type RuntimeContext } from "./lib/context.js";
+import { describeTarget, resolveRuntimeContext, type RuntimeContext } from "./lib/context.js";
 import * as log from "./lib/log.js";
 import { selectMenu } from "./lib/menu.js";
 import { resolveOptions, type RawFlags } from "./lib/options.js";
@@ -56,6 +56,37 @@ function* ancestorDirs(start: string): Generator<string> {
     const parent = dirname(dir);
     if (parent === dir) return;
   }
+}
+
+// Commands whose behavior depends on the resolved context (project vs system).
+// install/serve/version/help/uninstall manage their own output or are global.
+const CONTEXT_AWARE_COMMANDS = new Set([
+  "setup",
+  "start",
+  "stop",
+  "restart",
+  "status",
+  "info",
+  "logs",
+  "update",
+  "remote",
+]);
+
+/** One-line banner naming the target a command will act on. */
+function printContextBanner(ctx: RuntimeContext): void {
+  const t = describeTarget(ctx);
+  const mode =
+    t.kind === "project"
+      ? log.green("project")
+      : t.installed
+        ? log.blue("global install")
+        : log.yellow("global · not installed");
+  const where = t.remote
+    ? `${log.bold(t.remote)}${t.ref ? log.dim(`@${t.ref}`) : ""}  ${log.dim(t.appDir)}`
+    : log.dim(t.appDir);
+  process.stdout.write(
+    `${log.dim(`🦍 gorilator ${VERSION}`)} ${log.dim("·")} ${mode} ${log.dim("·")} ${where}\n\n`,
+  );
 }
 
 function usage(): void {
@@ -371,6 +402,11 @@ async function main(): Promise<void> {
   const opts = resolveOptions(values as RawFlags);
   const ctx = resolveRuntimeContext(opts);
 
+  // Show what this command is about to act on: the local git checkout (project
+  // mode) or the system-wide install (global mode). Skipped for the internal
+  // supervised process and pure-info commands.
+  if (CONTEXT_AWARE_COMMANDS.has(cmd)) printContextBanner(ctx);
+
   if (cmd === undefined) {
     if (process.stdin.isTTY && process.stdout.isTTY) {
       await runMainMenu(ctx, opts);
@@ -429,6 +465,7 @@ async function main(): Promise<void> {
 }
 
 async function runMainMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
+  printContextBanner(ctx);
   if (ctx.kind === "project") {
     await runProjectMenu(ctx, opts);
     return;
