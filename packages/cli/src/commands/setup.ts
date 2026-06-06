@@ -85,12 +85,12 @@ async function runSetupMenu(opts: Options): Promise<void> {
     const info = readEnvInfo(ctx.appDir, ctx.cfg.port, ctx.cfg.clientPort);
     const choice = await selectMenu("Gorilator setup", [
       {
-        label: "Server settings",
-        hint: `port ${info.port}${info.clientPort ? `, client ${info.clientPort}` : ", one-port"}`,
+        label: "General settings",
+        hint: "display name, NSEC, admins",
       },
       {
-        label: "Server NSEC",
-        hint: maskSecret(ctx.env.NOSTR_NSEC),
+        label: "Server settings",
+        hint: `port ${info.port}${info.clientPort ? `, client ${info.clientPort}` : ", one-port"}`,
       },
       {
         label: "Cloudflare",
@@ -102,7 +102,7 @@ async function runSetupMenu(opts: Options): Promise<void> {
       },
       {
         label: "Colyseus and environment",
-        hint: "monitor auth, server name, stats files",
+        hint: "monitor auth, stats files",
       },
       {
         label: "Developer",
@@ -114,10 +114,10 @@ async function runSetupMenu(opts: Options): Promise<void> {
 
     switch (choice) {
       case 0:
-        await serverSettingsMenu(opts);
+        await generalSettingsMenu(opts);
         break;
       case 1:
-        await nsecMenu(opts);
+        await serverSettingsMenu(opts);
         break;
       case 2:
         await cloudflareMenu(opts);
@@ -138,6 +138,25 @@ async function runSetupMenu(opts: Options): Promise<void> {
       default:
         return;
     }
+  }
+}
+
+/** General settings: the server's public identity — display name, Nostr key, and
+ *  the admin npubs allowed to call /api/admin/* (NIP-98). */
+async function generalSettingsMenu(opts: Options): Promise<void> {
+  for (;;) {
+    const ctx = requireInstall(opts);
+    const choice = await selectMenu("General settings", [
+      { label: "Server display name", hint: ctx.env.SERVER_NAME || "Gorilator Server" },
+      { label: "Server NSEC", hint: maskSecret(ctx.env.NOSTR_NSEC) },
+      { label: "Manage admins (NIP-98)", hint: adminsHint(ctx.env.ADMIN_NPUBS) },
+      { label: "Back" },
+    ]);
+
+    if (choice === 0) updateServerName(opts);
+    else if (choice === 1) await nsecMenu(opts);
+    else if (choice === 2) await adminsMenu(() => settingsCtx(opts));
+    else return;
   }
 }
 
@@ -229,7 +248,6 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
       { label: "Update optional client port", hint: clientPort ? String(clientPort) : "disabled" },
       { label: "Use one-port mode", hint: "client + WebSocket + monitor on server port" },
       { label: "Auto-update check interval", hint: updateCheckHint(ctx.env.UPDATE_CHECK_HOURS) },
-      { label: "Manage admins (NIP-98)", hint: adminsHint(ctx.env.ADMIN_NPUBS) },
       { label: "Back" },
     ]);
 
@@ -237,7 +255,6 @@ async function serverSettingsMenu(opts: Options): Promise<void> {
     else if (choice === 1) await updateClientPort(opts, clientPort);
     else if (choice === 2) await setOnePortMode(opts);
     else if (choice === 3) await updateAutoUpdateInterval(settingsCtx(opts));
-    else if (choice === 4) await adminsMenu(() => settingsCtx(opts));
     else return;
   }
 }
@@ -419,7 +436,6 @@ async function environmentMenu(opts: Options): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
     const choice = await selectMenu("Colyseus and environment", [
-      { label: "Update server display name", hint: ctx.env.SERVER_NAME || "Gorilator Server" },
       { label: "Update Colyseus monitor credentials", hint: ctx.env.MONITOR_USER || "disabled" },
       { label: "Update server stats file", hint: ctx.env.SERVER_STATS_FILE || "default .server-realms.json" },
       { label: "Set custom supported server env var" },
@@ -427,11 +443,10 @@ async function environmentMenu(opts: Options): Promise<void> {
       { label: "Back" },
     ]);
 
-    if (choice === 0) updateServerName(opts);
-    else if (choice === 1) updateMonitorCredentials(opts);
-    else if (choice === 2) updateOptionalEnv(opts, "SERVER_STATS_FILE", "Server stats file");
-    else if (choice === 3) updateCustomEnv(opts);
-    else if (choice === 4) {
+    if (choice === 0) updateMonitorCredentials(opts);
+    else if (choice === 1) updateOptionalEnv(opts, "SERVER_STATS_FILE", "Server stats file");
+    else if (choice === 2) updateCustomEnv(opts);
+    else if (choice === 3) {
       showCurrentSettings(requireInstall(opts));
       pause();
     } else return;
