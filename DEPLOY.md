@@ -51,8 +51,13 @@ CLI as `npx gorilator install`. The installer, in order:
 
 1. Ensures **ca-certificates**, **curl**, **git**, **Node ≥ 20.6**, and **pnpm@10.14.0**
    (installing what's missing on supported systems).
-2. Clones the game to `/opt/gorilator` (Linux) or `~/.gorilator/app` (macOS).
-3. `pnpm install`, builds the shared schema, builds the client, and builds the CLI.
+2. Clones the game (default ref **`latest`** = the newest GitHub release) to `/opt/gorilator`
+   (Linux) or `~/.gorilator/app` (macOS). Pin a branch/tag with `--ref` (e.g. `--ref main`).
+3. For the standard same-origin deploy, **downloads the release's prebuilt dist** (skipping the
+   ~45s client build) and runs a **server-scoped `pnpm install`** (`--filter @rpg/server...` —
+   just the server's runtime deps + `tsx` + shared, skipping Babylon/Vite). Falls back to a full
+   `pnpm install` + building the shared schema + client + CLI from source for branch refs, forks
+   without the asset, or custom build modes.
 4. Generates `.env` — the server port, a random monitor password, **and** the server's Nostr key
    (`NOSTR_NSEC`, which signs players' progress saves).
 5. Installs/refreshes the global npm `gorilator` command and makes npm's global bin directory visible on
@@ -107,7 +112,7 @@ gorilator start         Start the daemon (prints the port it listens on)
 gorilator stop          Stop the daemon
 gorilator restart       Restart the daemon
 gorilator logs          Show recent server logs (--follow, --lines, --filter, --since)
-gorilator update        stop services, git pull, rebuild, start services
+gorilator update        fetch latest; rebuild & restart only the packages that changed
 gorilator setup         Interactive setup: server ports, NSEC, Cloudflare, env settings
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
 gorilator uninstall     Stop & remove services, config, command, and installed files

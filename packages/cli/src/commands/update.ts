@@ -1,13 +1,16 @@
-// `gorilator update` — stop services, fast-forward to the latest release, rebuild,
-// and restart, behind a tidy live progress UI: detected version changes up front,
-// then an animated step checklist with elapsed/estimate and per-step status.
+// `gorilator update` — fast-forward to the latest release and apply only what
+// changed, behind a tidy live progress UI: detected per-package version changes
+// up front, then an animated step checklist with elapsed/estimate and per-step
+// status. The daemon is restarted ONLY when the server runtime changed, and each
+// package's artifacts are (re)built/fetched only when that package changed.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildPlan, ensurePnpm } from "../lib/build.js";
+import { buildPlan, ensurePnpm, planUpdateActions } from "../lib/build.js";
 import { startTunnelService, stopTunnelService } from "../lib/cloudflare.js";
-import { loadConfig } from "../lib/config.js";
+import { loadConfig, updateConfig } from "../lib/config.js";
 import type { RuntimeContext } from "../lib/context.js";
+import { latestReleaseTag, repoSlug } from "../lib/dist.js";
 import { generateNsec, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import { waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
@@ -67,15 +70,23 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
         ? { serverUrl: env.VITE_SERVER_URL }
         : { serverPort: cfg.port };
 
+  // Resolve the ref to fetch. A "latest" channel re-resolves the newest release
+  // each run (and persists it below); a pinned ref is used as-is.
+  const slug = repoSlug(cfg.repo);
+  let ref = cfg.ref;
+  if (cfg.channel === "latest") {
+    ref = (slug && (await latestReleaseTag(slug))) || cfg.ref || "main";
+  }
+
   process.stdout.write(
-    `\n${log.bold("🦍 Gorilator update")}  ${log.dim(`${cfg.appDir} · ${cfg.ref}`)}\n\n`,
+    `\n${log.bold("🦍 Gorilator update")}  ${log.dim(`${cfg.appDir} · ${ref}`)}\n\n`,
   );
 
-  // 1. Fetch the latest ref and detect what changed (shown before we touch anything).
+  // 1. Fetch the ref and detect what changed (shown before we touch anything).
   let detected: DetectedUpdate;
   try {
-    detected = await withSpinner(`Checking ${cfg.repo} (${cfg.ref})`, () => {
-      const r = captureStep("git", ["-C", cfg.appDir, "fetch", "--depth", "1", "origin", cfg.ref]);
+    detected = await withSpinner(`Checking ${cfg.repo} (${ref})`, () => {
+      const r = captureStep("git", ["-C", cfg.appDir, "fetch", "--depth", "1", "origin", ref]);
       if (!r.ok) throw new Error(r.output || "git fetch failed");
       return detectChanges(cfg.appDir);
     });
@@ -84,16 +95,35 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   }
   printDetected(detected);
 
-  // 2. Apply: stop → checkout → build → start → health → tunnel, as a step checklist.
-  const plan = buildPlan(cfg.appDir, buildOpts);
+  // Persist the resolved tag for a "latest"-channel install (so status/next run
+  // reflect it) now that the fetch succeeded.
+  if (cfg.channel === "latest" && ref !== cfg.ref) updateConfig({ ref });
+
+  // 2. Decide what to do. shared fans out to server+client+cli; the daemon only
+  //    restarts when the server runtime (server/shared) changed.
+  const actions = planUpdateActions(detected.changes.map((c) => c.label));
+  if (!actions.any) {
+    process.stdout.write(`${log.green("✓ Already up to date — nothing to apply.")}\n`);
+    printPackageVersions(cfg.appDir, { heading: true });
+    return;
+  }
+
+  // Same-origin installs can pull the release's prebuilt dist; legacy split-host
+  // (VITE_SERVER_URL) and direct-client-port installs build from source.
+  const prebuilt = slug && env.VITE_SAME_ORIGIN === "1" ? { slug, tag: ref } : null;
+  const plan = buildPlan(cfg.appDir, { ...buildOpts, prebuilt, actions });
+  const restart = actions.restartServer;
+
+  // 3. Apply: (stop) → checkout → fetch/build changed → (start → health) →
+  //    (tunnel), as a step checklist. Daemon/tunnel steps run only on a restart.
   const steps: StepPlan[] = [
-    ...(tunnelConfigured ? [{ key: "stop-tunnel", label: "Stop Cloudflare tunnel", estimateMs: 3_000 }] : []),
-    { key: "stop", label: "Stop daemon", estimateMs: 3_000 },
+    ...(restart && tunnelConfigured ? [{ key: "stop-tunnel", label: "Stop Cloudflare tunnel", estimateMs: 3_000 }] : []),
+    ...(restart ? [{ key: "stop", label: "Stop daemon", estimateMs: 3_000 }] : []),
     { key: "apply", label: "Apply update (checkout)", estimateMs: 2_000 },
     ...plan.map((p) => ({ key: p.key, label: p.label, estimateMs: p.estimateMs })),
-    { key: "start", label: "Start daemon", estimateMs: 4_000 },
-    { key: "health", label: "Health check", estimateMs: 8_000 },
-    ...(tunnelConfigured ? [{ key: "start-tunnel", label: "Start Cloudflare tunnel", estimateMs: 4_000 }] : []),
+    ...(restart ? [{ key: "start", label: "Start daemon", estimateMs: 4_000 }] : []),
+    ...(restart ? [{ key: "health", label: "Health check", estimateMs: 8_000 }] : []),
+    ...(restart && tunnelConfigured ? [{ key: "start-tunnel", label: "Start Cloudflare tunnel", estimateMs: 4_000 }] : []),
   ];
 
   const ui = new Stepper("Updating", steps);
@@ -101,19 +131,21 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   let failOutput = "";
   let healthy = false;
   try {
-    if (tunnelConfigured) {
+    if (restart && tunnelConfigured) {
       await ui.run("stop-tunnel", () => {
         if (!stopTunnelService()) ui.note("stop-tunnel", "already stopped");
       });
     }
 
-    await ui.run("stop", () => {
-      try {
-        stopService();
-      } catch {
-        ui.note("stop", "was not running");
-      }
-    });
+    if (restart) {
+      await ui.run("stop", () => {
+        try {
+          stopService();
+        } catch {
+          ui.note("stop", "was not running");
+        }
+      });
+    }
 
     await ui.run("apply", () => {
       // Branch-aware checkout (mirrors build.ts cloneOrUpdate): stay on the branch
@@ -121,13 +153,13 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
       let onBranch = false;
       try {
         onBranch = readFileSync(join(cfg.appDir, ".git", "FETCH_HEAD"), "utf8").includes(
-          `\tbranch '${cfg.ref}' of `,
+          `\tbranch '${ref}' of `,
         );
       } catch {
         /* default to detached checkout */
       }
       const args = onBranch
-        ? ["-C", cfg.appDir, "checkout", "-B", cfg.ref, "FETCH_HEAD"]
+        ? ["-C", cfg.appDir, "checkout", "-B", ref, "FETCH_HEAD"]
         : ["-C", cfg.appDir, "-c", "advice.detachedHead=false", "checkout", "-f", "FETCH_HEAD"];
       const r = captureStep("git", args);
       if (!r.ok) {
@@ -138,6 +170,20 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
 
     for (const cmd of plan) {
       await ui.run(cmd.key, () => {
+        // JS step (e.g. download prebuilt dist). On a miss, fall back to building
+        // the changed packages from source in-place.
+        if (cmd.run) {
+          if (cmd.run()) return;
+          ui.note(cmd.key, "no prebuilt asset — building from source");
+          for (const s of buildPlan(cfg.appDir, { ...buildOpts, actions })) {
+            const r = captureStep(s.cmd, s.args, { cwd: s.cwd, env: s.env });
+            if (!r.ok && !s.optional) {
+              failOutput = r.output;
+              throw new Error(`${s.label} failed`);
+            }
+          }
+          return;
+        }
         const r = captureStep(cmd.cmd, cmd.args, { cwd: cmd.cwd, env: cmd.env });
         if (!r.ok) {
           if (cmd.optional) {
@@ -150,24 +196,26 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
       });
     }
 
-    await ui.run("start", () => {
-      try {
-        startService();
-      } catch (e) {
-        failOutput = e instanceof Error ? e.message : String(e);
-        throw new Error("could not start the daemon");
-      }
-    });
-
-    healthy = await ui.run("health", () => waitForHealth(cfg.port));
-    if (!healthy) ui.note("health", "no /healthz yet — check 'gorilator logs'");
-
-    if (tunnelConfigured && healthy) {
-      await ui.run("start-tunnel", () => {
-        if (!startTunnelService()) throw new Error("run 'gorilator tunnel restart'");
+    if (restart) {
+      await ui.run("start", () => {
+        try {
+          startService();
+        } catch (e) {
+          failOutput = e instanceof Error ? e.message : String(e);
+          throw new Error("could not start the daemon");
+        }
       });
-    } else if (tunnelConfigured) {
-      ui.skip("start-tunnel", "daemon not healthy yet");
+
+      healthy = await ui.run("health", () => waitForHealth(cfg.port));
+      if (!healthy) ui.note("health", "no /healthz yet — check 'gorilator logs'");
+
+      if (tunnelConfigured && healthy) {
+        await ui.run("start-tunnel", () => {
+          if (!startTunnelService()) throw new Error("run 'gorilator tunnel restart'");
+        });
+      } else if (tunnelConfigured) {
+        ui.skip("start-tunnel", "daemon not healthy yet");
+      }
     }
   } catch (e) {
     ui.finish();
@@ -178,10 +226,19 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   }
   ui.finish();
 
-  // 3. Success summary.
-  process.stdout.write(
-    `\n${healthy ? log.green("✓ Update complete.") : log.yellow("Update applied (server still warming up).")}\n`,
-  );
+  // The daemon was left running for a no-restart update (e.g. client-only); the
+  // freshly-swapped static assets are served without downtime — confirm it's up.
+  if (!restart) healthy = await waitForHealth(cfg.port);
+
+  // 4. Success summary.
+  const msg = restart
+    ? healthy
+      ? "✓ Update complete."
+      : "Update applied (server still warming up)."
+    : healthy
+      ? "✓ Update complete — no server restart needed."
+      : "Update applied — server health unconfirmed; check 'gorilator logs'.";
+  process.stdout.write(`\n${healthy ? log.green(msg) : log.yellow(msg)}\n`);
   printPackageVersions(cfg.appDir, { heading: true });
   const info = readEnvInfo(cfg.appDir, cfg.port, cfg.clientPort);
   printPorts(info, healthy);

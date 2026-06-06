@@ -15,6 +15,9 @@ export interface InstallConfig {
   clientPort?: number;
   repo: string;
   ref: string;
+  /** "latest" when tracking the newest published release — `update` re-resolves
+   *  the newest release tag each run. Absent for a pinned branch/tag ref. */
+  channel?: "latest";
   user: string;
   serviceManager: string;
   /** Legacy public client hostname from old split-host setups. */
