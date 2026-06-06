@@ -4,7 +4,9 @@
 import { defaultAppDir } from "./paths.js";
 
 const DEFAULT_REPO = "https://github.com/agustinkassis/gorilator-rpg.git";
-const DEFAULT_REF = "main";
+// "latest" = track the newest published GitHub release (resolved at install/update
+// time, with a prebuilt-dist fast path). Pass --ref main (or any branch/tag) to pin.
+const DEFAULT_REF = "latest";
 const DEFAULT_PORT = 2567;
 const DEFAULT_CLIENT_PORT = 0;
 

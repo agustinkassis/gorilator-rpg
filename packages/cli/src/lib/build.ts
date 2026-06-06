@@ -7,6 +7,7 @@
 // loader rejects.
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { downloadReleaseDist } from "./dist.js";
 import * as log from "./log.js";
 import { cliEntryPath, isLinux } from "./paths.js";
 import {
@@ -172,6 +173,26 @@ export function installAndBuild(
   opts: { serverUrl?: string; serverPort?: number } = {},
 ): void {
   pnpmInstall(appDir);
+  buildShared(appDir);
+  buildClient(appDir, opts);
+  buildCli(appDir);
+  log.ok("Build complete.");
+}
+
+/** Install deps, then either fetch a prebuilt release dist (skipping the build)
+ *  or build from source. `prebuilt` is set only for same-origin release-tag
+ *  installs; on any download miss it transparently falls back to building. */
+export function buildOrFetch(
+  appDir: string,
+  opts: { serverUrl?: string; serverPort?: number } = {},
+  prebuilt?: { slug: string; tag: string } | null,
+): void {
+  pnpmInstall(appDir);
+  if (prebuilt && downloadReleaseDist(prebuilt.slug, prebuilt.tag, appDir)) {
+    log.ok(`Fetched prebuilt build for ${prebuilt.tag} — skipped the local build.`);
+    return;
+  }
+  if (prebuilt) log.info("No prebuilt build for this release — building from source.");
   buildShared(appDir);
   buildClient(appDir, opts);
   buildCli(appDir);

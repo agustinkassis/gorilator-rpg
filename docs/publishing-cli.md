@@ -70,6 +70,29 @@ Run it locally with `pnpm version:check` (compares against `origin/main`).
    release fires CI.
 4. Watch the run in the **Actions** tab; on success the new CLI version is live on npm.
 
+Publishing a release also fires
+[`release-dist.yml`](../.github/workflows/release-dist.yml), which builds the game once
+and attaches a **prebuilt dist** asset (`gorilator-dist-<tag>.tar.gz` + `SHA256SUMS`) to
+the release. `gorilator install`/`update` download that instead of building locally — see
+[Prebuilt install](#prebuilt-install-fast-path) below.
+
+## Prebuilt install (fast path)
+
+`gorilator install`/`update` default to the **latest published release** (ref `latest`) and,
+for the standard same-origin deploy, **download the release's prebuilt dist** rather than
+running the ~45s client build. The daemon serves that prebuilt `packages/client/dist` and
+runs the server from source via `tsx`, so building the client on the box is unnecessary.
+
+- It still runs `pnpm install` (for the server's runtime deps + `tsx`); only the build is skipped.
+- Falls back to **building from source** when there's no prebuilt asset — branch refs
+  (`--ref main`), forks without the asset, non-same-origin builds (`--server-url` / an explicit
+  `--client-port`), a checksum mismatch, or offline.
+- `gorilator update` re-resolves the newest release each run when installed on the `latest`
+  channel (stored in the install config); a pinned `--ref` updates to that ref.
+
+Build the artifact for an existing tag manually via **Actions → Release prebuilt dist → Run
+workflow** (`tag` input). The asset is **same-origin only**.
+
 ### Manual publish (fallback)
 
 You can trigger the workflow by hand from **Actions → Publish CLI to npm → Run workflow**.

@@ -1,8 +1,9 @@
 // `gorilator update` — stop services, fast-forward, rebuild, and start services.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { cloneOrUpdate, ensurePnpm, installAndBuild } from "../lib/build.js";
+import { buildOrFetch, cloneOrUpdate, ensurePnpm } from "../lib/build.js";
 import { startTunnelService, stopTunnelService } from "../lib/cloudflare.js";
-import { loadConfig } from "../lib/config.js";
+import { loadConfig, updateConfig } from "../lib/config.js";
+import { latestReleaseTag, repoSlug } from "../lib/dist.js";
 import type { RuntimeContext } from "../lib/context.js";
 import { generateNsec, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import { waitForHealth } from "../lib/health.js";
@@ -47,17 +48,30 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   }
 
   ensurePnpm();
-  cloneOrUpdate(cfg.repo, cfg.ref, cfg.appDir);
-  // Preserve the public client build. New `setup` builds same-origin for the
-  // single public hostname; older split-host installs may still carry
-  // VITE_SERVER_URL and should keep working until setup is rerun.
+
+  // Resolve the ref to fetch. A "latest" channel re-resolves the newest release
+  // each run (and persists it); a pinned ref is used as-is.
+  const slug = repoSlug(cfg.repo);
+  let ref = cfg.ref;
+  if (cfg.channel === "latest") {
+    ref = (slug && (await latestReleaseTag(slug))) || cfg.ref || "main";
+    if (ref !== cfg.ref) {
+      updateConfig({ ref });
+      log.info(`Latest release: ${ref}`);
+    }
+  }
+  cloneOrUpdate(cfg.repo, ref, cfg.appDir);
+
+  // Preserve the public client build. Same-origin installs can use the prebuilt
+  // release dist; older split-host (VITE_SERVER_URL) installs build from source.
   const buildOpts =
     env.VITE_SAME_ORIGIN === "1"
       ? {}
       : env.VITE_SERVER_URL
         ? { serverUrl: env.VITE_SERVER_URL }
         : { serverPort: cfg.port };
-  installAndBuild(cfg.appDir, buildOpts);
+  const prebuilt = slug && env.VITE_SAME_ORIGIN === "1" ? { slug, tag: ref } : null;
+  buildOrFetch(cfg.appDir, buildOpts, prebuilt);
 
   log.info("Starting the daemon…");
   try {
