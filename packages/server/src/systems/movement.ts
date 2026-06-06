@@ -3,10 +3,10 @@ import {
   Player,
   AnimState,
   MOVE_SPEED,
-  SPRINT_SPEED_MULT,
   ARRIVE_THRESHOLD,
 } from "@rpg/shared";
 import { findPath, depenetrate, safeSpawnWorld } from "./pathfinding";
+import { devTuning } from "./devTuning";
 
 /** Route a player to (x,z) around obstacles and start them walking. */
 export function setDestination(player: Player, x: number, z: number) {
@@ -47,9 +47,10 @@ export function placeAtFreeSpot(player: Player, x: number, z: number) {
  *  fresh target (clicked) actually move. */
 const GHOST_SPEED_MULT = 3;
 export function ghostMovementSystem(state: GameState, dt: number) {
-  const speed = MOVE_SPEED * GHOST_SPEED_MULT;
   state.players.forEach((p) => {
     if (p.state === AnimState.DEAD) return;
+    // Faster the more the dev is zoomed out (ghostSpeedMult = camera zoom, 1..6).
+    const speed = MOVE_SPEED * GHOST_SPEED_MULT * (p.ghostSpeedMult || 1);
     const dx = p.targetX - p.x;
     const dz = p.targetZ - p.z;
     const dist = Math.hypot(dx, dz);
@@ -79,7 +80,7 @@ export function movementSystem(state: GameState, dt: number) {
         const dist = Math.hypot(dx, dz);
         if (dist > ARRIVE_THRESHOLD) {
           const base = p.moveSpeed > 0 ? p.moveSpeed : MOVE_SPEED; // grows with level
-          const speed = p.sprinting ? base * SPRINT_SPEED_MULT : base; // +30% while sprinting (staminaSystem gates this)
+          const speed = p.sprinting ? base * devTuning().sprintSpeedMult : base; // sprint boost (staminaSystem gates this)
           const step = Math.min(dist, speed * dt);
           p.x += (dx / dist) * step;
           p.z += (dz / dist) * step;

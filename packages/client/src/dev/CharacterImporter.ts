@@ -46,7 +46,7 @@ export interface CharacterImporterDeps {
   /** Where to drop the placed character (the player's position), or null. */
   getPlayerPos: () => { x: number; z: number } | null;
   /** Called after a character is placed so the world can spawn it live. */
-  onPlaced: (def: CharacterDef, placement: { id: string; x: number; z: number; rotationY: number }) => void;
+  onPlaced: (def: CharacterDef, placement: { id: string; x: number; z: number; rotationY: number; scale?: number }) => void;
 }
 
 /**
@@ -87,7 +87,7 @@ export class CharacterImporter {
     const panel = document.createElement("div");
     panel.id = "charImporterPanel";
     panel.style.cssText =
-      "position:fixed; left:16px; top:56px; width:430px; max-height:88vh; z-index:75; display:none;" +
+      "position:fixed; left:16px; top:56px; width:430px; max-height:88vh; z-index:90; display:none;" +
       "background:#10131af5; border:2px solid #c98a5a; border-radius:10px; color:#e8e8e8;" +
       "font:12px/1.4 system-ui,sans-serif; box-shadow:0 8px 30px #000a; overflow:hidden; flex-direction:column;";
     panel.innerHTML = `
@@ -162,15 +162,23 @@ export class CharacterImporter {
 
   private toggleBtn: HTMLButtonElement;
 
-  /** Show/hide the "Import Character" toolbar button (Dev Mode on/off). */
+  /** The standalone "Import Character" button is retired — it now opens from the
+   *  Library's "Add Character". `visible` only gates whether it may be used; the
+   *  button itself stays hidden, and leaving Dev Mode closes the panel. */
   setVisible(on: boolean) {
-    this.toggleBtn.style.display = on ? "block" : "none";
+    this.toggleBtn.style.display = "none";
     if (!on) this.close();
   }
 
   private toggle() {
     this.open ? this.close() : this.openPanel();
   }
+
+  /** Open the importer panel (called by the Library's "Add Character" button). */
+  openImporter() {
+    if (!this.open) this.openPanel();
+  }
+
   private openPanel() {
     this.open = true;
     this.panel.style.display = "flex";
@@ -352,11 +360,11 @@ export class CharacterImporter {
       const res = await fetch("/__char/place", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ defId: this.def.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0 }),
+        body: JSON.stringify({ defId: this.def.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0, scale: 1 }),
       });
       if (!res.ok) throw new Error(await res.text());
       const out = await res.json();
-      this.deps.onPlaced(this.def, { id: out.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0 });
+      this.deps.onPlaced(this.def, { id: out.id, x: +pos.x.toFixed(1), z: +pos.z.toFixed(1), rotationY: 0, scale: 1 });
       this.status.textContent = `✓ added "${this.def.name}" to the world`;
     } catch (e) {
       this.status.textContent = "place failed: " + (e as Error).message;

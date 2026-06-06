@@ -59,7 +59,7 @@ export interface ShadowRuntime {
   refreshStaticShadows(): void;
   setEnabled(on: boolean): void;
   isEnabled(): boolean;
-  updateFocus(position: { x: number; y?: number; z: number } | null): void;
+  updateFocus(position: { x: number; y?: number; z: number } | null, zoom?: number): void;
 }
 
 const SHADOW_Y = 0.02;
@@ -717,7 +717,7 @@ export class ContactShadowSystem implements ShadowRuntime {
     if (opts.receive ?? true) this.prepareReceivers(meshes, true);
   }
 
-  updateFocus(_position: { x: number; y?: number; z: number } | null): void {
+  updateFocus(_position: { x: number; y?: number; z: number } | null, _zoom = 1): void {
     // The 2D renderer has no moving shadow frustum.
   }
 
@@ -802,7 +802,7 @@ export class NullShadowSystem implements ShadowRuntime {
   isEnabled(): boolean {
     return false;
   }
-  updateFocus(_position: { x: number; y?: number; z: number } | null): void {}
+  updateFocus(_position: { x: number; y?: number; z: number } | null, _zoom = 1): void {}
 }
 
 class LegacyShadowHandle implements ShadowHandle {
@@ -916,16 +916,24 @@ export class LegacyShadowSystem implements ShadowRuntime {
     return this.enabled;
   }
 
-  updateFocus(position: { x: number; y?: number; z: number } | null): void {
+  updateFocus(position: { x: number; y?: number; z: number } | null, zoom = 1): void {
     if (!position || !this.enabled) return;
     const d = this.sun.direction;
     const len = Math.hypot(d.x, d.y, d.z) || 1;
-    const dist = 130;
+    const z = Number.isFinite(zoom) ? Math.max(0.1, zoom) : 1;
+    const dist = 130 * z;
     this.sun.position.set(
       position.x - (d.x / len) * dist,
       (position.y ?? 0) - (d.y / len) * dist,
       position.z - (d.z / len) * dist,
     );
+    const half = 40 * z;
+    this.sun.orthoLeft = -half;
+    this.sun.orthoRight = half;
+    this.sun.orthoTop = half;
+    this.sun.orthoBottom = -half;
+    this.sun.shadowMinZ = 80 * z;
+    this.sun.shadowMaxZ = 180 * z;
   }
 
   setCasterEnabled(meshes: AbstractMesh[], on: boolean): void {

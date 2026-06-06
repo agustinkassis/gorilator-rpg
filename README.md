@@ -44,7 +44,7 @@ Run your own realm natively (no Docker). Three steps:
 
 ```bash
 # 1. Bootstrap on a bare box (installs Node, git, deps, then the game)
-curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/packages/cli/install.sh | sudo bash
 
 # 2. ...or, if you already have Node ≥ 20.6:
 npx gorilator install

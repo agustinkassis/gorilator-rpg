@@ -50,7 +50,39 @@ const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivEle
 // Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
 // time by Vite with the package.json version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
-if (versionEl) versionEl.textContent = `v${__APP_VERSION__}`;
+if (versionEl) {
+  versionEl.textContent = `v${__APP_VERSION__}`;
+  wireVersionPanel(versionEl);
+}
+
+/** Click the footer version tag to toggle a small popup listing every workspace
+ *  package version (injected at build time as __PKG_VERSIONS__). */
+function wireVersionPanel(tag: HTMLElement): void {
+  const panel = document.getElementById("versionPanel");
+  if (!panel) return;
+  const versions = __PKG_VERSIONS__ ?? {};
+  panel.innerHTML =
+    `<div class="vpTitle">Package versions</div>` +
+    Object.entries(versions)
+      .map(([label, v]) => `<div class="vpRow"><span class="vpName">${label}</span><span class="vpVer">v${v}</span></div>`)
+      .join("");
+  const close = () => {
+    panel.hidden = true;
+    document.removeEventListener("pointerdown", onOutside, true);
+  };
+  const onOutside = (e: PointerEvent) => {
+    if (!panel.contains(e.target as Node) && e.target !== tag) close();
+  };
+  tag.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (panel.hidden) {
+      panel.hidden = false;
+      document.addEventListener("pointerdown", onOutside, true);
+    } else {
+      close();
+    }
+  });
+}
 const worktreeEl = document.getElementById("worktreeTag");
 const worktreePanelEl = document.getElementById("worktreePanel") as HTMLDivElement | null;
 interface WorktreeCommit {
@@ -1100,7 +1132,9 @@ if (worktreeEl) {
 // DEV-only: `?mocknostr=gen|nsec1…|<hex>` installs a fake NIP-07 signer so the
 // Nostr login flow can be tested without a browser extension. Installed up-front
 // (before the splash) so window.nostr is ready when "Login with Nostr" is clicked.
-if (import.meta.env.DEV) {
+// Suppressed when VITE_NO_MOCK_NOSTR=1 (a CLI-managed "dev mode" server sets this)
+// so a reachable dev server can't be used to impersonate any npub.
+if (import.meta.env.DEV && import.meta.env.VITE_NO_MOCK_NOSTR !== "1") {
   const mockArg = new URLSearchParams(location.search).get("mocknostr");
   if (mockArg) void import("./net/nostrMock").then((m) => m.installMockSigner(mockArg));
 }
@@ -1168,12 +1202,19 @@ new GameMenu({
 // Imported-prop registry (loads props.json into the world). In dev builds it also
 // backs Dev Mode, the in-game world editor (toggle with the button or ` backtick).
 const propManager = new PropManager(scene, shadows);
+game.setStructureProps(propManager); // destroyed structures hide their prop visual
 // Placed custom characters (imported Meshy zips) — loads npcs.json + renders them.
 const characterManager = new CharacterManager(scene, shadows);
 minimap.setProps(propManager); // so the map can icon imported trees/rocks/concrete props
 const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
 devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
 devMode?.setGame(game); // library explorer can select + camera-focus world entities
+devMode?.setInventoryUI(inventory); // Dev Mode: click an inventory slot to set its item/qty
+if (developerLabels)
+  devMode?.setDeveloperLabels({
+    isEnabled: () => developerLabels.isEnabled(),
+    setEnabled: (on) => developerLabels.setEnabled(on),
+  });
 
 setupClickToMove({
   scene,
@@ -1181,7 +1222,8 @@ setupClickToMove({
   net,
   pickTargetAt: game.pickTargetAt,
   onMoveTo: (point) => {
-    hud.showClickMarker(point);
+    // No click marker while paused (ghost free-roam in Dev Mode).
+    if ((net.room?.state.timeScale ?? 1) > 0) hud.showClickMarker(point);
   },
   onSelectTarget: (id) => game.flashSelectTarget(id), // flash the picked target white
   // a banana/stone is thrown by holding its assigned hotkey (Q/W/E/R)
@@ -1203,6 +1245,9 @@ setupSprint(net);
 // same engine while the player picks a name; the main render loop below draws it
 // instead of the game world until `splash.active` flips during the launch.
 const splash = new SplashScreen(engine);
+// Surface a daemon "update available" banner on the splash (best-effort, silent
+// when offline / up to date). Fed by the server's /api/update auto-check.
+void splash.showUpdateBanner(net.httpBase());
 
 // homeMaxHp is kept so the home bar can still read "fallen" after the house is
 // removed from state on collapse.
@@ -1343,6 +1388,9 @@ async function start() {
     onHouseAdd: (h, id) => game.addHouse(h, id),
     onHouseChange: (h, id) => game.changeHouse(h, id),
     onHouseRemove: (id) => game.removeHouse(id),
+    onStructureAdd: (s, id) => game.addStructure(s, id),
+    onStructureChange: (s, id) => game.changeStructure(s, id),
+    onStructureRemove: (id) => game.removeStructure(id),
     onBananaThrow: (ev) => game.showBananaThrow(ev),
     onDamage: (ev) => game.onDamage(ev),
     onKill: (ev) => game.onKill(ev),
@@ -1454,11 +1502,14 @@ if (import.meta.env.DEV) {
     playClip: (state) => game.playAnimationTestClip(state),
     clearClip: () => game.clearAnimationTestClip(),
   });
+  devMode?.setAnimationTester(animationTester);
+  devMode?.setCharacterImporter(characterImporter); // Library "Add Character" opens it
   devMode?.onVisibilityChange((on) => {
     document.body.classList.toggle("devMode", on);
     characterImporter.setVisible(on);
     propImporter.setVisible(on);
     animationTester.setVisible(on);
+    game.setDamageFxSuppressed(on); // no red flash / shake / low-HP vignette while editing
   });
 }
 

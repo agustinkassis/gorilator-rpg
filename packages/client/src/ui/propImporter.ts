@@ -100,7 +100,9 @@ export class PropImporter {
   }
 
   setVisible(on: boolean) {
-    this.toggleBtn.style.display = on ? "block" : "none";
+    // The standalone "Import Model" button is retired (model import now lives in the
+    // Library's "Add Structure"). Keep the button hidden; still close on Dev exit.
+    this.toggleBtn.style.display = "none";
     if (!on && this.open) this.toggle();
   }
 

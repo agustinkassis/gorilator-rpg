@@ -3,6 +3,7 @@ import { AnimState, SPRINT_SPEED_MULT, BERSERKER_SCALE } from "@rpg/shared";
 import { AnimationController } from "./AnimationController";
 import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH, BERSERK_FLASH } from "./types";
 import { makeBerserkerAura } from "../fx/berserkerFx";
+import { getCameraZoom } from "../scene/camera";
 import { lerpAngle, smooth } from "../util/math";
 
 export interface AnimationDebugClip {
@@ -34,9 +35,13 @@ const CORPSE_FADE = 0.9; // seconds to fade the corpse to nothing
 const SELECT_FLASH_MS = 0.6; // total duration of the select flash
 const SELECT_BLINK_MS = 0.1; // overlay toggles every this long → "flash, flash, flash"
 const DMG_BLINK_MS = 0.08; // local player's dark-red damage flash toggles this fast
-const GHOST_FLOAT = 0.5; // units a paused "ghost" player floats off the floor (~1ft+)
+const GHOST_FLOAT = 0.845; // units a paused "ghost" player floats off the floor (0.65 + 30%)
 const GHOST_VISIBILITY = 0.7; // translucency of a ghosting player
 const SHADOW_SHADE = new Color3(0, 0, 0);
+const GHOST_BOB_AMPL = 0.08; // how far the ghost drifts up/down around its float height
+const GHOST_BOB_HZ = 0.6; // gentle bob cycles per second
+const GHOST_FLY_TILT = 0.6; // radians the ghost pitches forward when flying (~34°)
+const GHOST_FLY_MIN_SPEED = 0.3; // units/sec of motion before the flight tilt kicks in
 
 /**
  * Client-side view of one networked character (player or dummy). Interpolates
@@ -79,6 +84,7 @@ export class Entity {
   private facingY = 0;
   private yawFix = 0; // current (blended) clip-orientation correction
   private yawFixTarget = 0; // correction the current clip wants
+  private ghostTilt = 0; // blended forward pitch while ghost-flying
   // Real-motion tracking, so a body that isn't actually translating (stuck on
   // geometry, blocked, or arrived) stands in IDLE rather than walking in place.
   private lastX = 0;
@@ -99,7 +105,10 @@ export class Entity {
   berserkerMs = 0;
   private berserkerActive = false;
   private berserkerParticles: ParticleSystem | null = null;
-  private baseScaleX = -1; // lazy-read original scale; -1 = not yet sampled
+  private visualScale = 1;
+  private naturalScaleX = 1;
+  private naturalScaleY = 1;
+  private naturalScaleZ = 1;
 
   constructor(id: string, spawned: SpawnedCharacter, isLocal: boolean) {
     this.id = id;
@@ -107,6 +116,9 @@ export class Entity {
     this.spawned = spawned;
     this.yawSign = spawned.yawSign ?? 1;
     this.root = spawned.root;
+    this.naturalScaleX = this.root.scaling.x;
+    this.naturalScaleY = this.root.scaling.y;
+    this.naturalScaleZ = this.root.scaling.z;
     this.root.metadata = { entityId: id };
     this.anim = new AnimationController(spawned.groups, spawned.speeds);
     this.anim.play(AnimState.IDLE);
@@ -174,13 +186,34 @@ export class Entity {
     this.refreshOverlay();
   }
 
+  /** Dev Mode transform scale. Gameplay effects like Berserker layer on top. */
+  setVisualScale(scale: number) {
+    const next = Number.isFinite(scale) ? Math.max(0.05, Math.min(40, scale)) : 1;
+    if (Math.abs(next - this.visualScale) < 0.001) return;
+    this.visualScale = next;
+    this.applyVisualScale();
+  }
+
+  private applyVisualScale() {
+    const mult = this.visualScale * (this.berserkerActive ? BERSERKER_SCALE : 1);
+    this.root.scaling.set(
+      this.naturalScaleX * mult,
+      this.naturalScaleY * mult,
+      this.naturalScaleZ * mult,
+    );
+  }
+
   /** Dev Mode ghost: go translucent + float off the ground (the local player while
    *  the game is paused). Idempotent; restoring drops it back to opaque on the floor. */
   setGhost(on: boolean) {
     if (on === this.ghost) return;
     this.ghost = on;
     this.setVisibility(on ? GHOST_VISIBILITY : 1);
-    this.root.position.y = on ? GHOST_FLOAT : 0;
+    this.root.position.y = on ? GHOST_FLOAT * getCameraZoom() : 0; // higher the more zoomed out
+    if (!on) {
+      this.ghostTilt = 0;
+      this.root.rotation.x = 0; // drop the flight pitch back upright
+    }
   }
 
   /** Snap to a position with no interpolation (used on spawn). */
@@ -298,6 +331,13 @@ export class Entity {
     this.root.position.x = Scalar.Lerp(this.root.position.x, this.targetX, f);
     this.root.position.z = Scalar.Lerp(this.root.position.z, this.targetZ, f);
 
+    // Ghost free-roam: gently bob up and down around the float height so the
+    // paused local player visibly hovers rather than sitting at a fixed offset.
+    if (this.ghost) {
+      this.root.position.y =
+        GHOST_FLOAT * getCameraZoom() + Math.sin(this.stateTime * GHOST_BOB_HZ * Math.PI * 2) * GHOST_BOB_AMPL;
+    }
+
     // Measure real motion (smoothed units/sec) and re-pick the clip, so a body
     // that has stopped translating drops out of WALK into IDLE.
     const dx = this.root.position.x - this.lastX;
@@ -323,15 +363,14 @@ export class Entity {
     this.berserkerActive = this.berserkerMs > 0;
     if (this.berserkerActive && !wasBerserk) {
       // buff just started — grow model and spawn the green aura
-      this.baseScaleX = this.root.scaling.x;
-      this.root.scaling.setAll(this.baseScaleX * BERSERKER_SCALE);
+      this.applyVisualScale();
       const scene = this.root.getScene();
       if (scene) {
         this.berserkerParticles = makeBerserkerAura(scene, this.root.position);
       }
     } else if (!this.berserkerActive && wasBerserk) {
       // buff expired — restore original scale and stop the aura
-      if (this.baseScaleX > 0) this.root.scaling.setAll(this.baseScaleX);
+      this.applyVisualScale();
       if (this.berserkerParticles) {
         this.berserkerParticles.stop();
         this.berserkerParticles.dispose();
@@ -349,6 +388,21 @@ export class Entity {
     // in at ~the animation cross-fade rate so attack/throw don't snap-turn.
     this.facingY = lerpAngle(this.facingY, this.targetRotY, smooth(dt, 0.05));
     this.yawFix = Scalar.Lerp(this.yawFix, this.yawFixTarget, smooth(dt, 0.12));
+
+    // Ghost flight: while drifting, face the direction of travel and pitch the
+    // body forward like Superman flying. The moment the ghost stops (or leaves
+    // ghost mode) it levels back out promptly and settles exactly upright.
+    const flying = this.ghost && this.moveSpeed > GHOST_FLY_MIN_SPEED;
+    let tiltTarget = 0;
+    if (flying) {
+      const heading = Math.atan2(dx, dz) * this.yawSign; // root forward is +Z
+      this.facingY = lerpAngle(this.facingY, heading, smooth(dt, 0.08));
+      tiltTarget = GHOST_FLY_TILT;
+    }
+    // Ease into the lean, but snap back upright faster when stopping.
+    this.ghostTilt = Scalar.Lerp(this.ghostTilt, tiltTarget, smooth(dt, flying ? 0.12 : 0.05));
+    if (!flying && this.ghostTilt < 0.01) this.ghostTilt = 0; // fully level when at rest
+    this.root.rotation.x = this.ghostTilt;
     this.root.rotation.y = this.facingY + this.yawFix;
 
     if (!this.spawned.hasAnims) this.spawned.pose?.(this.state, this.stateTime);

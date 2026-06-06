@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import * as log from "./log.js";
 import { isMac } from "./paths.js";
-import { isRoot, tryPrivileged, which } from "./proc.js";
+import { isRoot, pathDirs as getPathDirs, tryPrivileged, which } from "./proc.js";
 
 export function isTemporaryNpxCommand(commandPath: string): boolean {
   const normalized = commandPath.replace(/\\/g, "/");
@@ -77,7 +77,7 @@ function isWrapperShim(shim: string): boolean {
 }
 
 function pathDirs(): Set<string> {
-  return new Set((process.env.PATH ?? "").split(":").filter(Boolean));
+  return new Set(getPathDirs());
 }
 
 function tryDirectOrPrivileged(cmd: string, args: string[]): boolean {

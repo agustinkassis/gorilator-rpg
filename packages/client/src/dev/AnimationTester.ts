@@ -55,11 +55,14 @@ export class AnimationTester {
 
   setVisible(on: boolean) {
     this.visible = on;
-    this.btn.style.display = on ? "block" : "none";
+    // The standalone button is retired — Anim Test now launches from the Dev Mode
+    // Tools window — but `visible` still gates whether the panel may open.
+    this.btn.style.display = "none";
     if (!on) this.setActive(false);
   }
 
-  private toggle() {
+  /** Open/close the tester panel (called by the Dev Mode Tools window). */
+  toggle() {
     this.setActive(!this.active);
   }
 

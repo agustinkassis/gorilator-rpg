@@ -10,7 +10,6 @@ import {
   type AbstractMesh,
   type TransformNode,
 } from "@babylonjs/core";
-import { CRATES } from "@rpg/shared";
 import { NetworkClient } from "../net/NetworkClient";
 import { buildBanana } from "../entities/models/banana";
 import { buildBerserkerPotion } from "../entities/models/berserkerPotion";
@@ -22,7 +21,7 @@ import { buildStone } from "../entities/models/stone";
 import { buildTree } from "../entities/models/tree";
 import { bounds, importModel } from "../scene/props";
 import { PropManager } from "./PropManager";
-import { itemName, loadItemDefs } from "../items/itemRegistry";
+import { loadItemDefs } from "../items/itemRegistry";
 import type { CharacterDef } from "../entities/characterDef";
 
 /**
@@ -36,19 +35,14 @@ export interface LibraryExplorerDeps {
   focusEntity: (kind: string, id: string) => boolean;
   focusPos: (x: number, z: number) => void;
   clearFocus: () => void;
+  /** Hand off to the floating instance navigator (◀ prev / next ▶) on the map. */
+  browseInstances: (focusKind: string, ids: string[], label: string) => void;
   spawnEntity: (kind: string, label: string) => void;
   placeCharacter: (def: CharacterDef) => void;
   placeModel: (model: string, name: string) => void;
   uploadModel: (file: File, name: string) => void;
-}
-
-interface Entry {
-  label: string;
-  badge?: string;
-  meta?: string;
-  category: ExistingCategory;
-  dim?: boolean;
-  onClick: () => void;
+  openItemLibrary: () => void;
+  addCharacter: () => void;
 }
 
 interface ModelEntry {
@@ -86,11 +80,10 @@ interface PlacementLite {
   defId: string;
 }
 
-const MODES = ["existing", "new"] as const;
-type Mode = (typeof MODES)[number];
 const ENTRY_CATEGORIES = ["characters", "players", "resources", "structures", "objects", "items"] as const;
 type ExistingCategory = (typeof ENTRY_CATEGORIES)[number];
-const LIBRARY_TABS = ["items", "npc", "structures", "resources"] as const;
+// Create-entity top-level kinds the user picks between.
+const LIBRARY_TABS = ["character", "structure", "item"] as const;
 type LibraryTab = (typeof LIBRARY_TABS)[number];
 const BUILTIN_NEW_ENTITIES: TemplateEntry[] = [
   { label: "Goblin", kind: "goblin", meta: "Enemy", category: "characters", thumb: { type: "model", model: "/models/goblin.glb", token: "runtime" } },
@@ -112,14 +105,13 @@ export class LibraryExplorer {
   private searchEl: HTMLInputElement;
   private gridEl: HTMLElement;
   private statusEl: HTMLElement;
-  private modeBtns = new Map<Mode, HTMLButtonElement>();
   private categoryBtns = new Map<LibraryTab, HTMLButtonElement>();
   private compactBtn: HTMLButtonElement;
   private uploadEl: HTMLInputElement;
+  private addBtn: HTMLButtonElement;
   private open = false;
   private compact = false;
-  private mode: Mode = "new";
-  private activeTab: LibraryTab = "items";
+  private activeTab: LibraryTab = "character";
   private previewDisposers: Array<() => void> = [];
 
   constructor(private deps: LibraryExplorerDeps) {
@@ -145,21 +137,13 @@ export class LibraryExplorer {
     const titleBox = document.createElement("div");
     this.titleEl = document.createElement("b");
     this.titleEl.style.cssText = "display:block; color:#9fe0a0; font-size:15px;";
-    this.titleEl.textContent = "Entity Library";
+    this.titleEl.textContent = "Library";
     this.summaryEl = document.createElement("div");
     this.summaryEl.style.cssText = "color:#9fb0c0; font-size:11px; margin-top:2px;";
     titleBox.append(this.titleEl, this.summaryEl);
 
     const controls = document.createElement("div");
     controls.style.cssText = "display:flex; align-items:center; gap:7px;";
-    for (const mode of MODES) {
-      const b = document.createElement("button");
-      b.textContent = mode === "existing" ? "Existing entities" : "New entity";
-      b.style.cssText = tabButtonCss(false);
-      b.onclick = () => this.setMode(mode);
-      this.modeBtns.set(mode, b);
-      controls.appendChild(b);
-    }
     const refresh = document.createElement("button");
     refresh.innerHTML = refreshIconSvg();
     refresh.title = "Refresh library";
@@ -177,7 +161,7 @@ export class LibraryExplorer {
 
     const toolbar = document.createElement("div");
     toolbar.style.cssText =
-      "display:grid; grid-template-columns:minmax(180px, 1fr) auto; gap:8px; align-items:center;" +
+      "display:grid; grid-template-columns:minmax(160px, 1fr) auto; gap:8px; align-items:center;" +
       "padding:10px 14px; background:#111720; border-bottom:1px solid #263245;";
     this.searchEl = document.createElement("input");
     this.searchEl.type = "search";
@@ -186,9 +170,7 @@ export class LibraryExplorer {
       "min-width:0; height:32px; border:1px solid #35445e; border-radius:6px; background:#0b0f16;" +
       "color:#eef4fb; padding:0 10px; outline:none;";
     this.searchEl.oninput = () => void this.render();
-    const uploadWrap = document.createElement("label");
-    uploadWrap.textContent = "Import GLB";
-    uploadWrap.style.cssText = smallButtonCss("#26362c", "#dff5df") + "display:inline-flex; align-items:center;";
+    // Hidden .glb picker, triggered by "Add Structure".
     this.uploadEl = document.createElement("input");
     this.uploadEl.type = "file";
     this.uploadEl.accept = ".glb,model/gltf-binary";
@@ -201,12 +183,15 @@ export class LibraryExplorer {
       this.deps.uploadModel(f, name);
       (e.target as HTMLInputElement).value = "";
     };
-    uploadWrap.appendChild(this.uploadEl);
-    toolbar.append(this.searchEl, uploadWrap);
+    // Per-tab primary "Add <Type>" button (label + action set in refreshChrome).
+    this.addBtn = document.createElement("button");
+    this.addBtn.style.cssText = smallButtonCss("#26362c", "#dff5df");
+    this.addBtn.onclick = () => this.onAddClick();
+    toolbar.append(this.searchEl, this.addBtn, this.uploadEl);
 
     const categoryTabs = document.createElement("div");
     categoryTabs.style.cssText =
-      "display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; padding:0 14px 10px;" +
+      "display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; padding:0 14px 10px;" +
       "background:#111720; border-bottom:1px solid #263245;";
     categoryTabs.setAttribute("role", "tablist");
     for (const tab of LIBRARY_TABS) {
@@ -235,12 +220,7 @@ export class LibraryExplorer {
     this.open ? this.close() : this.openPanel();
   }
 
-  openNew() {
-    this.openPanel("new");
-  }
-
-  private openPanel(mode: Mode = "new") {
-    this.mode = mode;
+  private openPanel() {
     this.open = true;
     this.panel.style.display = "flex";
     this.refreshChrome();
@@ -256,13 +236,6 @@ export class LibraryExplorer {
 
   setStatus(msg: string) {
     this.statusEl.textContent = msg;
-  }
-
-  private setMode(mode: Mode) {
-    this.mode = mode;
-    this.searchEl.placeholder = mode === "existing" ? "Search existing entities" : "Search new entities";
-    this.refreshChrome();
-    void this.render();
   }
 
   private setCompact(on: boolean) {
@@ -281,13 +254,24 @@ export class LibraryExplorer {
     this.compactBtn.setAttribute("aria-label", this.compact ? "Expand library" : "Minify library");
     this.gridEl.style.gridTemplateColumns = this.compact ? "1fr" : "repeat(auto-fill, minmax(178px, 1fr))";
     this.gridEl.style.gap = this.compact ? "7px" : "12px";
-    for (const [mode, btn] of this.modeBtns) btn.style.cssText = tabButtonCss(mode === this.mode);
     for (const [tab, btn] of this.categoryBtns) {
       const on = tab === this.activeTab;
       btn.style.cssText = categoryTabCss(on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
     }
-    this.uploadEl.parentElement!.style.display = this.mode === "new" && this.activeTab === "structures" ? "inline-flex" : "none";
+    const addLabel: Record<LibraryTab, string> = {
+      character: "➕ Add Character",
+      structure: "➕ Add Structure",
+      item: "➕ Add Item",
+    };
+    this.addBtn.textContent = addLabel[this.activeTab];
+  }
+
+  /** The per-tab "Add <Type>" action: open that type's authoring tool. */
+  private onAddClick() {
+    if (this.activeTab === "character") this.deps.addCharacter();
+    else if (this.activeTab === "structure") this.uploadEl.click();
+    else this.deps.openItemLibrary();
   }
 
   private setActiveTab(tab: LibraryTab) {
@@ -296,331 +280,200 @@ export class LibraryExplorer {
     void this.render();
   }
 
+  /** Single unified view: every entity type for the active tab as an identical
+   *  card showing its thumbnail, name, live "N in map" count, and an Add action. */
   private async render() {
     if (!this.open) return;
     this.disposePreviews();
     this.gridEl.textContent = "loading...";
-    if (this.mode === "existing") await this.renderExisting();
-    else await this.renderNew();
-  }
-
-  private async renderExisting() {
-    const entries = await this.existingEntries();
-    if (!this.open || this.mode !== "existing") return;
-    const total = entries.reduce((sum, e) => sum + countNumber(e.badge), 0);
-    const tabTotal = entries.filter((e) => this.matchesActiveTab(e.category)).reduce((sum, e) => sum + countNumber(e.badge), 0);
-    this.summaryEl.textContent = `${tabLabel(this.activeTab)} · ${tabTotal} of ${total} world entities`;
-    this.titleEl.textContent = "Entity Library";
-    const q = normalized(this.searchEl.value);
-    const filtered = entries.filter((e) => {
-      const matchesSearch = !q || normalized(`${e.label} ${e.meta ?? ""} ${e.category}`).includes(q);
-      const matchesCategory = this.matchesActiveTab(e.category);
-      return matchesSearch && matchesCategory;
-    });
-    this.gridEl.innerHTML = "";
-    if (!filtered.length) {
-      this.gridEl.textContent = "nothing matches";
-      return;
-    }
-    for (const e of filtered) this.gridEl.appendChild(this.existingCard(e));
-    this.setStatus("Click a card to cycle through matching world instances and open the inspector.");
-  }
-
-  private async renderNew() {
     const [allModels, defs, placements] = await Promise.all([
       this.fetchJson<ModelEntry[]>("/__props/models"),
       this.fetchJson<CharacterDef[]>("/__char/defs"),
       this.fetchJson<PlacementLite[]>("/__char/placements"),
     ]);
+    await loadItemDefs().catch(() => undefined);
+    if (!this.open) return;
     const models = allModels.filter((m) => !runtimeAssetInfo(m.model));
-    if (!this.open || this.mode !== "new") return;
     const placed = this.deps.propManager.all();
-    this.titleEl.textContent = "Entity Library";
-    const total = BUILTIN_NEW_ENTITIES.length + defs.length + models.length;
+    this.titleEl.textContent = "Library";
     const q = normalized(this.searchEl.value);
-    const matches = (label: string, meta: string, category: ExistingCategory) => {
-      const matchesSearch = !q || normalized(`${label} ${meta} ${category}`).includes(q);
-      const matchesCategory = this.matchesActiveTab(category);
-      return matchesSearch && matchesCategory;
-    };
-    const builtin = BUILTIN_NEW_ENTITIES.filter((e) => matches(e.label, e.meta, e.category));
-    const filteredDefs = defs.filter((d) => matches(d.name || d.id, `Custom character ${d.baseModel}`, "characters"));
-    const filteredModels = models.filter((m) => matches(m.name, `Placed object ${m.model}`, "objects"));
-    const tabTotal =
-      BUILTIN_NEW_ENTITIES.filter((e) => this.matchesActiveTab(e.category)).length +
-      defs.filter(() => this.matchesActiveTab("characters")).length +
-      models.filter(() => this.matchesActiveTab("objects")).length;
-    this.summaryEl.textContent = `${tabLabel(this.activeTab)} · ${tabTotal} of ${total} templates`;
+    const matches = (label: string, meta: string, category: ExistingCategory) =>
+      (!q || normalized(`${label} ${meta} ${category}`).includes(q)) && this.matchesActiveTab(category);
+
+    const cards: HTMLElement[] = [];
+    let inMap = 0;
+
+    // Built-in entity types: Tree/Rock/House, Goblin/Dummy, the pickup items.
+    for (const e of BUILTIN_NEW_ENTITIES) {
+      if (!matches(e.label, e.meta, e.category)) continue;
+      const { ids, focusKind } = this.liveIdsForKind(e.kind);
+      inMap += ids.length;
+      cards.push(
+        this.entityCard({
+          name: e.label,
+          meta: e.meta,
+          thumb: e.thumb,
+          count: ids.length,
+          onAdd: () => {
+            this.setStatus(`adding ${e.label}...`);
+            this.deps.spawnEntity(e.kind, e.label);
+          },
+          onFocus: () => this.browse(focusKind, ids, e.label),
+        }),
+      );
+    }
+
+    // Custom characters (imported Meshy defs).
+    for (const d of defs) {
+      if (!matches(d.name || d.id, "Custom character", "characters")) continue;
+      const ids = placements.filter((p) => p.defId === d.id).map((p) => p.id);
+      inMap += ids.length;
+      cards.push(
+        this.entityCard({
+          name: d.name || d.id,
+          meta: "Custom character",
+          thumb: { type: "model", model: d.baseModel },
+          count: ids.length,
+          onAdd: () => {
+            this.setStatus(`adding ${d.name || d.id}...`);
+            this.deps.placeCharacter(d);
+          },
+          onFocus: () => this.browse("enemy", ids, d.name || d.id),
+        }),
+      );
+    }
+
+    // Imported .glb object models (e.g. meshy_ai_timberstone).
+    for (const m of models) {
+      if (!matches(m.name, "Object", "objects")) continue;
+      const ids = placed.filter((p) => p.def.model === m.model).map((p) => p.id);
+      inMap += ids.length;
+      cards.push(
+        this.entityCard({
+          name: m.name,
+          meta: `Object · ${mb(m.size)}`,
+          thumb: { type: "model", model: m.model, token: m.size },
+          count: ids.length,
+          onAdd: () => {
+            this.setStatus(`placing ${m.name}...`);
+            this.deps.placeModel(m.model, m.name);
+          },
+          onFocus: () => this.browse("prop", ids, m.name),
+        }),
+      );
+    }
+
+    if (!this.open) return;
+    this.summaryEl.textContent = `${tabLabel(this.activeTab)} · ${cards.length} types · ${inMap} in map`;
     this.gridEl.innerHTML = "";
-    if (!builtin.length && !filteredDefs.length && !filteredModels.length) {
+    if (!cards.length) {
       this.gridEl.textContent = "no entities match";
       return;
     }
-    for (const e of builtin) {
-      const current = this.currentCountFor(e.kind);
-      this.gridEl.appendChild(this.templateCard(e, current));
-    }
-    for (const d of filteredDefs) {
-      const count = placements.filter((p) => p.defId === d.id).length;
-      this.gridEl.appendChild(this.characterCard(d, count));
-    }
-    for (const m of filteredModels) {
-      const count = placed.filter((p) => p.def.model === m.model).length;
-      this.gridEl.appendChild(this.modelCard(m, count));
-    }
-    this.setStatus("Click an entity to add it, then move the cursor over the ground and click to place.");
+    for (const c of cards) this.gridEl.appendChild(c);
+    this.setStatus("＋ Add places a new one. Click a count badge to focus existing instances.");
   }
 
   private matchesActiveTab(category: ExistingCategory): boolean {
-    if (this.activeTab === "items") return category === "items";
-    if (this.activeTab === "npc") return category === "characters" || category === "players";
-    if (this.activeTab === "structures") return category === "structures" || category === "objects";
-    return category === "resources";
+    if (this.activeTab === "item") return category === "items";
+    if (this.activeTab === "character") return category === "characters" || category === "players";
+    // "structure" = everything non-alive, non-pickup: houses, crates, props, trees, rocks.
+    return category === "structures" || category === "objects" || category === "resources";
   }
 
-  private existingCard(e: Entry): HTMLElement {
-    const b = document.createElement("button");
-    b.style.cssText = cardCss(this.compact, !!e.dim);
-    b.innerHTML = `
-      <div style="display:flex; justify-content:space-between; gap:10px; align-items:start;">
-        <div style="min-width:0;">
-          <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(e.label)}</div>
-          <div style="color:#8fa0b5; font-size:11px; margin-top:3px;">${esc(e.meta ?? cap(e.category))}</div>
-        </div>
-        <div style="flex:none; min-width:34px; text-align:center; background:#0d131d; border:1px solid #263245; border-radius:6px; padding:3px 6px; color:#b8c7dc;">${esc(e.badge ?? "")}</div>
-      </div>`;
-    b.onmouseenter = () => (b.style.borderColor = "#65bc72");
-    b.onmouseleave = () => (b.style.borderColor = "#2a3548");
-    b.onclick = () => e.onClick();
-    return b;
-  }
-
-  private modelCard(m: ModelEntry, placedCount: number): HTMLElement {
-    return this.modelLikeCard(m, mb(m.size), `${placedCount} placed`, () => {
-      this.setStatus(`placing ${m.name}...`);
-      this.deps.placeModel(m.model, m.name);
-    });
-  }
-
-  private modelLikeCard(m: ModelEntry, leftMeta: string, rightMeta: string, onAdd: () => void): HTMLElement {
-    const b = document.createElement("button");
-    b.style.cssText =
-      cardCss(this.compact, false) +
-      "padding:0; overflow:hidden;" +
-      (this.compact ? "display:grid; grid-template-columns:92px minmax(0,1fr); align-items:stretch;" : "display:block;");
-    const previewWrap = document.createElement("div");
-    previewWrap.style.cssText =
-      "position:relative; width:100%; height:" + (this.compact ? "100%" : "128px") + "; min-height:" + (this.compact ? "74px" : "128px") + "; background:#0a0e14; overflow:hidden;";
-    const preview = document.createElement("img");
-    preview.alt = "";
-    preview.decoding = "async";
-    preview.loading = "lazy";
-    preview.width = this.compact ? 112 : 220;
-    preview.height = this.compact ? 62 : 128;
-    preview.style.cssText = "width:100%; height:100%; display:block; object-fit:contain; background:#0a0e14;";
-    const fallback = this.thumbPlaceholder(m.name);
-    previewWrap.append(preview, fallback);
-    const body = document.createElement("div");
-    body.style.cssText = "padding:9px; display:grid; gap:5px; min-width:0;";
-    body.innerHTML = `
-      <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.name)}</div>
-      <div style="display:flex; justify-content:space-between; color:#8fa0b5; font-size:11px; gap:8px;">
-        <span>${esc(leftMeta)}</span>
-        <span>${esc(rightMeta)}</span>
-      </div>
-      <div style="height:26px; display:grid; place-items:center; border:1px solid #3f8c49; border-radius:6px; color:#e8ffe8; background:#23472b;">Add</div>`;
-    b.append(previewWrap, body);
-    b.onmouseenter = () => (b.style.borderColor = "#65bc72");
-    b.onmouseleave = () => (b.style.borderColor = "#2a3548");
-    b.onclick = onAdd;
-    void this.loadThumb(preview, { type: "model", model: m.model, token: m.size }, fallback);
-    return b;
-  }
-
-  private templateCard(e: TemplateEntry, currentCount: number): HTMLElement {
-    const b = document.createElement("button");
-    b.style.cssText = cardCss(this.compact, false);
-    b.innerHTML = `
-      <div style="display:flex; justify-content:space-between; gap:10px; align-items:start;">
-        <div style="min-width:0;">
-          <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(e.label)}</div>
-          <div style="color:#8fa0b5; font-size:11px; margin-top:3px;">${esc(e.meta)}</div>
-        </div>
-        <div style="flex:none; min-width:34px; text-align:center; background:#0d131d; border:1px solid #263245; border-radius:6px; padding:3px 6px; color:#b8c7dc;">${currentCount}</div>
-      </div>`;
-    const previewWrap = document.createElement("div");
-    previewWrap.style.cssText =
-      "position:relative; margin-top:12px; height:74px; display:grid; place-items:center; background:#0a0e14; border:1px solid #263245; border-radius:6px; overflow:hidden;";
-    const preview = document.createElement("img");
-    preview.alt = "";
-    preview.decoding = "async";
-    preview.loading = "lazy";
-    preview.width = 150;
-    preview.height = 74;
-    preview.style.cssText = "width:100%; height:100%; display:block; object-fit:contain; background:#0a0e14;";
-    const fallback = this.thumbPlaceholder(e.label);
-    previewWrap.append(preview, fallback);
-    if (e.thumb) void this.loadThumb(preview, e.thumb, fallback);
-    const add = document.createElement("div");
-    add.textContent = "Add";
-    add.style.cssText =
-      "margin-top:8px; height:26px; display:grid; place-items:center; border:1px solid #3f8c49; border-radius:6px; color:#e8ffe8; background:#23472b;";
-    b.append(previewWrap, add);
-    b.onmouseenter = () => (b.style.borderColor = "#65bc72");
-    b.onmouseleave = () => (b.style.borderColor = "#2a3548");
-    b.onclick = () => {
-      this.setStatus(`placing ${e.label}...`);
-      this.deps.spawnEntity(e.kind, e.label);
-    };
-    return b;
-  }
-
-  private characterCard(def: CharacterDef, placedCount: number): HTMLElement {
-    const m: ModelEntry = {
-      name: def.name || def.id,
-      model: def.baseModel,
-      size: 0,
-    };
-    const b = this.modelLikeCard(m, "Custom character", `${placedCount} placed`, () => {
-      this.setStatus(`placing ${def.name || def.id}...`);
-      this.deps.placeCharacter(def);
-    });
-    return b;
-  }
-
-  private async existingEntries(): Promise<Entry[]> {
+  /** Live instance ids (and the focus kind) for a built-in entity kind. */
+  private liveIdsForKind(kind: string): { ids: string[]; focusKind: string } {
     const st = this.state();
-    const out: Entry[] = [];
+    if (!st) return { ids: [], focusKind: kind };
+    if (kind === "goblin") return { ids: idsOf(st.enemies, (v) => v.kind === "goblin"), focusKind: "enemy" };
+    if (kind === "dummy") return { ids: idsOf(st.enemies, (v) => v.kind === "dummy"), focusKind: "enemy" };
+    if (kind === "berserker_potion")
+      return { ids: idsOf(st.potions, (v) => v.kind === "berserker_potion"), focusKind: "potion" };
+    if (kind === "potion") return { ids: idsOf(st.potions, (v) => !v.kind || v.kind === "potion"), focusKind: "potion" };
+    if (kind === "house") return { ids: idsOf(st.houses), focusKind: "house" };
+    if (kind === "tree") return { ids: idsOf(st.trees), focusKind: "tree" };
+    if (kind === "rock") return { ids: idsOf(st.rocks), focusKind: "rock" };
+    return { ids: idsOf(st[`${kind}s`]), focusKind: kind }; // log / stone / banana
+  }
 
-    st?.players?.forEach((p, id) => {
-      out.push({
-        label: p.name || shortId(id),
-        badge: "1",
-        meta: `Player · level ${p.level ?? 1}`,
-        category: "players",
-        onClick: this.cycleIds("player", [id]),
-      });
-    });
+  /** One uniform card for every library entity (built-in, custom char, or model):
+   *  thumbnail + name + meta + a live "N in map" badge + an Add action. */
+  private entityCard(opts: {
+    name: string;
+    meta: string;
+    thumb?: ThumbSource;
+    count: number;
+    onAdd: () => void;
+    onFocus?: () => void;
+  }): HTMLElement {
+    const card = document.createElement("div");
+    card.style.cssText =
+      cardCss(this.compact, false) + "padding:0; overflow:hidden; display:flex; flex-direction:column;";
 
-    const trees = idsOf(st?.trees);
-    const rocks = idsOf(st?.rocks);
-    out.push({ label: "Tree", badge: count(trees), meta: "Resource", category: "resources", dim: !trees.length, onClick: this.cycleIds("tree", trees) });
-    out.push({ label: "Rock", badge: count(rocks), meta: "Resource", category: "resources", dim: !rocks.length, onClick: this.cycleIds("rock", rocks) });
+    const previewWrap = document.createElement("div");
+    previewWrap.style.cssText =
+      "position:relative; width:100%; height:" +
+      (this.compact ? "84px" : "120px") +
+      "; background:#0a0e14; overflow:hidden;";
+    const preview = document.createElement("img");
+    preview.alt = "";
+    preview.decoding = "async";
+    preview.loading = "lazy";
+    preview.style.cssText = "width:100%; height:100%; display:block; object-fit:contain; background:#0a0e14;";
+    const fallback = this.thumbPlaceholder(opts.name);
+    previewWrap.append(preview, fallback);
+    if (opts.thumb) void this.loadThumb(preview, opts.thumb, fallback);
 
-    const houses = idsOf(st?.houses);
-    const crates = CRATES.map((c: { x: number; z: number }) => ({ x: c.x, z: c.z }));
-    out.push({ label: "House", badge: count(houses), meta: "Structure", category: "structures", dim: !houses.length, onClick: this.cycleIds("house", houses) });
-    out.push({ label: "Crate", badge: count(crates), meta: "Static structure", category: "structures", dim: !crates.length, onClick: this.cyclePos("crate", crates) });
+    const badge = document.createElement("button");
+    badge.textContent = `${opts.count} in map`;
+    const canFocus = opts.count > 0 && !!opts.onFocus;
+    badge.title = canFocus ? "Focus instances in the world" : "None in the world yet";
+    badge.style.cssText =
+      "position:absolute; top:6px; right:6px; border:1px solid #263245; border-radius:6px; padding:2px 7px;" +
+      `background:#0d131de8; color:${opts.count ? "#b8c7dc" : "#6f8192"}; font:700 11px system-ui,sans-serif;` +
+      `cursor:${canFocus ? "pointer" : "default"};`;
+    badge.onclick = (e) => {
+      e.stopPropagation();
+      if (canFocus) opts.onFocus!();
+    };
+    previewWrap.appendChild(badge);
 
-    const itemKinds: Array<[string, string]> = [
-      ["log", "logs"],
-      ["stone", "stones"],
-      ["banana", "bananas"],
-      ["potion", "potions"],
-    ];
-    for (const [kind, map] of itemKinds) {
-      const ids = idsOf(st?.[map]);
-      out.push({ label: cap(kind), badge: count(ids), meta: "Item", category: "items", dim: !ids.length, onClick: this.cycleIds(kind, ids) });
-    }
-    await loadItemDefs().catch(() => undefined);
-    const customItems = new Map<string, string[]>();
-    st?.items?.forEach((item, id) => {
-      const itemId = item.itemId || "item";
-      const ids = customItems.get(itemId) ?? [];
-      ids.push(id);
-      customItems.set(itemId, ids);
-    });
-    for (const [itemId, ids] of customItems) {
-      out.push({
-        label: itemName(itemId),
-        badge: count(ids),
-        meta: "Custom item",
-        category: "items",
-        dim: !ids.length,
-        onClick: this.cycleIds("item", ids),
-      });
-    }
+    const body = document.createElement("div");
+    body.style.cssText = "padding:9px; display:grid; gap:6px; min-width:0;";
+    const name = document.createElement("div");
+    name.textContent = opts.name;
+    name.title = opts.name;
+    name.style.cssText = "font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+    const meta = document.createElement("div");
+    meta.textContent = opts.meta;
+    meta.style.cssText = "color:#8fa0b5; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+    const add = document.createElement("button");
+    add.textContent = "＋ Add";
+    add.style.cssText =
+      "cursor:pointer; height:28px; border:1px solid #3f8c49; border-radius:6px; color:#e8ffe8;" +
+      "background:#23472b; font:600 12px system-ui,sans-serif;";
+    add.onmouseenter = () => (add.style.background = "#2c5836");
+    add.onmouseleave = () => (add.style.background = "#23472b");
+    add.onclick = (e) => {
+      e.stopPropagation();
+      opts.onAdd();
+    };
+    body.append(name, meta, add);
 
-    const [defs, placements] = await Promise.all([
-      this.fetchJson<CharacterDef[]>("/__char/defs"),
-      this.fetchJson<PlacementLite[]>("/__char/placements"),
-    ]);
-    for (const d of defs) {
-      const ids = placements.filter((p) => p.defId === d.id).map((p) => p.id);
-      out.push({
-        label: d.name || d.id,
-        badge: count(ids),
-        meta: "Custom character",
-        category: "characters",
-        dim: !ids.length,
-        onClick: this.cycleIds("enemy", ids),
-      });
-    }
-    const goblins = idsOf(st?.enemies, (v) => v.kind === "goblin");
-    const dummies = idsOf(st?.enemies, (v) => v.kind === "dummy");
-    out.push({ label: "Goblin", badge: count(goblins), meta: "Enemy", category: "characters", dim: !goblins.length, onClick: this.cycleIds("enemy", goblins) });
-    out.push({ label: "Dummy", badge: count(dummies), meta: "Enemy", category: "characters", dim: !dummies.length, onClick: this.cycleIds("enemy", dummies) });
-
-    const placed = this.deps.propManager.all();
-    const byModel = new Map<string, { label: string; ids: string[] }>();
-    for (const p of placed) {
-      const model = p.def.model;
-      const group = byModel.get(model) ?? { label: p.def.name || nameFromModel(model), ids: [] };
-      group.ids.push(p.id);
-      if (!group.label && p.def.name) group.label = p.def.name;
-      byModel.set(model, group);
-    }
-    for (const [model, group] of byModel) {
-      const runtime = runtimeAssetInfo(model);
-      if (runtime) continue;
-      out.push({
-        label: group.label || nameFromModel(model),
-        badge: count(group.ids),
-        meta: "Placed object",
-        category: "objects",
-        dim: !group.ids.length,
-        onClick: this.cycleIds("prop", group.ids),
-      });
-    }
-
-    return out;
+    card.append(previewWrap, body);
+    return card;
   }
 
   private state(): Record<string, Coll | undefined> | null {
     return (this.deps.net.room?.state as unknown as Record<string, Coll | undefined>) ?? null;
   }
 
-  private currentCountFor(kind: string): number {
-    const st = this.state();
-    if (!st) return 0;
-    if (kind === "goblin") return idsOf(st.enemies, (v) => v.kind === "goblin").length;
-    if (kind === "dummy") return idsOf(st.enemies, (v) => v.kind === "dummy").length;
-    if (kind === "berserker_potion") return idsOf(st.potions, (v) => v.kind === "berserker_potion").length;
-    if (kind === "potion") return idsOf(st.potions, (v) => !v.kind || v.kind === "potion").length;
-    const mapName = `${kind}s`;
-    return st[mapName]?.size ?? 0;
-  }
-
-  private cycleIds(kind: string, ids: string[]): () => void {
-    let i = 0;
-    return () => {
-      if (!ids.length) return this.setStatus("none in world");
-      const id = ids[i % ids.length];
-      const ok = this.deps.focusEntity(kind, id);
-      this.setStatus(ok ? `${kind} · ${shortId(id)}  (${(i % ids.length) + 1}/${ids.length})` : `${kind} no longer in world`);
-      i++;
-    };
-  }
-
-  private cyclePos(label: string, ps: Array<{ x: number; z: number }>): () => void {
-    let i = 0;
-    return () => {
-      if (!ps.length) return this.setStatus("none in world");
-      const p = ps[i % ps.length];
-      this.deps.focusPos(p.x, p.z);
-      this.setStatus(`${label}  (${(i % ps.length) + 1}/${ps.length})`);
-      i++;
-    };
+  /** Count-badge click: close the Library and jump to the map, selecting the first
+   *  instance with a floating ◀ prev / next ▶ navigator to step through them all. */
+  private browse(focusKind: string, ids: string[], label: string) {
+    if (!ids.length) return;
+    this.close();
+    this.deps.browseInstances(focusKind, ids, label);
   }
 
   private thumbPlaceholder(label: string): HTMLElement {
@@ -860,13 +713,6 @@ function idsOf(map: Coll | undefined, filter?: (v: SyncedItem) => boolean): stri
   return ids;
 }
 
-const count = (a: unknown[]) => `${a.length}`;
-const countNumber = (s?: string) => {
-  const n = Number(s);
-  return Number.isFinite(n) ? n : 0;
-};
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const shortId = (id: string) => (id.length > 18 ? "..." + id.slice(-16) : id);
 const mb = (bytes: number) => (bytes > 1e6 ? (bytes / 1e6).toFixed(1) + "MB" : Math.round(bytes / 1e3) + "KB");
 const normalized = (s: string) => s.trim().toLowerCase();
 const nameFromModel = (model: string) => model.split("/").pop()?.replace(/\.glb$/i, "") || model;
@@ -890,8 +736,9 @@ const esc = (s: string) =>
   s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
 const tabLabel = (tab: LibraryTab) => {
-  if (tab === "npc") return "NPC";
-  return cap(tab);
+  if (tab === "character") return "Character (Alive)";
+  if (tab === "structure") return "Structure";
+  return "Item";
 };
 
 const tabButtonCss = (on: boolean) =>

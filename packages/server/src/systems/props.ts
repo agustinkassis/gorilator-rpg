@@ -17,10 +17,26 @@ interface PropDef {
   z: number;
   model?: string; // path under public/, e.g. "/models/house.glb"
   scale?: number; // uniform model scale
+  rotationY?: number;
   collisionRadius?: number; // present + > 0 ⇒ concrete (blocks movement / bananas)
 }
 
 const propPositions = new Map<string, { x: number; z: number }>();
+
+/** Concrete props (collisionRadius>0) — the source for destructible Structures. */
+export interface ConcreteProp {
+  id: string;
+  model?: string;
+  x: number;
+  z: number;
+  radius: number;
+  rotY: number;
+  scale: number;
+  spawn: number;
+}
+let concreteCache: ConcreteProp[] = [];
+const destroyedProps = new Set<string>(); // structures destroyed at runtime → drop their collision
+const propsChangeCbs: Array<() => void> = [];
 
 function propKeys(p: PropDef): string[] {
   return [p.id, p.model].filter((key): key is string => Boolean(key));
@@ -28,6 +44,26 @@ function propKeys(p: PropDef): string[] {
 
 export function propPosition(id: string): { x: number; z: number } | null {
   return propPositions.get(id) ?? null;
+}
+
+/** The current concrete props minus any destroyed at runtime. */
+export function concreteProps(): ConcreteProp[] {
+  return concreteCache.filter((c) => !destroyedProps.has(c.id));
+}
+
+/** Run `cb` whenever props.json reloads (so per-room systems can re-sync). */
+export function onPropsChange(cb: () => void): void {
+  propsChangeCbs.push(cb);
+}
+
+/** A destructible structure was destroyed: drop its collision so the rubble is walkable. */
+export function destroyPropObstacle(id: string): void {
+  destroyedProps.add(id);
+  rebuildObstacles();
+}
+
+function rebuildObstacles(): void {
+  setPropObstacles(concreteProps().map((c) => ({ x: c.x, z: c.z, radius: c.radius, spawn: c.spawn })));
 }
 
 function manifestPath(): string | null {
@@ -76,17 +112,28 @@ function applyFrom(path: string): void {
       if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) continue;
       for (const key of propKeys(p)) propPositions.set(key, { x: p.x, z: p.z });
     }
-    const circles = props
+    destroyedProps.clear(); // a fresh manifest re-instates every concrete prop's collision
+    concreteCache = props
       .filter((p) => typeof p.collisionRadius === "number" && p.collisionRadius > 0)
       .map((p) => {
         const coll = p.collisionRadius as number;
         const vis = visualRadius(dir, p.model, p.scale ?? 1, coll * 2);
         // `radius` blocks movement (walk up to it); `spawn` keeps SPAWNS out of the
         // whole visible model so a restored position never lands inside a building.
-        return { x: p.x, z: p.z, radius: coll, spawn: Math.max(coll, vis) };
+        return {
+          id: p.id || p.model || "",
+          model: p.model,
+          x: p.x,
+          z: p.z,
+          radius: coll,
+          rotY: Number(p.rotationY) || 0,
+          scale: Math.max(0.05, Number(p.scale) || 1),
+          spawn: Math.max(coll, vis),
+        };
       });
-    setPropObstacles(circles);
-    console.log(`[props] ${props.length} prop(s), ${circles.length} concrete (collision) from props.json`);
+    rebuildObstacles();
+    console.log(`[props] ${props.length} prop(s), ${concreteCache.length} concrete (collision) from props.json`);
+    for (const cb of propsChangeCbs) cb();
   } catch (e) {
     console.warn("[props] failed to read props.json", e);
   }

@@ -23,6 +23,7 @@ export class InventoryUI {
   }));
   private held: HeldItem | null = null;
   private open = false;
+  private devSlotClick: ((slot: number) => void) | null = null; // Dev Mode: intercept slot clicks
   private totals: Partial<Record<ItemType, number>> = {}; // per-type totals, to detect pickups
   private primed = false; // first inventory is the baseline (no pop); later ones animate gains
 
@@ -178,7 +179,17 @@ export class InventoryUI {
     return n;
   }
 
+  /** Dev Mode: when set, clicking any slot routes to this handler (set item/qty)
+   *  instead of the normal pick-up/move behavior. Pass null to restore. */
+  setDevSlotClick(fn: ((slot: number) => void) | null) {
+    this.devSlotClick = fn;
+  }
+
   private clickSlot(i: number, e: MouseEvent) {
+    if (this.devSlotClick) {
+      this.devSlotClick(i);
+      return;
+    }
     if (!this.held) {
       if (this.slots[i]?.type) {
         this.startHold({ source: "inventory", type: this.slots[i].type, inventorySlot: i }, e.clientX, e.clientY);

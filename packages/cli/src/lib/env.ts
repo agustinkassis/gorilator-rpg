@@ -1,5 +1,5 @@
 // .env rendering/parsing + secret generation. The Nostr secret-key (`nsec1…`)
-// generator mirrors the repo's cli/gen-nsec.mjs — bech32 of 32 random bytes,
+// generator mirrors the repo's packages/cli/gen-nsec.mjs — bech32 of 32 random bytes,
 // zero dependencies (only node:crypto), so a fresh box needs nothing
 // pre-installed to mint the server's stable save-signing key.
 import { randomBytes } from "node:crypto";

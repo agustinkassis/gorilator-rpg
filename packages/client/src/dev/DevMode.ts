@@ -1,5 +1,5 @@
 import { Scene, Mesh, ArcRotateCamera, Vector3, MeshBuilder, StandardMaterial, Color3 } from "@babylonjs/core";
-import { setCameraZoom, getCameraZoom } from "../scene/camera";
+import { setCameraZoom, getCameraZoom, tweenCameraZoom } from "../scene/camera";
 import { NetworkClient } from "../net/NetworkClient";
 import { PropManager } from "./PropManager";
 import { SelectionManager, Selectable } from "./Selection";
@@ -7,10 +7,13 @@ import { Inspector, Field, Action } from "./Inspector";
 import { LibraryExplorer } from "./LibraryExplorer";
 import { ItemLibrary } from "./ItemLibrary";
 import { PropDef } from "../scene/props";
-import { itemName } from "../items/itemRegistry";
+import { itemName, allItemDefs, loadItemDefs } from "../items/itemRegistry";
 import type { CharacterManager } from "./CharacterManager";
 import type { CharacterDef } from "../entities/characterDef";
 import type { Game } from "../game/Game";
+import type { AnimationTester } from "./AnimationTester";
+import type { InventoryUI } from "../ui/inventory";
+import type { CharacterImporter } from "./CharacterImporter";
 import {
   type DevActionId,
   type DevTuningKey,
@@ -34,6 +37,22 @@ import {
   GOBLIN_HOUSE_DAMAGE,
   DAMAGE_DIVISOR,
   PLAYER_RESPAWN_MS,
+  PLAYER_MAX_HP,
+  PLAYER_ATTACK,
+  PLAYER_ARMOR,
+  PLAYER_CRIT_CHANCE,
+  MOVE_SPEED,
+  SPRINT_SPEED_MULT,
+  GOBLIN_MAX_HP,
+  GOBLIN_ATTACK,
+  GOBLIN_CHASE_SPEED,
+  GOBLIN_ARMOR,
+  BERSERKER_ATTACK_MULT,
+  BERSERKER_DURATION_MS,
+  DROP_RATE_MULT,
+  ARMOR_K,
+  CRIT_MULTIPLIER,
+  type BrainId,
 } from "@rpg/shared";
 import {
   StructureMask,
@@ -57,6 +76,10 @@ export class DevMode {
   active = false;
   private drag: Selectable | null = null; // object currently being dragged on the ground
   private lastDragSend = 0; // throttle clock for synced-entity drag moves
+  private ghostFollowing = false; // hold-click on bare ground → the ghost follows the cursor
+  private lastGhostMoveAt = 0; // throttle clock for the follow-the-cursor ghost moves
+  private lastGhostX = 0;
+  private lastGhostZ = 0;
   private shiftDown = false; // hold Shift while dropping to keep placing copies
   private skipNextPointerUp = false; // click-to-drop fires pointerup after pointerdown; don't drop the fresh copy
   private selection: SelectionManager;
@@ -64,10 +87,21 @@ export class DevMode {
   private explorer: LibraryExplorer;
   private itemLibrary: ItemLibrary;
   private btn: HTMLButtonElement;
-  private itemsBtn: HTMLButtonElement;
+  private labelsBtn: HTMLButtonElement;
+  private developerLabels: { isEnabled(): boolean; setEnabled(on: boolean): void } | null = null;
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
   private gameplayPanel: HTMLElement;
+  private toolsBtn: HTMLButtonElement;
+  private toolsPanel: HTMLElement;
+  private toolsOpen = false;
+  private globalActionsBtn: HTMLButtonElement;
+  private globalActionsPanel: HTMLElement;
+  private globalActionsOpen = false;
+  private animationTester: AnimationTester | null = null; // wired post-construction (main.ts)
+  private charImporter: CharacterImporter | null = null; // wired post-construction (main.ts)
+  private inventoryUI: InventoryUI | null = null; // wired post-construction (main.ts)
+  private slotPopup: HTMLElement | null = null; // dev inventory slot editor popup
   private banner: HTMLElement;
   private timeBar: HTMLElement;
   private timeButtons: { scale: number; el: HTMLButtonElement }[] = [];
@@ -81,8 +115,16 @@ export class DevMode {
   private maskSelectedMat: StandardMaterial | null = null;
   private characterDefs: CharacterDef[] = [];
   private gameplayOpen = false;
+  private activeCategory: GameplayCategory = "Waves";
   private tuningValues = new Map<DevTuningKey, number>();
   private dirtyTuningKeys = new Set<DevTuningKey>();
+  private customWaves: WaveDefUI[] = []; // dev-authored per-wave compositions
+  private waveCharDefs: { id: string; name: string }[] = []; // spawnable custom characters
+  private wavesDirty = false;
+  private simBigEl: HTMLElement | null = null; // live enemy-capacity number element
+  private instanceNav: { focusKind: string; ids: string[]; label: string; index: number } | null = null;
+  private instanceNavEl!: HTMLElement;
+  private instanceNavLabel!: HTMLElement;
 
   /** Wire in placed-character management so they're selectable/draggable/deletable. */
   setCharacterManager(cm: CharacterManager) {
@@ -92,6 +134,35 @@ export class DevMode {
   /** Wire in the Game so the library explorer can select + camera-focus entities. */
   setGame(g: Game) {
     this.game = g;
+  }
+
+  /** Wire in the Animation Tester so the Tools window can launch it. */
+  setAnimationTester(at: AnimationTester) {
+    this.animationTester = at;
+  }
+
+  /** Wire in the developer component-labels toggle (driven by the top-right button). */
+  setDeveloperLabels(dl: { isEnabled(): boolean; setEnabled(on: boolean): void }) {
+    this.developerLabels = dl;
+    this.refreshLabelsBtn();
+  }
+
+  /** Reflect the labels on/off state in the toggle button's look. */
+  private refreshLabelsBtn() {
+    if (!this.labelsBtn) return;
+    const on = this.developerLabels?.isEnabled() ?? false;
+    this.labelsBtn.style.background = on ? "#3a7a40" : "#2a3242";
+    this.labelsBtn.style.color = on ? "#fff" : "#9fe0a0";
+  }
+
+  /** Wire in the inventory UI so Dev Mode slot-clicks open the set-item popup. */
+  setInventoryUI(inv: InventoryUI) {
+    this.inventoryUI = inv;
+  }
+
+  /** Wire in the Character Importer so the Library's "Add Character" can open it. */
+  setCharacterImporter(ci: CharacterImporter) {
+    this.charImporter = ci;
   }
 
   onVisibilityChange(fn: (on: boolean) => void) {
@@ -135,6 +206,38 @@ export class DevMode {
     this.game?.clearFocus();
   }
 
+  /** Start browsing every live instance of a kind from the map (Library badge →
+   *  close Library → select the first + show the floating ◀/▶ navigator). */
+  browseInstances(focusKind: string, ids: string[], label: string) {
+    if (!ids.length) return;
+    this.instanceNav = { focusKind, ids: ids.slice(), label, index: 0 };
+    this.instanceNavEl.style.display = "flex";
+    this.focusCurrentInstance();
+  }
+
+  /** Move the instance cursor by ±1 (wraps) and re-select/focus that instance. */
+  private stepInstance(dir: number) {
+    const nav = this.instanceNav;
+    if (!nav) return;
+    nav.index = (nav.index + dir + nav.ids.length) % nav.ids.length;
+    this.focusCurrentInstance();
+  }
+
+  private focusCurrentInstance() {
+    const nav = this.instanceNav;
+    if (!nav) return;
+    const ok = this.focusEntity(nav.focusKind, nav.ids[nav.index]);
+    this.instanceNavLabel.textContent = `${nav.label}  ${nav.index + 1}/${nav.ids.length}${ok ? "" : " · gone"}`;
+  }
+
+  private closeInstanceNav() {
+    if (!this.instanceNav) return;
+    this.instanceNav = null;
+    this.instanceNavEl.style.display = "none";
+    this.selectNone();
+    this.clearFocus();
+  }
+
   /** Resolve a ground point to any selectable footprint — synced entities, placed
    *  custom characters, or props. */
   private resolveSelAt(point: Vector3 | null): Selectable | null {
@@ -164,60 +267,92 @@ export class DevMode {
     const btn = document.createElement("button");
     btn.id = "devModeBtn";
     btn.textContent = "🛠 Dev Mode (`)";
+    // Top-right, just left of the sound buttons (#audioControls is right:12px, ~82px wide).
     btn.style.cssText =
-      "position:fixed; right:16px; bottom:204px; z-index:40; cursor:pointer;" +
-      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
+      "position:fixed; right:102px; top:10px; z-index:40; cursor:pointer; height:34px;" +
+      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:8px;" +
+      "padding:0 10px; font:12px system-ui,sans-serif;";
     btn.onclick = () => this.toggle();
     document.body.appendChild(btn);
     this.btn = btn;
 
-    // Custom inventory/gameplay items: create definitions and test-give/drop them.
-    const itemsBtn = document.createElement("button");
-    itemsBtn.id = "devItemsBtn";
-    itemsBtn.textContent = "🎒 Items";
-    itemsBtn.style.cssText =
-      "position:fixed; right:16px; bottom:168px; z-index:40; cursor:pointer; display:none;" +
-      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
-    itemsBtn.onclick = () => this.itemLibrary.toggle();
-    document.body.appendChild(itemsBtn);
-    this.itemsBtn = itemsBtn;
+    // Component-labels toggle — shown in Dev Mode, just LEFT of the Dev Mode button.
+    const labelsBtn = document.createElement("button");
+    labelsBtn.id = "devLabelsBtn";
+    labelsBtn.textContent = "🏷 Labels";
+    labelsBtn.title = "Toggle component labels";
+    labelsBtn.style.cssText =
+      "position:fixed; right:240px; top:10px; z-index:40; cursor:pointer; height:34px; display:none;" +
+      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:8px;" +
+      "padding:0 10px; font:12px system-ui,sans-serif;";
+    labelsBtn.onclick = () => {
+      if (!this.developerLabels) return;
+      this.developerLabels.setEnabled(!this.developerLabels.isEnabled());
+      this.refreshLabelsBtn();
+    };
+    document.body.appendChild(labelsBtn);
+    this.labelsBtn = labelsBtn;
 
-    // "Entities" opens the library explorer: browse + camera-focus every world entity.
-    const entitiesBtn = document.createElement("button");
-    entitiesBtn.id = "devEntitiesBtn";
-    entitiesBtn.textContent = "🗂 Entities";
-    entitiesBtn.style.cssText =
-      "position:fixed; right:16px; bottom:312px; z-index:40; cursor:pointer; display:none;" +
-      "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:6px;" +
-      "padding:6px 10px; font:12px system-ui,sans-serif;";
-    entitiesBtn.onclick = () => this.explorer.toggle();
-    document.body.appendChild(entitiesBtn);
+    // Top-left Dev control stack — Gameplay Options, Library, Tools (shared style).
+    const stackBtn = (id: string, label: string, top: number) => {
+      const b = document.createElement("button");
+      b.id = id;
+      b.textContent = label;
+      b.style.cssText =
+        `position:fixed; left:16px; top:${top}px; z-index:61; cursor:pointer; display:none;` +
+        "width:204px; box-sizing:border-box; text-align:left;" +
+        "background:linear-gradient(180deg,#345044,#1f332c); color:#d9ffd9; border:2px solid #72c979;" +
+        "border-radius:8px; padding:9px 14px; font:bold 14px system-ui,sans-serif; letter-spacing:0.2px;" +
+        "box-shadow:0 6px 18px #0008, inset 0 0 10px #0004;";
+      document.body.appendChild(b);
+      return b;
+    };
+
+    const globalActionsBtn = stackBtn("devGlobalActionsBtn", "⚡ Global Actions", 16);
+    globalActionsBtn.onclick = () => this.toggleGlobalActionsPanel();
+    this.globalActionsBtn = globalActionsBtn;
+
+    const gameplayBtn = stackBtn("devGameplayBtn", "⚙ Gameplay Options", 62);
+    gameplayBtn.onclick = () => this.toggleGameplayPanel();
+    this.gameplayBtn = gameplayBtn;
+
+    // "Library" opens the explorer: browse/spawn every world entity + import models.
+    const entitiesBtn = stackBtn("devEntitiesBtn", "📚 Library", 108);
+    entitiesBtn.onclick = () => {
+      this.closeInstanceNav(); // leaving instance-browse when you reopen the Library
+      this.explorer.toggle();
+    };
     this.entitiesBtn = entitiesBtn;
 
-    const gameplayBtn = document.createElement("button");
-    gameplayBtn.id = "devGameplayBtn";
-    gameplayBtn.textContent = "⚙ Gameplay Options";
-    gameplayBtn.style.cssText =
-      "position:fixed; left:50%; top:104px; transform:translateX(-50%); z-index:61; cursor:pointer; display:none;" +
-      "background:linear-gradient(180deg,#345044,#1f332c); color:#d9ffd9; border:2px solid #72c979; border-radius:8px;" +
-      "padding:10px 18px; font:bold 15px system-ui,sans-serif; letter-spacing:0.2px;" +
-      "box-shadow:0 8px 24px #0009, inset 0 0 10px #0005;";
-    gameplayBtn.onclick = () => this.toggleGameplayPanel();
-    document.body.appendChild(gameplayBtn);
-    this.gameplayBtn = gameplayBtn;
-    window.addEventListener("resize", () => this.updateGameplayButtonPosition());
+    const toolsBtn = stackBtn("devToolsBtn", "🧰 Tools", 154);
+    toolsBtn.onclick = () => this.toggleToolsPanel();
+    this.toolsBtn = toolsBtn;
+
+    const leftPanelCss = (width: number) =>
+      `position:fixed; left:16px; top:200px; width:${width}px; max-height:calc(100vh - 216px); z-index:47; display:none;` +
+      "overflow-y:auto; overscroll-behavior:contain; background:#10131af2; color:#e8e8e8; border:2px solid #4a9a52;" +
+      "border-radius:10px; box-shadow:0 8px 30px #000a; font:12px/1.45 system-ui,sans-serif;";
+
+    const globalActionsPanel = document.createElement("div");
+    globalActionsPanel.id = "devGlobalActionsPanel";
+    globalActionsPanel.style.cssText = leftPanelCss(240);
+    document.body.appendChild(globalActionsPanel);
+    this.globalActionsPanel = globalActionsPanel;
+    this.renderGlobalActionsPanel();
 
     const gameplayPanel = document.createElement("div");
     gameplayPanel.id = "devGameplayPanel";
-    gameplayPanel.style.cssText =
-      "position:fixed; left:16px; top:76px; width:320px; max-height:calc(100vh - 96px); z-index:47; display:none;" +
-      "overflow-y:auto; overscroll-behavior:contain; background:#10131af2; color:#e8e8e8; border:2px solid #4a9a52;" +
-      "border-radius:10px; box-shadow:0 8px 30px #000a; font:12px/1.45 system-ui,sans-serif;";
+    gameplayPanel.style.cssText = leftPanelCss(460);
     document.body.appendChild(gameplayPanel);
     this.gameplayPanel = gameplayPanel;
     this.renderGameplayPanel();
+
+    const toolsPanel = document.createElement("div");
+    toolsPanel.id = "devToolsPanel";
+    toolsPanel.style.cssText = leftPanelCss(240);
+    document.body.appendChild(toolsPanel);
+    this.toolsPanel = toolsPanel;
+    this.renderToolsPanel();
 
     this.explorer = new LibraryExplorer({
       net: this.net,
@@ -225,10 +360,13 @@ export class DevMode {
       focusEntity: (kind, id) => this.focusEntity(kind, id),
       focusPos: (x, z) => this.focusPos(x, z),
       clearFocus: () => this.clearFocus(),
+      browseInstances: (kind, ids, label) => this.browseInstances(kind, ids, label),
       spawnEntity: (kind, label) => this.addSyncedEntity(kind, label),
       placeCharacter: (def) => void this.addCharacterFromDef(def),
       placeModel: (model, name) => void this.addFromModel(model, name),
       uploadModel: (file, name) => void this.uploadModel(file, name),
+      openItemLibrary: () => this.itemLibrary.toggle(),
+      addCharacter: () => this.charImporter?.openImporter(),
     });
     this.itemLibrary = new ItemLibrary({
       net: this.net,
@@ -249,7 +387,7 @@ export class DevMode {
     const bar = document.createElement("div");
     bar.id = "devTimeBar";
     bar.style.cssText =
-      "position:fixed; top:36px; left:50%; transform:translateX(-50%); z-index:60; display:none; gap:4px;" +
+      "position:fixed; bottom:158px; left:50%; transform:translateX(-50%); z-index:60; display:none; gap:4px;" +
       "background:#10131ae8; border:1px solid #4a9a52; border-radius:8px; padding:4px 6px; box-shadow:0 4px 16px #0008;";
     const SPEEDS: { label: string; scale: number }[] = [
       { label: "⏸", scale: 0 },
@@ -272,13 +410,50 @@ export class DevMode {
     document.body.appendChild(bar);
     this.timeBar = bar;
 
+    // Floating instance navigator: appears when you click a Library "N in map"
+    // badge — steps through every live instance of that kind (◀ prev / next ▶).
+    const nav = document.createElement("div");
+    nav.id = "devInstanceNav";
+    nav.style.cssText =
+      "position:fixed; left:50%; top:16px; transform:translateX(-50%); z-index:62; display:none;" +
+      "align-items:center; gap:6px; background:#10131af2; color:#d9ffd9; border:2px solid #72c979;" +
+      "border-radius:8px; padding:5px 7px; box-shadow:0 6px 18px #0008; font:600 12px system-ui,sans-serif;";
+    const navBtn = (label: string): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText =
+        "cursor:pointer; min-width:28px; height:26px; background:#223149; color:#dff; border:1px solid #3a4658;" +
+        "border-radius:5px; font:700 13px system-ui,sans-serif;";
+      return b;
+    };
+    const navPrev = navBtn("◀");
+    navPrev.title = "Previous (←)";
+    const navLabel = document.createElement("span");
+    navLabel.style.cssText = "min-width:120px; text-align:center; padding:0 4px;";
+    const navNext = navBtn("▶");
+    navNext.title = "Next (→)";
+    const navClose = navBtn("✕");
+    navClose.title = "Stop browsing";
+    navPrev.onclick = () => this.stepInstance(-1);
+    navNext.onclick = () => this.stepInstance(1);
+    navClose.onclick = () => this.closeInstanceNav();
+    nav.append(navPrev, navLabel, navNext, navClose);
+    document.body.appendChild(nav);
+    this.instanceNavEl = nav;
+    this.instanceNavLabel = navLabel;
+
     window.addEventListener("keydown", (e) => {
       if (e.key === "Shift") this.shiftDown = true;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "`" || e.key === "~") this.toggle();
+      else if (this.instanceNav && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        this.stepInstance(e.key === "ArrowLeft" ? -1 : 1);
+      }
       else if (e.key === "Escape" && this.active) {
-        if (this.maskEdit) this.stopMaskEdit();
+        if (this.instanceNav) this.closeInstanceNav();
+        else if (this.maskEdit) this.stopMaskEdit();
         else this.selectNone();
       }
       else if ((e.key === "Backspace" || e.key === "Delete") && this.active && this.selection.selected) {
@@ -293,6 +468,11 @@ export class DevMode {
     window.addEventListener("blur", () => {
       this.shiftDown = false;
       this.skipNextPointerUp = false;
+      this.ghostFollowing = false;
+    });
+    // Releasing the button anywhere (even off-canvas) ends the follow-the-cursor move.
+    window.addEventListener("pointerup", (e) => {
+      if (e.button === 0) this.ghostFollowing = false;
     });
 
     // Dev Mode only: scroll to zoom the camera out (up to 6×) to survey the map.
@@ -318,7 +498,8 @@ export class DevMode {
     this.active = true;
     this.net.sendGodMode(true);
     this.setScale(0); // entering Dev Mode freezes authoritative gameplay for everyone
-    this.updateGameplayButtonPosition();
+    const cam = this.scene.activeCamera as ArcRotateCamera | null;
+    if (cam) tweenCameraZoom(cam, 1.2); // smoothly pull the view back 20% to survey while editing
     void this.loadSpawners(); // reflect existing spawners in object inspectors
     void this.loadFeatures(); // generic HP/drop/brain/stat feature config
     void this.loadCharacterDefs(); // custom spawn targets for spawner rules
@@ -326,9 +507,15 @@ export class DevMode {
     void this.loadStructures(); // reflect existing structure loot tables
     this.btn.style.background = "#3a7a40";
     this.btn.style.color = "#fff";
-    this.itemsBtn.style.display = "block";
+    // Labels toggle: show it just left of the (always-visible) Dev Mode button.
+    this.labelsBtn.style.display = "block";
+    this.labelsBtn.style.right = `${Math.round(102 + this.btn.getBoundingClientRect().width + 8)}px`;
+    this.refreshLabelsBtn();
     this.entitiesBtn.style.display = "block";
     this.gameplayBtn.style.display = "block";
+    this.toolsBtn.style.display = "block";
+    this.globalActionsBtn.style.display = "block";
+    this.inventoryUI?.setDevSlotClick((slot) => this.openSlotPopup(slot));
     this.setVisibilityControls(true);
     this.banner.style.display = "block";
     this.timeBar.style.display = "flex";
@@ -347,11 +534,18 @@ export class DevMode {
     this.selection.clear();
     this.btn.style.background = "#2a3242";
     this.btn.style.color = "#9fe0a0";
-    this.itemsBtn.style.display = "none";
+    this.labelsBtn.style.display = "none";
     this.entitiesBtn.style.display = "none";
     this.gameplayBtn.style.display = "none";
+    this.toolsBtn.style.display = "none";
+    this.globalActionsBtn.style.display = "none";
     if (this.gameplayOpen) this.closeGameplayPanel();
     else this.gameplayPanel.style.display = "none";
+    if (this.toolsOpen) this.closeToolsPanel();
+    if (this.globalActionsOpen) this.closeGlobalActionsPanel();
+    this.inventoryUI?.setDevSlotClick(null);
+    this.closeSlotPopup();
+    this.closeInstanceNav();
     this.setVisibilityControls(false);
     this.banner.style.display = "none";
     this.timeBar.style.display = "none";
@@ -359,7 +553,7 @@ export class DevMode {
     this.itemLibrary?.close();
     this.clearFocus(); // release the camera back to the player
     const cam = this.scene.activeCamera as ArcRotateCamera | null;
-    if (cam) setCameraZoom(cam, 1); // back to the normal play zoom
+    if (cam) tweenCameraZoom(cam, 1); // smoothly ease back to the normal play zoom
     this.inspector.hide();
     this.setCursor("default");
   }
@@ -396,7 +590,10 @@ export class DevMode {
   }
 
   private openGameplayPanel() {
+    if (this.toolsOpen) this.closeToolsPanel(); // one left-column panel at a time
+    if (this.globalActionsOpen) this.closeGlobalActionsPanel();
     this.gameplayOpen = true;
+    void this.loadGameplayData(); // custom waves + char defs + resource HP (re-renders)
     this.gameplayPanel.style.display = this.gameplayOpen ? "block" : "none";
     this.gameplayBtn.style.background = this.gameplayOpen
       ? "linear-gradient(180deg,#4a8f4f,#2f6f37)"
@@ -424,10 +621,221 @@ export class DevMode {
     this.dirtyTuningKeys.clear();
   }
 
-  private updateGameplayButtonPosition() {
-    const topBar = document.getElementById("topBar");
-    const bottom = topBar?.getBoundingClientRect().bottom ?? 92;
-    this.gameplayBtn.style.top = `${Math.ceil(bottom + 10)}px`;
+  private toggleToolsPanel() {
+    if (this.toolsOpen) this.closeToolsPanel();
+    else this.openToolsPanel();
+  }
+
+  private openToolsPanel() {
+    if (this.gameplayOpen) this.closeGameplayPanel(); // one left-column panel at a time
+    if (this.globalActionsOpen) this.closeGlobalActionsPanel();
+    this.toolsOpen = true;
+    this.toolsPanel.style.display = "block";
+    this.toolsBtn.style.background = "linear-gradient(180deg,#4a8f4f,#2f6f37)";
+    this.toolsBtn.style.color = "#fff";
+  }
+
+  private closeToolsPanel() {
+    this.toolsOpen = false;
+    this.toolsPanel.style.display = "none";
+    this.toolsBtn.style.background = "linear-gradient(180deg,#345044,#1f332c)";
+    this.toolsBtn.style.color = "#d9ffd9";
+  }
+
+  /** Build the Tools window: a list of dev tools (Anim Test, …). */
+  private renderToolsPanel() {
+    this.toolsPanel.innerHTML = "";
+    const head = document.createElement("div");
+    head.style.cssText =
+      "position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between;" +
+      "padding:8px 10px; background:#1c2230; border-bottom:1px solid #4a9a52;";
+    const title = document.createElement("b");
+    title.textContent = "Tools";
+    title.style.color = "#9fe0a0";
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.title = "Close";
+    close.style.cssText =
+      "width:24px; height:24px; cursor:pointer; background:#2a3242; color:#cfe; border:1px solid #3a4658; border-radius:5px;";
+    close.onclick = () => this.closeToolsPanel();
+    head.appendChild(title);
+    head.appendChild(close);
+    this.toolsPanel.appendChild(head);
+
+    const body = document.createElement("div");
+    body.style.cssText = "padding:10px; display:flex; flex-direction:column; gap:8px;";
+    this.toolsPanel.appendChild(body);
+
+    const tools: { label: string; hint: string; run: () => void }[] = [
+      { label: "🎞 Anim Test", hint: "Play local animation clips by key (1–6)", run: () => this.animationTester?.toggle() },
+    ];
+    for (const tool of tools) {
+      const btn = document.createElement("button");
+      btn.style.cssText =
+        "cursor:pointer; text-align:left; border-radius:6px; border:1px solid #3a4658; background:#222a38;" +
+        "color:#e8edf6; padding:8px 10px; font:600 13px system-ui,sans-serif; display:flex; flex-direction:column; gap:2px;";
+      const name = document.createElement("span");
+      name.textContent = tool.label;
+      const hint = document.createElement("span");
+      hint.textContent = tool.hint;
+      hint.style.cssText = "color:#6f8192; font:11px system-ui,sans-serif;";
+      btn.appendChild(name);
+      btn.appendChild(hint);
+      btn.onclick = () => tool.run();
+      body.appendChild(btn);
+    }
+  }
+
+  private toggleGlobalActionsPanel() {
+    if (this.globalActionsOpen) this.closeGlobalActionsPanel();
+    else this.openGlobalActionsPanel();
+  }
+
+  private openGlobalActionsPanel() {
+    if (this.gameplayOpen) this.closeGameplayPanel(); // one left-column panel at a time
+    if (this.toolsOpen) this.closeToolsPanel();
+    this.globalActionsOpen = true;
+    this.globalActionsPanel.style.display = "block";
+    this.globalActionsBtn.style.background = "linear-gradient(180deg,#4a8f4f,#2f6f37)";
+    this.globalActionsBtn.style.color = "#fff";
+  }
+
+  private closeGlobalActionsPanel() {
+    this.globalActionsOpen = false;
+    this.globalActionsPanel.style.display = "none";
+    this.globalActionsBtn.style.background = "linear-gradient(180deg,#345044,#1f332c)";
+    this.globalActionsBtn.style.color = "#d9ffd9";
+  }
+
+  /** Build the Global Actions window: the high-level dev commands (was the
+   *  "Actions" block inside the Gameplay panel). */
+  private renderGlobalActionsPanel() {
+    this.globalActionsPanel.innerHTML = "";
+    const head = document.createElement("div");
+    head.style.cssText =
+      "position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between;" +
+      "padding:8px 10px; background:#1c2230; border-bottom:1px solid #4a9a52;";
+    const title = document.createElement("b");
+    title.textContent = "Global Actions";
+    title.style.color = "#9fe0a0";
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.title = "Close";
+    close.style.cssText =
+      "width:24px; height:24px; cursor:pointer; background:#2a3242; color:#cfe; border:1px solid #3a4658; border-radius:5px;";
+    close.onclick = () => this.closeGlobalActionsPanel();
+    head.appendChild(title);
+    head.appendChild(close);
+    this.globalActionsPanel.appendChild(head);
+
+    const body = document.createElement("div");
+    body.style.cssText = "padding:10px; display:grid; grid-template-columns:1fr 1fr; gap:6px;";
+    for (const action of DEV_GLOBAL_ACTIONS) {
+      const btn = document.createElement("button");
+      btn.textContent = action.label;
+      btn.style.cssText =
+        "cursor:pointer; min-height:38px; border-radius:6px; border:1px solid #3a4658; color:#fff; font:600 12px system-ui,sans-serif;" +
+        (action.danger ? "background:#5a3030;" : "background:#2d6840;");
+      btn.onclick = () => this.net.sendDevAction(action.id);
+      body.appendChild(btn);
+    }
+    this.globalActionsPanel.appendChild(body);
+  }
+
+  // ---- Dev inventory slot editor (click a slot in Dev Mode) ----
+
+  /** Open a small popup to set the clicked inventory slot's item + quantity. */
+  private async openSlotPopup(slot: number) {
+    this.closeSlotPopup();
+    await loadItemDefs().catch(() => undefined);
+    const defs = allItemDefs();
+
+    const pop = document.createElement("div");
+    pop.id = "devSlotPopup";
+    pop.style.cssText =
+      "position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:90; width:260px;" +
+      "background:#10131af7; color:#e8e8e8; border:2px solid #4a9a52; border-radius:10px;" +
+      "box-shadow:0 18px 60px #000c; font:12px/1.4 system-ui,sans-serif; overflow:hidden;";
+
+    const head = document.createElement("div");
+    head.style.cssText =
+      "display:flex; align-items:center; justify-content:space-between; padding:8px 10px;" +
+      "background:#1c2230; border-bottom:1px solid #4a9a52;";
+    const title = document.createElement("b");
+    title.textContent = `Set slot ${slot + 1}`;
+    title.style.color = "#9fe0a0";
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.style.cssText =
+      "width:24px; height:24px; cursor:pointer; background:#2a3242; color:#cfe; border:1px solid #3a4658; border-radius:5px;";
+    close.onclick = () => this.closeSlotPopup();
+    head.append(title, close);
+
+    const body = document.createElement("div");
+    body.style.cssText = "padding:10px; display:flex; flex-direction:column; gap:8px;";
+
+    const itemRow = document.createElement("label");
+    itemRow.style.cssText = "display:flex; flex-direction:column; gap:3px; color:#9fb0c0;";
+    itemRow.append(textSpan("Item"));
+    const select = document.createElement("select");
+    select.style.cssText =
+      "height:30px; background:#0c1018; color:#e8e8e8; border:1px solid #3a4658; border-radius:5px; padding:0 6px;";
+    const emptyOpt = document.createElement("option");
+    emptyOpt.value = "";
+    emptyOpt.textContent = "— (clear slot)";
+    select.appendChild(emptyOpt);
+    for (const d of defs) {
+      const o = document.createElement("option");
+      o.value = d.id;
+      o.textContent = `${typeof d.icon === "string" && !/^\/|^https?:|^data:/i.test(d.icon) ? d.icon + " " : ""}${d.name}`;
+      select.appendChild(o);
+    }
+    if (defs[0]) select.value = defs[0].id;
+    itemRow.appendChild(select);
+
+    const qtyRow = document.createElement("label");
+    qtyRow.style.cssText = "display:flex; flex-direction:column; gap:3px; color:#9fb0c0;";
+    qtyRow.append(textSpan("Quantity"));
+    const qty = document.createElement("input");
+    qty.type = "number";
+    qty.min = "1";
+    qty.max = "999";
+    qty.value = "1";
+    qty.style.cssText =
+      "height:30px; background:#0c1018; color:#e8e8e8; border:1px solid #3a4658; border-radius:5px; padding:0 8px;";
+    qtyRow.appendChild(qty);
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:2px;";
+    const setBtn = document.createElement("button");
+    setBtn.textContent = "Set slot";
+    setBtn.style.cssText =
+      "cursor:pointer; min-height:32px; border-radius:6px; border:1px solid #3a4658; background:#2d6840; color:#fff; font:600 12px system-ui,sans-serif;";
+    setBtn.onclick = () => {
+      const type = select.value;
+      const count = Math.max(1, Math.min(999, Math.round(Number(qty.value) || 1)));
+      this.net.sendDevSetSlot(slot, type, count);
+      this.closeSlotPopup();
+    };
+    const createBtn = document.createElement("button");
+    createBtn.textContent = "Create new item";
+    createBtn.style.cssText =
+      "cursor:pointer; min-height:32px; border-radius:6px; border:1px solid #3a4658; background:#222a38; color:#cfe; font:600 12px system-ui,sans-serif;";
+    createBtn.onclick = () => {
+      this.itemLibrary.show();
+      this.closeSlotPopup();
+    };
+    actions.append(setBtn, createBtn);
+
+    body.append(itemRow, qtyRow, actions);
+    pop.append(head, body);
+    document.body.appendChild(pop);
+    this.slotPopup = pop;
+  }
+
+  private closeSlotPopup() {
+    this.slotPopup?.remove();
+    this.slotPopup = null;
   }
 
   private renderGameplayPanel() {
@@ -453,24 +861,76 @@ export class DevMode {
     body.style.cssText = "padding:10px; display:flex; flex-direction:column; gap:12px;";
     this.gameplayPanel.appendChild(body);
 
-    const actions = this.gameplaySection("Actions");
-    const actionGrid = document.createElement("div");
-    actionGrid.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:6px;";
-    for (const action of DEV_GAMEPLAY_ACTIONS) {
+    // ---- Big square category buttons (Waves / Player / Combat / Resources) ----
+    const catRow = document.createElement("div");
+    catRow.style.cssText = "display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;";
+    const CATS: { id: GameplayCategory; icon: string; label: string }[] = [
+      { id: "Waves", icon: "🌊", label: "Waves" },
+      { id: "Player", icon: "🛡️", label: "Player" },
+      { id: "Combat", icon: "⚔️", label: "Combat" },
+      { id: "Resources", icon: "🌳", label: "Resources" },
+    ];
+    for (const cat of CATS) {
+      const active = this.activeCategory === cat.id;
       const btn = document.createElement("button");
-      btn.textContent = action.label;
       btn.style.cssText =
-        "cursor:pointer; min-height:32px; border-radius:6px; border:1px solid #3a4658; color:#fff; font:600 12px system-ui,sans-serif;" +
-        (action.danger ? "background:#5a3030;" : "background:#2d6840;");
-      btn.onclick = () => this.net.sendDevAction(action.id);
-      actionGrid.appendChild(btn);
+        "cursor:pointer; aspect-ratio:1/1; display:flex; flex-direction:column; align-items:center; justify-content:center;" +
+        "gap:4px; border-radius:10px; font:700 12px system-ui,sans-serif; transition:all .12s ease;" +
+        (active
+          ? "background:linear-gradient(180deg,#3f8a4a,#256033); color:#fff; border:2px solid #72c979;" +
+            "box-shadow:0 0 0 1px #72c97955, 0 4px 12px #0006;"
+          : "background:#1a2230; color:#9fb0c0; border:2px solid #2c3a30;");
+      const glyph = document.createElement("div");
+      glyph.textContent = cat.icon;
+      glyph.style.cssText = "font-size:26px; line-height:1;";
+      const lbl = document.createElement("div");
+      lbl.textContent = cat.label;
+      btn.appendChild(glyph);
+      btn.appendChild(lbl);
+      btn.onclick = () => {
+        this.activeCategory = cat.id;
+        this.renderGameplayPanel();
+      };
+      catRow.appendChild(btn);
     }
-    actions.appendChild(actionGrid);
-    body.appendChild(actions);
+    body.appendChild(catRow);
+
+    // ---- Difficulty presets (only on Waves / Combat) ----
+    if (this.activeCategory === "Waves" || this.activeCategory === "Combat") {
+      const diffWrap = this.gameplaySection("Difficulty preset");
+      const diffRow = document.createElement("div");
+      diffRow.style.cssText = "display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;";
+      for (const preset of ["Easy", "Normal", "Hard"] as const) {
+        const btn = document.createElement("button");
+        btn.textContent = preset;
+        btn.style.cssText =
+          "cursor:pointer; min-height:30px; border-radius:6px; border:1px solid #3a4658; background:#222a38;" +
+          "color:#cdd3e0; font:600 12px system-ui,sans-serif;";
+        btn.onclick = () => this.applyDifficultyPreset(preset);
+        diffRow.appendChild(btn);
+      }
+      diffWrap.appendChild(diffRow);
+      const diffHint = document.createElement("div");
+      diffHint.textContent = "Scales enemy HP/attack and wave size together.";
+      diffHint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+      diffWrap.appendChild(diffHint);
+      body.appendChild(diffWrap);
+    }
+
+    // ---- Live combat estimate (Player / Combat) ----
+    if (this.activeCategory === "Player" || this.activeCategory === "Combat") {
+      body.appendChild(this.simEstimateBox());
+    }
+
+    // ---- Controls for the active category, grouped by section ----
+    const divider = document.createElement("div");
+    divider.style.cssText = "height:1px; background:#2c3a30; margin:2px 0;";
+    body.appendChild(divider);
 
     let activeSection = "";
     let section: HTMLElement | null = null;
     for (const control of DEV_TUNING_CONTROLS) {
+      if (control.category !== this.activeCategory) continue;
       if (control.section !== activeSection) {
         activeSection = control.section;
         section = this.gameplaySection(activeSection);
@@ -479,8 +939,12 @@ export class DevMode {
       section?.appendChild(this.tuningRow(control));
     }
 
+    // ---- Per-tab extras ----
+    if (this.activeCategory === "Waves") body.appendChild(this.renderWaveEditor());
+    if (this.activeCategory === "Resources") body.appendChild(this.renderResourceHp());
+
     const defaults = document.createElement("button");
-    defaults.textContent = "Defaults";
+    defaults.textContent = "Reset all to defaults";
     defaults.style.cssText =
       "cursor:pointer; border-radius:6px; border:1px solid #3a4658; background:#2a3242; color:#cfe; padding:8px; font:600 12px system-ui,sans-serif;";
     defaults.onclick = () => {
@@ -489,6 +953,268 @@ export class DevMode {
       this.renderGameplayPanel();
     };
     body.appendChild(defaults);
+  }
+
+  /** Current tuned RAW value for a key (pending edit, else built-in default). */
+  private tunedRaw(key: DevTuningKey): number {
+    const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+    return this.tuningValues.get(key) ?? control?.defaultValue ?? 0;
+  }
+
+  /** Approx how many goblins a single player can handle, from the CURRENT tuned
+   *  Player/Combat values + the server damage formula. Deterministic (expected
+   *  values, no RNG): kill enemies one-by-one while all alive ones hit back. */
+  private computeEnemyCapacity(): number {
+    const divisor = Math.max(0.1, this.tunedRaw("damageDivisor"));
+    const hit = (atk: number, armor: number, critChance = 0, critMult = 1) => {
+      const mitig = armor / (armor + ARMOR_K);
+      const base = (atk * (1 - mitig)) / divisor;
+      const withCrit = base * (1 + critChance * (critMult - 1));
+      return Math.max(1, withCrit);
+    };
+    const playerDmg = hit(
+      this.tunedRaw("playerAttack"),
+      GOBLIN_ARMOR,
+      this.tunedRaw("playerCritChance"),
+      CRIT_MULTIPLIER,
+    );
+    const playerDps = playerDmg * (1000 / Math.max(50, this.tunedRaw("playerAttackCooldownMs")));
+    const enemyHp = Math.max(1, this.tunedRaw("enemyMaxHp"));
+    const ttk = enemyHp / Math.max(0.01, playerDps); // seconds to kill one enemy
+    const enemyDmg = hit(this.tunedRaw("enemyAttack"), this.tunedRaw("playerArmor"));
+    const enemyDps = enemyDmg * (1000 / Math.max(50, this.tunedRaw("enemyAttackCooldownMs")));
+    const playerHp = Math.max(1, this.tunedRaw("playerMaxHp"));
+    if (enemyDps <= 0 || ttk <= 0) return 999;
+    // Sum damage taken killing N enemies (one at a time): enemyDps*ttk * N(N+1)/2 ≤ HP.
+    const capacity = playerHp / (enemyDps * ttk);
+    const n = Math.floor((-1 + Math.sqrt(1 + 8 * capacity)) / 2);
+    return Math.max(0, Math.min(999, n));
+  }
+
+  private simEstimateBox(): HTMLElement {
+    const n = this.computeEnemyCapacity();
+    const box = document.createElement("div");
+    box.style.cssText =
+      "display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px;" +
+      "background:linear-gradient(180deg,#1d2b22,#141d18); border:1px solid #3f8c49;";
+    const big = document.createElement("div");
+    big.textContent = n >= 999 ? "∞" : `~${n}`;
+    big.style.cssText = "font:800 24px system-ui,sans-serif; color:#9fe0a0; min-width:46px; text-align:center;";
+    this.simBigEl = big; // keep a handle so commits can refresh it without a full re-render
+    const txt = document.createElement("div");
+    txt.innerHTML =
+      `<div style="font-weight:700; color:#e8edf6;">enemies one player can handle</div>` +
+      `<div style="color:#6f8192; font-size:10px;">estimate from current Player + Combat settings · updates live</div>`;
+    box.append(big, txt);
+    return box;
+  }
+
+  // ---- Custom wave editor (Waves tab) ----
+
+  /** Load everything the Gameplay panel's richer tabs need, then re-render. */
+  private async loadGameplayData() {
+    await Promise.all([this.loadCustomWaves(), this.loadWaveCharDefs(), this.loadDrops()]);
+    if (this.gameplayOpen) this.renderGameplayPanel();
+  }
+
+  private async loadCustomWaves() {
+    const BRAINS = ["idle", "passive_patrol", "war_seeker", "attacks_home"];
+    try {
+      const arr = (await (await fetch("/__waves/list", { cache: "no-store" })).json()) as unknown[];
+      this.customWaves = (Array.isArray(arr) ? arr : [])
+        .map((w) => {
+          const ww = w as { number?: unknown; entries?: unknown };
+          const entries = Array.isArray(ww.entries)
+            ? ww.entries.map((e) => {
+                const ee = e as Record<string, unknown>;
+                const brain = String(ee.brain || "attacks_home") as BrainId;
+                return {
+                  kind: String(ee.kind || "goblin"),
+                  count: Math.max(1, Math.round(Number(ee.count) || 1)),
+                  brain: BRAINS.includes(brain) ? brain : ("attacks_home" as BrainId),
+                  level: ee.level != null ? Math.max(1, Math.round(Number(ee.level))) : undefined,
+                } as WaveEntryUI;
+              })
+            : [];
+          return { number: Math.round(Number(ww.number) || 0), entries } as WaveDefUI;
+        })
+        .filter((w) => w.number > 0)
+        .sort((a, b) => a.number - b.number);
+    } catch {
+      this.customWaves = [];
+    }
+    this.wavesDirty = false;
+  }
+
+  private async loadWaveCharDefs() {
+    try {
+      const defs = (await (await fetch("/__char/defs", { cache: "no-store" })).json()) as Array<{ id: string; name?: string }>;
+      this.waveCharDefs = Array.isArray(defs) ? defs.map((d) => ({ id: d.id, name: d.name || d.id })) : [];
+    } catch {
+      this.waveCharDefs = [];
+    }
+  }
+
+  private async saveCustomWaves() {
+    this.wavesDirty = false;
+    try {
+      await fetch("/__waves/save", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(this.customWaves),
+      });
+    } catch (e) {
+      console.warn("[waves] save failed", e);
+    }
+  }
+
+  private renderWaveEditor(): HTMLElement {
+    const wrap = this.gameplaySection("Custom waves");
+    const hint = document.createElement("div");
+    hint.textContent = "Override specific waves. Undefined wave numbers use the default horde.";
+    hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+    wrap.appendChild(hint);
+
+    const kindOptions = () => [
+      { value: "goblin", label: "Goblin" },
+      { value: "dummy", label: "Dummy" },
+      ...this.waveCharDefs.map((d) => ({ value: d.id, label: d.name })),
+    ];
+    const BRAIN_OPTS: { value: string; label: string }[] = [
+      { value: "attacks_home", label: "Attack home (default)" },
+      { value: "war_seeker", label: "Hunt players" },
+      { value: "passive_patrol", label: "Patrol" },
+      { value: "idle", label: "Idle" },
+    ];
+
+    for (const wave of this.customWaves) {
+      const card = document.createElement("div");
+      card.style.cssText =
+        "border:1px solid #2c3a30; border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:6px; background:#141d18;";
+      const head = document.createElement("div");
+      head.style.cssText = "display:flex; align-items:center; justify-content:space-between; gap:8px;";
+      const title = document.createElement("label");
+      title.style.cssText = "display:flex; align-items:center; gap:6px; color:#9fe0a0; font-weight:700;";
+      const numIn = numberInput(wave.number, 1, 999, 1, "56px");
+      numIn.onchange = () => {
+        wave.number = clampInt(numIn.value, 1, 999);
+        void this.saveCustomWaves();
+      };
+      title.append(document.createTextNode("Wave "), numIn);
+      const del = smallDevBtn("✕ wave", "#5a3030", "#ff9a8a");
+      del.onclick = () => {
+        this.customWaves = this.customWaves.filter((w) => w !== wave);
+        void this.saveCustomWaves();
+        this.renderGameplayPanel();
+      };
+      head.append(title, del);
+      card.appendChild(head);
+
+      for (const entry of wave.entries) {
+        const row = document.createElement("div");
+        row.style.cssText = "display:grid; grid-template-columns:1fr 56px 1fr 26px; gap:5px; align-items:center;";
+        const kindSel = selectInput(kindOptions(), entry.kind);
+        kindSel.onchange = () => {
+          entry.kind = kindSel.value;
+          void this.saveCustomWaves();
+        };
+        const countIn = numberInput(entry.count, 1, 200, 1, "100%");
+        countIn.onchange = () => {
+          entry.count = clampInt(countIn.value, 1, 200);
+          void this.saveCustomWaves();
+        };
+        const brainSel = selectInput(BRAIN_OPTS, entry.brain);
+        brainSel.onchange = () => {
+          entry.brain = brainSel.value as BrainId;
+          void this.saveCustomWaves();
+        };
+        const rm = smallDevBtn("✕", "#2a3242", "#cfe");
+        rm.onclick = () => {
+          wave.entries = wave.entries.filter((x) => x !== entry);
+          void this.saveCustomWaves();
+          this.renderGameplayPanel();
+        };
+        row.append(kindSel, countIn, brainSel, rm);
+        card.appendChild(row);
+      }
+
+      const addUnit = smallDevBtn("＋ Add unit", "#222a38", "#cfe");
+      addUnit.style.justifySelf = "start";
+      addUnit.onclick = () => {
+        wave.entries.push({ kind: "goblin", count: 3, brain: "attacks_home" });
+        void this.saveCustomWaves();
+        this.renderGameplayPanel();
+      };
+      card.appendChild(addUnit);
+      wrap.appendChild(card);
+    }
+
+    const addWave = document.createElement("button");
+    addWave.textContent = "＋ Add wave";
+    addWave.style.cssText =
+      "cursor:pointer; min-height:32px; border-radius:6px; border:1px solid #3f8c49; background:#23472b; color:#e8ffe8; font:600 12px system-ui,sans-serif;";
+    addWave.onclick = () => {
+      const next = this.customWaves.reduce((m, w) => Math.max(m, w.number), 0) + 1;
+      this.customWaves.push({ number: next, entries: [{ kind: "goblin", count: 5, brain: "attacks_home" }] });
+      void this.saveCustomWaves();
+      this.renderGameplayPanel();
+    };
+    wrap.appendChild(addWave);
+    return wrap;
+  }
+
+  /** Resources tab: global tree/rock HP (persisted to resources.json, applied live). */
+  private renderResourceHp(): HTMLElement {
+    const wrap = this.gameplaySection("Resource HP");
+    const hint = document.createElement("div");
+    hint.textContent = "Total HP of every tree / rock — applies to all instances live.";
+    hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+    wrap.appendChild(hint);
+    for (const kind of ["tree", "rock"] as const) {
+      const cfg = this.dropCfg(kind);
+      const row = document.createElement("label");
+      row.style.cssText = "display:grid; grid-template-columns:1fr 86px 28px; align-items:center; gap:7px;";
+      const name = document.createElement("span");
+      name.textContent = kind === "tree" ? "Tree HP" : "Rock HP";
+      name.style.cssText = "color:#cdd3e0; font-weight:600;";
+      const input = numberInput(Number(cfg.hp) || 0, 1, 1_000_000, 1, "100%");
+      input.onchange = () => {
+        cfg.hp = clampInt(input.value, 1, 1_000_000);
+        this.scheduleDropSave(kind);
+      };
+      const unit = document.createElement("span");
+      unit.textContent = "hp";
+      unit.style.cssText = "color:#6f8192;";
+      row.append(name, input, unit);
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
+  /** Scale the difficulty-relevant keys up/down together. Normal restores each
+   *  key to its built-in default. Edits go through the same dirty/commit path. */
+  private applyDifficultyPreset(preset: "Easy" | "Normal" | "Hard") {
+    const factor: Record<typeof preset, number> = { Easy: 0.7, Normal: 1, Hard: 1.5 };
+    const keys: DevTuningKey[] = [
+      "enemyMaxHp",
+      "enemyAttack",
+      "waveSizeBase",
+      "waveSizeMax",
+      "goblinLiveCap",
+    ];
+    const mult = factor[preset];
+    for (const key of keys) {
+      const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+      if (!control) continue;
+      const target =
+        preset === "Normal"
+          ? control.defaultValue
+          : Math.max(control.min * control.scale, control.defaultValue * mult);
+      const raw = control.integer ? Math.round(target) : target;
+      this.tuningValues.set(key, raw);
+      this.dirtyTuningKeys.add(key);
+    }
+    this.renderGameplayPanel();
   }
 
   private gameplaySection(title: string): HTMLElement {
@@ -503,10 +1229,18 @@ export class DevMode {
 
   private tuningRow(control: TuningControl): HTMLElement {
     const row = document.createElement("label");
-    row.style.cssText = "display:grid; grid-template-columns:1fr 86px 44px; align-items:center; gap:7px;";
+    row.title = control.description;
+    row.style.cssText = "display:grid; grid-template-columns:1fr 78px 40px; align-items:center; gap:7px;";
+    const labelBlock = document.createElement("div");
+    labelBlock.style.cssText = "display:flex; flex-direction:column; gap:2px; min-width:0;";
     const name = document.createElement("span");
     name.textContent = control.label;
-    name.style.cssText = "color:#9fb0c0;";
+    name.style.cssText = "color:#cdd3e0; font-weight:600; font-size:12px;";
+    const desc = document.createElement("span");
+    desc.textContent = control.description;
+    desc.style.cssText = "color:#6f8192; font-size:10px; line-height:1.25;";
+    labelBlock.appendChild(name);
+    labelBlock.appendChild(desc);
     const input = document.createElement("input");
     input.type = "number";
     input.min = String(control.min);
@@ -515,7 +1249,7 @@ export class DevMode {
     const rawValue = this.tuningValues.get(control.key) ?? control.defaultValue;
     input.value = formatTuning(rawValue / control.scale);
     input.style.cssText =
-      "width:86px; box-sizing:border-box; background:#0c1018; color:#e8e8e8; border:1px solid #3a4658;" +
+      "width:78px; box-sizing:border-box; background:#0c1018; color:#e8e8e8; border:1px solid #3a4658;" +
       "border-radius:5px; padding:4px 5px; text-align:right; font:12px system-ui,sans-serif;";
     const unit = document.createElement("span");
     unit.textContent = control.unit;
@@ -528,6 +1262,10 @@ export class DevMode {
       input.value = formatTuning(raw / control.scale);
       this.tuningValues.set(control.key, raw);
       this.dirtyTuningKeys.add(control.key);
+      if (this.simBigEl) {
+        const n = this.computeEnemyCapacity();
+        this.simBigEl.textContent = n >= 999 ? "∞" : `~${n}`;
+      }
     };
     input.onchange = commit;
     input.onkeydown = (e) => {
@@ -537,7 +1275,7 @@ export class DevMode {
         input.blur();
       }
     };
-    row.appendChild(name);
+    row.appendChild(labelBlock);
     row.appendChild(input);
     row.appendChild(unit);
     return row;
@@ -724,14 +1462,31 @@ export class DevMode {
       if (this.drag) this.setCursor("grabbing");
       return true;
     }
-    // bare ground (or nothing actionable): deselect, but keep navigation working
+    // bare ground (or nothing actionable): deselect, but keep navigation working.
+    // Hold the button + drag and the player follows the cursor, like in gameplay.
     this.selectNone();
     if (point) {
       this.clearFocus(); // walking again → camera resumes following the player
-      this.net.sendMove(point.x, point.z);
+      this.ghostFollowing = true;
+      this.lastGhostMoveAt = performance.now();
+      this.lastGhostX = point.x;
+      this.lastGhostZ = point.z;
+      this.net.sendMove(point.x, point.z, getCameraZoom());
     }
     return true;
   };
+
+  /** While the button is held on bare ground, re-issue moves toward the cursor's
+   *  ground spot (throttled) so the player follows it — Diablo/gameplay style. */
+  private ghostWalkTo(point: Vector3) {
+    const now = performance.now();
+    if (now - this.lastGhostMoveAt < 90) return; // don't spam the server
+    if (Math.hypot(point.x - this.lastGhostX, point.z - this.lastGhostZ) < 0.5) return;
+    this.net.sendMove(point.x, point.z, getCameraZoom());
+    this.lastGhostMoveAt = now;
+    this.lastGhostX = point.x;
+    this.lastGhostZ = point.z;
+  }
 
   /** Hover: themed cursor; while dragging, relocate the grabbed object across the
    *  ground plane (props move + persist locally, synced entities send throttled moves). */
@@ -743,6 +1498,11 @@ export class DevMode {
       this.setCursor("grabbing");
       return true;
     }
+    if (this.ghostFollowing) {
+      if (point) this.ghostWalkTo(point); // hold-to-move: keep following the cursor
+      this.setCursor("default");
+      return true;
+    }
     const sel = this.resolveSelAt(point);
     this.setCursor(sel ? "grab" : "default");
     return true;
@@ -751,6 +1511,7 @@ export class DevMode {
   /** Release ends a button-held drag. */
   pointerUp = (event?: PointerEvent) => {
     if (event) this.shiftDown = event.shiftKey;
+    this.ghostFollowing = false; // stop following the cursor
     if (this.maskEdit) {
       this.maskDrag = false;
       this.saveMaskEdit();
@@ -911,6 +1672,40 @@ export class DevMode {
     if (this.canvas) this.canvas.style.cursor = c;
   }
 
+  private appendTransformFields(fields: Field[], spec: TransformFieldSpec) {
+    if (spec.onMove) {
+      fields.push(
+        { kind: "number", label: "x", value: round(spec.x), step: 0.5, onChange: (v) => spec.onMove?.(v, spec.currentZ?.() ?? spec.z) },
+        { kind: "number", label: "z", value: round(spec.z), step: 0.5, onChange: (v) => spec.onMove?.(spec.currentX?.() ?? spec.x, v) },
+      );
+    } else {
+      fields.push(
+        { kind: "readonly", label: "x", value: round(spec.x).toString() },
+        { kind: "readonly", label: "z", value: round(spec.z).toString() },
+      );
+    }
+    fields.push(
+      {
+        kind: "range",
+        label: "scale",
+        value: Math.max(0.05, spec.scale ?? 1),
+        min: 0.1,
+        max: spec.maxScale ?? 40,
+        step: spec.scaleStep ?? 0.1,
+        onChange: spec.onScale,
+      },
+      {
+        kind: "range",
+        label: "rot°",
+        value: deg(spec.rotY ?? 0),
+        min: 0,
+        max: 360,
+        step: 1,
+        onChange: (v) => spec.onRotate((v * Math.PI) / 180),
+      },
+    );
+  }
+
   /** Render the selection's properties + editing controls. Props edit locally and
    *  persist to props.json; synced entities send authoritative edits to the server
    *  (which sync back to every client; rocks also refresh pathfinding collision).
@@ -925,15 +1720,29 @@ export class DevMode {
       if (!placed) return;
       const d = placed.def;
       const reapply = () => this.propManager.applyDef(sel.id);
-      fields = [
-        { kind: "text", label: "name", value: d.name, onChange: (v) => { d.name = v || "prop"; persist(); } },
-        { kind: "number", label: "x", value: round(d.x), step: 0.5, onChange: (v) => { d.x = v; reapply(); persist(); } },
-        { kind: "number", label: "z", value: round(d.z), step: 0.5, onChange: (v) => { d.z = v; reapply(); persist(); } },
-        { kind: "range", label: "scale", value: d.scale, min: 0.5, max: 40, step: 0.5, onChange: (v) => { d.scale = v; if ((d.collisionRadius ?? 0) > 0) d.collisionRadius = +(v / 2).toFixed(2); reapply(); persist(); } },
-        { kind: "range", label: "rot°", value: deg(d.rotationY), min: 0, max: 360, step: 1, onChange: (v) => { d.rotationY = (v * Math.PI) / 180; reapply(); persist(); } },
-        { kind: "checkbox", label: "concrete", value: (d.collisionRadius ?? 0) > 0, onChange: (on) => { d.collisionRadius = on ? +(d.scale / 2).toFixed(2) : 0; void this.propManager.persistUpdate(sel.id); } },
-      ];
+      fields = [{ kind: "text", label: "name", value: d.name, onChange: (v) => { d.name = v || "prop"; persist(); } }];
+      this.appendTransformFields(fields, {
+        x: d.x,
+        z: d.z,
+        scale: d.scale,
+        rotY: d.rotationY,
+        scaleStep: 0.5,
+        onMove: (x, z) => { d.x = x; d.z = z; reapply(); persist(); },
+        onScale: (v) => { d.scale = v; if ((d.collisionRadius ?? 0) > 0) d.collisionRadius = +(v / 2).toFixed(2); reapply(); persist(); },
+        onRotate: (v) => { d.rotationY = v; reapply(); persist(); },
+      });
+      fields.push({ kind: "checkbox", label: "concrete", value: (d.collisionRadius ?? 0) > 0, onChange: (on) => { d.collisionRadius = on ? +(d.scale / 2).toFixed(2) : 0; void this.propManager.persistUpdate(sel.id); } });
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
+      // A concrete prop IS a destructible structure: HP + drops. By default those
+      // properties come from the global structure kind; the inspector can switch
+      // a selected prop to its own instance override.
+      if ((d.collisionRadius ?? 0) > 0 && d.model) {
+        const sobj = this.entityObj("structure", sel.id);
+        const feature = this.featureTarget(sel, "structure", d.model);
+        this.appendPropertyScopeToggle(sel, feature, fields);
+        this.appendDamageableFields("structure", feature.scope, feature.key, sel.id, sobj, 50, fields);
+        this.appendFeatureDropFields("structure", feature.scope, feature.key, sel, fields, actions, feature.modelId);
+      }
     } else if (sel.kind === "character") {
       const cm = this.charManager;
       const c = cm?.get(sel.id);
@@ -941,70 +1750,136 @@ export class DevMode {
       const pz = round(c?.placement.z ?? sel.root.position.z);
       fields = [
         { kind: "readonly", label: "name", value: c?.def.name ?? sel.id },
-        { kind: "number", label: "x", value: px, step: 0.5, onChange: (v) => { cm?.move(sel.id, v, cm?.get(sel.id)?.placement.z ?? pz); void cm?.persist(sel.id); } },
-        { kind: "number", label: "z", value: pz, step: 0.5, onChange: (v) => { cm?.move(sel.id, cm?.get(sel.id)?.placement.x ?? px, v); void cm?.persist(sel.id); } },
-        { kind: "range", label: "rot°", value: deg(c?.placement.rotationY ?? 0), min: 0, max: 360, step: 1, onChange: (v) => { cm?.setRotation(sel.id, (v * Math.PI) / 180); void cm?.persist(sel.id); } },
       ];
+      this.appendTransformFields(fields, {
+        x: px,
+        z: pz,
+        scale: c?.placement.scale ?? 1,
+        rotY: c?.placement.rotationY ?? 0,
+        onMove: (x, z) => { cm?.move(sel.id, x, z); void cm?.persist(sel.id); },
+        currentX: () => cm?.get(sel.id)?.placement.x ?? px,
+        currentZ: () => cm?.get(sel.id)?.placement.z ?? pz,
+        onScale: (v) => { cm?.setScale(sel.id, v); void cm?.persist(sel.id); },
+        onRotate: (v) => { cm?.setRotation(sel.id, v); void cm?.persist(sel.id); },
+      });
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
     } else if (editableSynced(sel.kind)) {
       const obj = this.entityObj(sel.kind, sel.id);
       const x = obj?.x ?? sel.root.position.x;
       const z = obj?.z ?? sel.root.position.z;
-      fields = [
-        { kind: "number", label: "x", value: round(x), step: 0.5, onChange: (v) => this.net.sendDevMove(sel.kind, sel.id, v, this.entityObj(sel.kind, sel.id)?.z ?? z) },
-        { kind: "number", label: "z", value: round(z), step: 0.5, onChange: (v) => this.net.sendDevMove(sel.kind, sel.id, this.entityObj(sel.kind, sel.id)?.x ?? x, v) },
-      ];
-      if (sel.kind === "tree") {
-        const cfg = this.feature("default", "tree");
-        fields.push({ kind: "number", label: "HP", value: obj?.maxHp ?? cfg.hp ?? 0, min: 0, step: 10, onChange: (v) => { cfg.hp = Math.max(0, Math.round(v)); this.net.sendDevSet("tree", sel.id, "maxHp", cfg.hp); this.scheduleFeatureSave("default", "tree"); } });
-        fields.push({ kind: "checkbox", label: "alive", value: !!obj?.alive, onChange: (on) => this.net.sendDevSet("tree", sel.id, "alive", on) });
-      }
+      fields = [];
+      this.appendTransformFields(fields, {
+        x,
+        z,
+        scale: obj?.scale ?? 1,
+        rotY: obj?.rotY ?? 0,
+        onMove: (nx, nz) => this.net.sendDevMove(sel.kind, sel.id, nx, nz),
+        currentX: () => this.entityObj(sel.kind, sel.id)?.x ?? x,
+        currentZ: () => this.entityObj(sel.kind, sel.id)?.z ?? z,
+        onScale: (v) => this.net.sendDevSet(sel.kind, sel.id, "scale", v),
+        onRotate: (v) => this.net.sendDevSet(sel.kind, sel.id, "rotY", v),
+      });
+      const feature =
+        sel.kind === "enemy"
+          ? this.featureTarget(sel, obj?.kind || "npc", obj?.modelId)
+          : sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house"
+            ? this.featureTarget(sel, sel.kind)
+            : null;
+      if (feature) this.appendPropertyScopeToggle(sel, feature, fields);
+      if (sel.kind === "tree" && feature) this.appendDamageableFields("tree", feature.scope, feature.key, sel.id, obj, 10, fields);
       if (sel.kind === "enemy" && obj?.maxHp !== undefined) {
-        this.appendCharacterFields(sel, obj, fields);
+        const enemyFeature = feature ?? this.featureTarget(sel, obj.kind || "npc", obj.modelId);
+        this.appendCharacterFields(sel, obj, fields, enemyFeature);
       }
       if (sel.kind === "rock" && obj?.radius !== undefined) {
-        const cfg = this.feature("default", "rock");
-        fields.push({ kind: "number", label: "HP", value: obj?.maxHp ?? cfg.hp ?? 0, min: 0, step: 10, onChange: (v) => { cfg.hp = Math.max(0, Math.round(v)); this.net.sendDevSet("rock", sel.id, "maxHp", cfg.hp); this.scheduleFeatureSave("default", "rock"); } });
-        fields.push({ kind: "checkbox", label: "alive", value: !!obj?.alive, onChange: (on) => this.net.sendDevSet("rock", sel.id, "alive", on) });
+        if (feature) this.appendDamageableFields("rock", feature.scope, feature.key, sel.id, obj, 10, fields);
         fields.push({ kind: "readonly", label: "radius", value: obj.radius.toFixed(2) }); // collision follows the move
       }
       if (sel.kind === "house") {
+        if (feature) this.appendDamageableFields("house", feature.scope, feature.key, sel.id, obj, 50, fields);
         const hp = obj?.maxHp ?? 0;
-        const cfg = this.feature("default", "house");
-        fields.push(
-          { kind: "number", label: "HP", value: hp, min: 0, step: 50, onChange: (v) => { cfg.hp = Math.max(0, Math.round(v)); this.net.sendDevSet("house", sel.id, "maxHp", cfg.hp); this.scheduleFeatureSave("default", "house"); } },
-          { kind: "checkbox", label: "alive", value: !!obj?.alive, onChange: (on) => this.net.sendDevSet("house", sel.id, "alive", on) },
-          { kind: "readonly", label: "note", value: hp <= 0 ? "indestructible (HP 0)" : "set HP 0 = indestructible" },
-        );
+        fields.push({ kind: "readonly", label: "note", value: hp <= 0 ? "indestructible (HP 0)" : "set HP 0 = indestructible" });
       }
       actions = [{ label: "Delete", danger: true, onClick: () => this.deleteSelection() }];
     } else if (sel.kind === "player") {
       const obj = this.entityObj("player", sel.id);
-      fields = [
-        { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
-        { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
-      ];
-      if (obj) this.appendCharacterFields(sel, obj, fields);
+      fields = [];
+      this.appendTransformFields(fields, {
+        x: obj?.x ?? sel.root.position.x,
+        z: obj?.z ?? sel.root.position.z,
+        scale: obj?.scale ?? 1,
+        rotY: obj?.rotY ?? 0,
+        onScale: (v) => this.net.sendDevSet("player", sel.id, "scale", v),
+        onRotate: (v) => this.net.sendDevSet("player", sel.id, "rotY", v),
+      });
+      if (obj) {
+        const feature = this.featureTarget(sel, "player");
+        this.appendPropertyScopeToggle(sel, feature, fields);
+        this.appendCharacterFields(sel, obj, fields, feature);
+      }
     } else {
       // player / static: inspect-only
       const obj = this.entityObj(sel.kind, sel.id);
-      fields = [
-        { kind: "readonly", label: "x", value: round(sel.root.position.x).toString() },
-        { kind: "readonly", label: "z", value: round(sel.root.position.z).toString() },
-      ];
+      fields = [];
+      this.appendTransformFields(fields, {
+        x: obj?.x ?? sel.root.position.x,
+        z: obj?.z ?? sel.root.position.z,
+        scale: obj?.scale ?? 1,
+        rotY: obj?.rotY ?? 0,
+        onScale: (v) => this.net.sendDevSet(sel.kind, sel.id, "scale", v),
+        onRotate: (v) => this.net.sendDevSet(sel.kind, sel.id, "rotY", v),
+      });
       if (obj?.radius !== undefined) fields.push({ kind: "readonly", label: "radius", value: obj.radius.toFixed(2) });
     }
 
     if (sel.kind === "house") this.appendStructureMaskFields(sel, fields, actions);
-    if (sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house")
-      this.appendFeatureDropFields(sel.kind, "default", sel.kind, sel, fields, actions);
+    if (sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house") {
+      const feature = this.featureTarget(sel, sel.kind);
+      this.appendFeatureDropFields(sel.kind, feature.scope, feature.key, sel, fields, actions, feature.modelId);
+    }
     if (sel.kind === "enemy") {
       const obj = this.entityObj(sel.kind, sel.id);
-      this.appendFeatureDropFields(obj?.kind || "npc", "instance", sel.id, sel, fields, actions, obj?.modelId);
+      const feature = this.featureTarget(sel, obj?.kind || "npc", obj?.modelId);
+      this.appendFeatureDropFields(feature.kind, feature.scope, feature.key, sel, fields, actions, feature.modelId);
     }
     // Any object (house/prop/tree/rock) can be turned into a goblin spawner.
     if (spawnable(sel.kind)) this.appendSpawnerFields(sel, fields, actions);
     this.inspector.setSelection(`${sel.kind} · ${shortId(sel.id)}`, fields, actions);
+  }
+
+  /** Shared HP + alive fields for any damageable entity (tree/rock/house/structure).
+   *  HP is stored on the feature config (`scope`/`key` — kind-level for resources,
+   *  MODEL-level for structures so every instance shares it) and pushed live to the
+   *  selected entity via dev_set. Unifies what used to be duplicated per kind. */
+  private appendDamageableFields(
+    kind: string,
+    scope: "default" | "instance",
+    key: string,
+    id: string,
+    obj: EntityView | null,
+    hpStep: number,
+    fields: Field[],
+  ) {
+    const cfg = this.feature(scope, key);
+    const view = scope === "instance" ? this.mergedFeature(kind, key) : cfg;
+    fields.push({
+      kind: "number",
+      label: "HP",
+      value: cfg.hp ?? view.hp ?? obj?.maxHp ?? 0,
+      min: 0,
+      step: hpStep,
+      onChange: (v) => {
+        cfg.hp = Math.max(0, Math.round(v));
+        this.net.sendDevSet(kind, id, "maxHp", cfg.hp);
+        this.scheduleFeatureSave(scope, key);
+      },
+    });
+    fields.push({
+      kind: "checkbox",
+      label: "alive",
+      value: !!obj?.alive,
+      onChange: (on) => this.net.sendDevSet(kind, id, "alive", on),
+    });
   }
 
   private appendStructureMaskFields(sel: Selectable, fields: Field[], actions: Action[]) {
@@ -1211,7 +2086,30 @@ export class DevMode {
     return cfg;
   }
 
-  private mergedFeature(kind: string, id: string, modelId?: string): EntityFeatureCfg {
+  private cloneFeatureConfig(cfg: EntityFeatureCfg): EntityFeatureCfg {
+    return {
+      ...cfg,
+      stats: cfg.stats ? { ...cfg.stats } : undefined,
+      drops: cfg.drops ? cfg.drops.map((d) => ({ ...d })) : undefined,
+    };
+  }
+
+  private hasInstanceFeature(id: string): boolean {
+    return this.features.instances?.[id] !== undefined;
+  }
+
+  private featureTarget(sel: Selectable, kind: string, modelId?: string): FeatureTarget {
+    const scope: FeatureScope = this.hasInstanceFeature(sel.id) ? "instance" : "default";
+    return {
+      scope,
+      key: scope === "instance" ? sel.id : kind,
+      kind,
+      defaultKey: kind,
+      modelId,
+    };
+  }
+
+  private mergedFeature(kind: string, id?: string, modelId?: string): EntityFeatureCfg {
     const d = this.features.defaults ?? {};
     const i = this.features.instances ?? {};
     return {
@@ -1225,6 +2123,55 @@ export class DevMode {
       },
       drops: i[id]?.drops ?? (modelId ? d[modelId]?.drops : undefined) ?? d[kind]?.drops,
     };
+  }
+
+  private displayFeature(feature: FeatureTarget): EntityFeatureCfg {
+    const own = this.feature(feature.scope, feature.key);
+    if (feature.scope === "default") return own;
+    const inherited = this.mergedFeature(feature.kind, undefined, feature.modelId);
+    return {
+      ...inherited,
+      ...own,
+      stats: {
+        ...((inherited.stats ?? {}) as CharacterStatsCfg),
+        ...((own.stats ?? {}) as CharacterStatsCfg),
+      },
+      drops: own.drops ?? inherited.drops,
+    };
+  }
+
+  private appendPropertyScopeToggle(sel: Selectable, feature: FeatureTarget, fields: Field[]) {
+    fields.push({
+      kind: "scopeToggle",
+      section: "Property Source",
+      label: "Properties",
+      value: feature.scope,
+      options: [
+        {
+          value: "default",
+          label: "Default",
+          description: `global ${feature.defaultKey}`,
+        },
+        {
+          value: "instance",
+          label: "Instance",
+          description: shortId(sel.id),
+        },
+      ],
+      onChange: (value) => {
+        if (value === "instance") {
+          const inherited = this.mergedFeature(feature.kind, undefined, feature.modelId);
+          (this.features.instances ??= {})[sel.id] = this.cloneFeatureConfig(inherited);
+          this.scheduleFeatureSave("instance", sel.id);
+          this.applyFeatureLive(sel, feature.kind, this.features.instances[sel.id]);
+        } else {
+          if (this.features.instances?.[sel.id]) delete this.features.instances[sel.id];
+          void this.deleteFeature("instance", sel.id);
+          this.applyFeatureLive(sel, feature.kind, this.mergedFeature(feature.kind, undefined, feature.modelId));
+        }
+        this.showSelection(sel);
+      },
+    });
   }
 
   private scheduleFeatureSave(scope: "default" | "instance", key: string) {
@@ -1242,39 +2189,65 @@ export class DevMode {
     }).catch((e) => console.warn("[features] save failed", e));
   }
 
-  private appendCharacterFields(sel: Selectable, obj: EntityView, fields: Field[]) {
+  private async deleteFeature(scope: "default" | "instance", key: string) {
+    await fetch("/__features/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope, key }),
+    }).catch((e) => console.warn("[features] delete failed", e));
+  }
+
+  private applyFeatureLive(sel: Selectable, kind: string, cfg: EntityFeatureCfg) {
+    const stats = cfg.stats ?? {};
+    if (sel.kind === "enemy" && cfg.brain) this.net.sendDevSet("enemy", sel.id, "brain", cfg.brain);
+    const maxHp = cfg.hp ?? stats.maxHp;
+    if (maxHp !== undefined) {
+      const targetKind = sel.kind === "prop" ? "structure" : sel.kind;
+      this.net.sendDevSet(targetKind, sel.id, "maxHp", Math.max(0, Math.round(maxHp)));
+    }
+    for (const field of ["level", "attack", "armor", "critChance", "moveSpeed", "throwPower"] as const) {
+      const value = stats[field];
+      if (value !== undefined && (sel.kind === "enemy" || sel.kind === "player")) {
+        this.net.sendDevSet(sel.kind, sel.id, field, value);
+      }
+    }
+  }
+
+  private appendCharacterFields(sel: Selectable, obj: EntityView, fields: Field[], feature: FeatureTarget) {
     const kind = sel.kind === "player" ? "player" : obj.kind || "npc";
-    const cfg = this.feature("instance", sel.id);
+    const cfg = this.feature(feature.scope, feature.key);
+    const view = this.displayFeature(feature);
     const stats = cfg.stats ?? (cfg.stats = {});
+    const viewStats = view.stats ?? {};
     const saveStat = (field: keyof CharacterStatsCfg, value: number) => {
       stats[field] = Math.max(0, value);
       if (field === "maxHp") cfg.hp = stats.maxHp;
       this.net.sendDevSet(sel.kind, sel.id, field === "maxHp" ? "maxHp" : field, stats[field] ?? 0);
-      this.scheduleFeatureSave("instance", sel.id);
+      this.scheduleFeatureSave(feature.scope, feature.key);
     };
     fields.push({ kind: "readonly", label: "kind", value: kind });
     if (sel.kind === "enemy") {
       fields.push({
         kind: "select",
         label: "brain",
-        value: (obj.brain || cfg.brain || (kind === "goblin" ? "attacks_home" : "idle")) as string,
+        value: (cfg.brain || view.brain || obj.brain || (kind === "goblin" ? "attacks_home" : "idle")) as string,
         options: BRAIN_OPTIONS,
         onChange: (v) => {
           cfg.brain = v;
           this.net.sendDevSet("enemy", sel.id, "brain", v);
-          this.scheduleFeatureSave("instance", sel.id);
+          this.scheduleFeatureSave(feature.scope, feature.key);
         },
       });
     }
     fields.push(
-      { kind: "number", label: "level", value: obj.level ?? stats.level ?? 1, min: 1, step: 1, onChange: (v) => saveStat("level", Math.max(1, Math.round(v))) },
-      { kind: "number", label: "HP", value: obj.maxHp ?? stats.maxHp ?? 0, min: 0, step: 5, onChange: (v) => saveStat("maxHp", Math.max(0, Math.round(v))) },
+      { kind: "number", label: "level", value: viewStats.level ?? obj.level ?? 1, min: 1, step: 1, onChange: (v) => saveStat("level", Math.max(1, Math.round(v))) },
+      { kind: "number", label: "HP", value: cfg.hp ?? view.hp ?? viewStats.maxHp ?? obj.maxHp ?? 0, min: 0, step: 5, onChange: (v) => saveStat("maxHp", Math.max(0, Math.round(v))) },
       { kind: "number", label: "current HP", value: obj.hp ?? obj.maxHp ?? 0, min: 0, step: 5, onChange: (v) => this.net.sendDevSet(sel.kind, sel.id, "hp", Math.max(0, Math.round(v))) },
-      { kind: "number", label: "attack", value: obj.attack ?? stats.attack ?? 0, min: 0, step: 1, onChange: (v) => saveStat("attack", v) },
-      { kind: "number", label: "armor", value: obj.armor ?? stats.armor ?? 0, min: 0, step: 1, onChange: (v) => saveStat("armor", v) },
-      { kind: "number", label: "crit %", value: Math.round(((obj.critChance ?? stats.critChance ?? 0) * 100)), min: 0, max: 100, step: 1, onChange: (v) => saveStat("critChance", Math.max(0, Math.min(100, v)) / 100) },
-      { kind: "number", label: "move spd", value: obj.moveSpeed ?? stats.moveSpeed ?? 0, min: 0, step: 0.25, onChange: (v) => saveStat("moveSpeed", v) },
-      { kind: "number", label: "throw pow", value: obj.throwPower ?? stats.throwPower ?? 1, min: 0, step: 0.1, onChange: (v) => saveStat("throwPower", v) },
+      { kind: "number", label: "attack", value: viewStats.attack ?? obj.attack ?? 0, min: 0, step: 1, onChange: (v) => saveStat("attack", v) },
+      { kind: "number", label: "armor", value: viewStats.armor ?? obj.armor ?? 0, min: 0, step: 1, onChange: (v) => saveStat("armor", v) },
+      { kind: "number", label: "crit %", value: Math.round(((viewStats.critChance ?? obj.critChance ?? 0) * 100)), min: 0, max: 100, step: 1, onChange: (v) => saveStat("critChance", Math.max(0, Math.min(100, v)) / 100) },
+      { kind: "number", label: "move spd", value: viewStats.moveSpeed ?? obj.moveSpeed ?? 0, min: 0, step: 0.25, onChange: (v) => saveStat("moveSpeed", v) },
+      { kind: "number", label: "throw pow", value: viewStats.throwPower ?? obj.throwPower ?? 1, min: 0, step: 0.1, onChange: (v) => saveStat("throwPower", v) },
     );
     if ((obj.maxHp ?? 0) <= 0) fields.push({ kind: "readonly", label: "note", value: "HP 0 = unkillable" });
   }
@@ -1290,7 +2263,7 @@ export class DevMode {
   ) {
     const cfg = this.feature(scope, key);
     if (!cfg.drops) {
-      const merged = this.mergedFeature(kind, key, modelId);
+      const merged = scope === "instance" ? this.mergedFeature(kind, key, modelId) : this.mergedFeature(kind);
       cfg.drops = merged.drops ? merged.drops.map((d) => ({ ...d })) : [];
     }
     const drops = cfg.drops;
@@ -1374,7 +2347,12 @@ export class DevMode {
   /** Append spawn rules to an object's inspector. Each selected owner can have
    *  multiple rules, each with its own target type, frequency, cap and behavior. */
   private appendSpawnerFields(sel: Selectable, fields: Field[], actions: Action[]) {
-    const rules = this.spawners.get(sel.id) ?? [];
+    // A concrete prop keys its spawner by MODEL, so every instance of that model
+    // shares it (a new goblin house spawns goblins like the others). Everything
+    // else keys per-instance.
+    const def = sel.kind === "prop" ? this.propManager.get(sel.id)?.def : undefined;
+    const ownerKey = def && (def.collisionRadius ?? 0) > 0 ? def.model || sel.id : sel.id;
+    const rules = this.spawners.get(ownerKey) ?? [];
     fields.push({
       kind: "readonly",
       label: "spawn rules",
@@ -1439,9 +2417,9 @@ export class DevMode {
         onChange: (v) => {
           if (v !== "remove") return;
           void this.deleteSpawner(sp.id);
-          const next = (this.spawners.get(sel.id) ?? []).filter((s) => s.id !== sp.id);
-          if (next.length) this.spawners.set(sel.id, next);
-          else this.spawners.delete(sel.id);
+          const next = (this.spawners.get(ownerKey) ?? []).filter((s) => s.id !== sp.id);
+          if (next.length) this.spawners.set(ownerKey, next);
+          else this.spawners.delete(ownerKey);
           this.showSelection(sel);
         },
       });
@@ -1452,14 +2430,14 @@ export class DevMode {
         const id = `${sel.id}-spawn-${Date.now().toString(36)}`;
         const sp: SpawnerCfg = {
           id,
-          ownerId: sel.id,
+          ownerId: ownerKey,
           type: "goblin",
           intervalMs: 4000,
           cap: 3,
           behavior: { brain: "attacks_home", stats: {} },
         };
-        const next = [...(this.spawners.get(sel.id) ?? []), sp];
-        this.spawners.set(sel.id, next);
+        const next = [...(this.spawners.get(ownerKey) ?? []), sp];
+        this.spawners.set(ownerKey, next);
         void this.saveSpawner(id);
         this.showSelection(sel);
       },
@@ -1774,7 +2752,9 @@ export class DevMode {
                       ? st.items
                       : kind === "house"
                         ? st.houses
-                        : undefined;
+                        : kind === "structure"
+                          ? st.structures
+                          : undefined;
     return map?.get(id) ?? null;
   }
 }
@@ -1782,6 +2762,8 @@ export class DevMode {
 interface EntityView {
   x?: number;
   z?: number;
+  rotY?: number;
+  scale?: number;
   hp?: number;
   maxHp?: number;
   alive?: boolean;
@@ -1797,6 +2779,20 @@ interface EntityView {
   critChance?: number;
   moveSpeed?: number;
   throwPower?: number;
+}
+
+interface TransformFieldSpec {
+  x: number;
+  z: number;
+  scale: number;
+  rotY: number;
+  maxScale?: number;
+  scaleStep?: number;
+  currentX?: () => number;
+  currentZ?: () => number;
+  onMove?: (x: number, z: number) => void;
+  onScale: (scale: number) => void;
+  onRotate: (rotY: number) => void;
 }
 
 interface StructureCfg {
@@ -1947,17 +2943,34 @@ interface GameplayAction {
   danger?: boolean;
 }
 
-const DEV_GAMEPLAY_ACTIONS: GameplayAction[] = [
-  { id: "reset_realm", label: "Start over", danger: true },
-  { id: "force_next_wave", label: "Next wave" },
-  { id: "kill_all_enemies", label: "Kill enemies", danger: true },
-  { id: "level_up_player", label: "Level up" },
+const DEV_GLOBAL_ACTIONS: GameplayAction[] = [
+  { id: "reset_realm", label: "Start Over", danger: true },
+  { id: "force_next_wave", label: "Next Wave" },
+  { id: "previous_wave", label: "Previous Wave" },
+  { id: "kill_all_enemies", label: "Kill Enemies", danger: true },
+  { id: "kick_players", label: "Kick Players", danger: true },
+  { id: "level_up_player", label: "Level Up Current Player" },
 ];
+
+type GameplayCategory = "Waves" | "Player" | "Combat" | "Resources";
+
+interface WaveEntryUI {
+  kind: string;
+  count: number;
+  brain: BrainId;
+  level?: number;
+}
+interface WaveDefUI {
+  number: number;
+  entries: WaveEntryUI[];
+}
 
 interface TuningControl {
   key: DevTuningKey;
   label: string;
+  category: GameplayCategory;
   section: string;
+  description: string;
   defaultValue: number;
   min: number;
   max: number;
@@ -1969,10 +2982,13 @@ interface TuningControl {
 
 const sec = 1000;
 const DEV_TUNING_CONTROLS: TuningControl[] = [
+  // ===================== WAVES =====================
   {
     key: "waveFirstDelayMs",
     label: "First wave delay",
-    section: "Waves",
+    category: "Waves",
+    section: "Wave timing",
+    description: "Grace period before the very first goblin wave marches in.",
     defaultValue: WAVE_FIRST_DELAY_MS,
     min: 0,
     max: 600,
@@ -1984,7 +3000,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveIntervalBaseMs",
     label: "Rest base",
-    section: "Waves",
+    category: "Waves",
+    section: "Wave timing",
+    description: "Calm time after wave 1 before the next wave starts.",
     defaultValue: WAVE_INTERVAL_BASE_MS,
     min: 0,
     max: 900,
@@ -1996,7 +3014,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveIntervalStepMs",
     label: "Rest per wave",
-    section: "Waves",
+    category: "Waves",
+    section: "Wave timing",
+    description: "Extra rest added after each successive wave (escalation).",
     defaultValue: WAVE_INTERVAL_STEP_MS,
     min: 0,
     max: 300,
@@ -2008,7 +3028,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveIntervalMaxMs",
     label: "Rest max",
-    section: "Waves",
+    category: "Waves",
+    section: "Wave timing",
+    description: "Upper limit on how long the rest between waves can grow.",
     defaultValue: WAVE_INTERVAL_MAX_MS,
     min: 0,
     max: 1800,
@@ -2020,7 +3042,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveSpawnSpreadMs",
     label: "Spawn spread",
-    section: "Waves",
+    category: "Waves",
+    section: "Wave timing",
+    description: "Window over which a wave's goblins trickle in (vs. all at once).",
     defaultValue: WAVE_SPAWN_SPREAD_MS,
     min: 0,
     max: 300,
@@ -2032,7 +3056,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveSizeBase",
     label: "Size base",
+    category: "Waves",
     section: "Wave size",
+    description: "Goblins in the first wave before any scaling.",
     defaultValue: WAVE_SIZE_BASE,
     min: 0,
     max: 200,
@@ -2044,7 +3070,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveSizePerPlayer",
     label: "Per player",
+    category: "Waves",
     section: "Wave size",
+    description: "Extra goblins added for each live defender.",
     defaultValue: WAVE_SIZE_PER_PLAYER,
     min: 0,
     max: 50,
@@ -2056,7 +3084,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveSizePerWave",
     label: "Per wave",
+    category: "Waves",
     section: "Wave size",
+    description: "Extra goblins added for each wave number (difficulty ramp).",
     defaultValue: WAVE_SIZE_PER_WAVE,
     min: 0,
     max: 50,
@@ -2068,7 +3098,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "waveSizeMax",
     label: "Size max",
+    category: "Waves",
     section: "Wave size",
+    description: "Hard cap on the number of goblins in a single wave.",
     defaultValue: WAVE_SIZE_MAX,
     min: 1,
     max: 500,
@@ -2080,7 +3112,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "goblinLiveCap",
     label: "Live cap",
+    category: "Waves",
     section: "Wave size",
+    description: "Max goblins alive at once; the next wave waits if exceeded.",
     defaultValue: GOBLIN_LIVE_CAP,
     min: 0,
     max: 500,
@@ -2089,10 +3123,109 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
     scale: 1,
     integer: true,
   },
+
+  // ===================== PLAYER =====================
+  {
+    key: "playerMaxHp",
+    label: "Starting HP",
+    category: "Player",
+    section: "Starting stats",
+    description: "Health a fresh (level 1) player spawns with.",
+    defaultValue: PLAYER_MAX_HP,
+    min: 1,
+    max: 100000,
+    step: 1,
+    unit: "hp",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "playerAttack",
+    label: "Starting attack",
+    category: "Player",
+    section: "Starting stats",
+    description: "Base attack power before armor mitigation and level growth.",
+    defaultValue: PLAYER_ATTACK,
+    min: 0,
+    max: 100000,
+    step: 1,
+    unit: "",
+    scale: 1,
+  },
+  {
+    key: "playerArmor",
+    label: "Starting armor",
+    category: "Player",
+    section: "Starting stats",
+    description: "Damage mitigation; higher armor means incoming hits hurt less.",
+    defaultValue: PLAYER_ARMOR,
+    min: 0,
+    max: 100000,
+    step: 1,
+    unit: "",
+    scale: 1,
+  },
+  {
+    key: "playerCritChance",
+    label: "Crit chance",
+    category: "Player",
+    section: "Starting stats",
+    description: "Chance for a player hit to land a critical (extra-damage) blow.",
+    defaultValue: PLAYER_CRIT_CHANCE,
+    min: 0,
+    max: 100,
+    step: 1,
+    unit: "%",
+    scale: 0.01,
+  },
+  {
+    key: "playerMoveSpeed",
+    label: "Move speed",
+    category: "Player",
+    section: "Starting stats",
+    description: "Base walking/running speed in world units per second.",
+    defaultValue: MOVE_SPEED,
+    min: 0.1,
+    max: 100,
+    step: 0.1,
+    unit: "u/s",
+    scale: 1,
+  },
+  {
+    key: "sprintSpeedMult",
+    label: "Sprint multiplier",
+    category: "Player",
+    section: "Starting stats",
+    description: "Speed multiplier while sprinting (drains stamina).",
+    defaultValue: SPRINT_SPEED_MULT,
+    min: 1,
+    max: 10,
+    step: 0.05,
+    unit: "×",
+    scale: 1,
+  },
+  {
+    key: "playerRespawnMs",
+    label: "Respawn delay",
+    category: "Player",
+    section: "Respawn",
+    description: "Time a dead player waits before returning to the fight.",
+    defaultValue: PLAYER_RESPAWN_MS,
+    min: 0,
+    max: 120,
+    step: 0.5,
+    unit: "s",
+    scale: sec,
+    integer: true,
+  },
+
+  // ===================== COMBAT =====================
   {
     key: "playerAttackCooldownMs",
     label: "Player cooldown",
-    section: "Combat",
+    category: "Combat",
+    section: "Player attack",
+    description: "Minimum time between consecutive player swings.",
     defaultValue: ATTACK_COOLDOWN_MS,
     min: 0,
     max: 10,
@@ -2104,7 +3237,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "playerAttackWindupMs",
     label: "Player windup",
-    section: "Combat",
+    category: "Combat",
+    section: "Player attack",
+    description: "Delay from starting a swing until the hit actually lands.",
     defaultValue: ATTACK_WINDUP_MS,
     min: 0,
     max: 5,
@@ -2114,9 +3249,51 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
     integer: true,
   },
   {
+    key: "enemyMaxHp",
+    label: "Enemy HP",
+    category: "Combat",
+    section: "Enemy stats",
+    description: "Base goblin health (scaled up by goblin level).",
+    defaultValue: GOBLIN_MAX_HP,
+    min: 1,
+    max: 100000,
+    step: 1,
+    unit: "hp",
+    scale: 1,
+    integer: true,
+  },
+  {
+    key: "enemyAttack",
+    label: "Enemy attack",
+    category: "Combat",
+    section: "Enemy stats",
+    description: "Base goblin attack power before player armor and divisor.",
+    defaultValue: GOBLIN_ATTACK,
+    min: 0,
+    max: 100000,
+    step: 1,
+    unit: "",
+    scale: 1,
+  },
+  {
+    key: "enemyMoveSpeed",
+    label: "Enemy speed",
+    category: "Combat",
+    section: "Enemy stats",
+    description: "Goblin chase speed in world units per second.",
+    defaultValue: GOBLIN_CHASE_SPEED,
+    min: 0,
+    max: 100,
+    step: 0.1,
+    unit: "u/s",
+    scale: 1,
+  },
+  {
     key: "enemyAttackCooldownMs",
     label: "Enemy cooldown",
-    section: "Combat",
+    category: "Combat",
+    section: "Enemy attack",
+    description: "Minimum time between goblin swings.",
     defaultValue: GOBLIN_ATTACK_COOLDOWN_MS,
     min: 0,
     max: 20,
@@ -2128,7 +3305,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "enemyAttackWindupMs",
     label: "Enemy windup",
-    section: "Combat",
+    category: "Combat",
+    section: "Enemy attack",
+    description: "Delay from a goblin starting a swing until its hit lands.",
     defaultValue: GOBLIN_ATTACK_WINDUP_MS,
     min: 0,
     max: 10,
@@ -2140,7 +3319,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "enemyAttackRange",
     label: "Enemy range",
-    section: "Enemy brain",
+    category: "Combat",
+    section: "Enemy attack",
+    description: "How close a goblin must be to land a melee hit.",
     defaultValue: GOBLIN_ATTACK_RANGE,
     min: 0.2,
     max: 20,
@@ -2151,7 +3332,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "enemyAggroRadius",
     label: "Aggro radius",
+    category: "Combat",
     section: "Enemy brain",
+    description: "Range at which a goblin notices and starts chasing a player.",
     defaultValue: GOBLIN_AGGRO_RADIUS,
     min: 0,
     max: 80,
@@ -2162,7 +3345,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "enemyDeaggroRadius",
     label: "Deaggro radius",
+    category: "Combat",
     section: "Enemy brain",
+    description: "Range at which a chasing goblin gives up and returns home.",
     defaultValue: GOBLIN_DEAGGRO_RADIUS,
     min: 0,
     max: 120,
@@ -2173,7 +3358,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "goblinHouseDamage",
     label: "House damage",
+    category: "Combat",
     section: "Enemy brain",
+    description: "Damage each goblin swing deals to the house (La Crypta).",
     defaultValue: GOBLIN_HOUSE_DAMAGE,
     min: 0,
     max: 1000,
@@ -2184,7 +3371,9 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
   {
     key: "damageDivisor",
     label: "Damage divisor",
+    category: "Combat",
     section: "Damage",
+    description: "Global divisor on all computed damage; higher = softer combat.",
     defaultValue: DAMAGE_DIVISOR,
     min: 0.1,
     max: 100,
@@ -2193,21 +3382,97 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
     scale: 1,
   },
   {
-    key: "playerRespawnMs",
-    label: "Player respawn",
-    section: "Damage",
-    defaultValue: PLAYER_RESPAWN_MS,
+    key: "berserkerAttackMult",
+    label: "Berserker attack",
+    category: "Combat",
+    section: "Berserker buff",
+    description: "Attack multiplier while the berserker potion buff is active.",
+    defaultValue: BERSERKER_ATTACK_MULT,
+    min: 1,
+    max: 50,
+    step: 0.1,
+    unit: "×",
+    scale: 1,
+  },
+  {
+    key: "berserkerDurationMs",
+    label: "Berserker duration",
+    category: "Combat",
+    section: "Berserker buff",
+    description: "How long the berserker potion buff lasts.",
+    defaultValue: BERSERKER_DURATION_MS,
     min: 0,
-    max: 120,
-    step: 0.5,
+    max: 600,
+    step: 1,
     unit: "s",
     scale: sec,
     integer: true,
+  },
+  {
+    key: "dropRateMult",
+    label: "Drop rate",
+    category: "Resources",
+    section: "Drops",
+    description: "Global multiplier on ALL drop chances (loot, bananas, potions).",
+    defaultValue: DROP_RATE_MULT,
+    min: 0,
+    max: 10,
+    step: 0.1,
+    unit: "×",
+    scale: 1,
   },
 ];
 
 const formatTuning = (v: number) =>
   Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, "");
+
+/** A small muted field-label span for popups. */
+const textSpan = (text: string): HTMLElement => {
+  const s = document.createElement("span");
+  s.textContent = text;
+  s.style.cssText = "font:11px system-ui,sans-serif;";
+  return s;
+};
+
+const clampInt = (s: string, min: number, max: number) =>
+  Math.max(min, Math.min(max, Math.round(Number(s) || min)));
+
+const numberInput = (value: number, min: number, max: number, step: number, width = "86px"): HTMLInputElement => {
+  const i = document.createElement("input");
+  i.type = "number";
+  i.min = String(min);
+  i.max = String(max);
+  i.step = String(step);
+  i.value = String(value);
+  i.style.cssText =
+    `width:${width}; box-sizing:border-box; background:#0c1018; color:#e8e8e8; border:1px solid #3a4658;` +
+    "border-radius:5px; padding:4px 5px; text-align:right; font:12px system-ui,sans-serif;";
+  return i;
+};
+
+const selectInput = (options: { value: string; label: string }[], selected: string): HTMLSelectElement => {
+  const s = document.createElement("select");
+  s.style.cssText =
+    "min-width:0; width:100%; box-sizing:border-box; height:28px; background:#0c1018; color:#e8e8e8;" +
+    "border:1px solid #3a4658; border-radius:5px; padding:0 4px; font:12px system-ui,sans-serif;";
+  for (const o of options) {
+    const opt = document.createElement("option");
+    opt.value = o.value;
+    opt.textContent = o.label;
+    s.appendChild(opt);
+  }
+  s.value = selected;
+  return s;
+};
+
+const smallDevBtn = (label: string, bg: string, color: string): HTMLButtonElement => {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.style.cssText =
+    `cursor:pointer; border-radius:5px; border:1px solid #3a4658; background:${bg}; color:${color};` +
+    "padding:4px 8px; font:600 12px system-ui,sans-serif;";
+  return b;
+};
 
 /** Per-resource-kind drop config (mirrors the server/Vite DropCfg). */
 interface DropCfg {
@@ -2274,6 +3539,16 @@ interface EntityFeatureCfg {
 interface EntityFeatureManifest {
   defaults?: Record<string, EntityFeatureCfg>;
   instances?: Record<string, EntityFeatureCfg>;
+}
+
+type FeatureScope = "default" | "instance";
+
+interface FeatureTarget {
+  scope: FeatureScope;
+  key: string;
+  kind: string;
+  defaultKey: string;
+  modelId?: string;
 }
 
 /** Trim long ids (prop ids are model urls) for the panel title. */

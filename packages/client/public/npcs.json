@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "id": "npc_1780687999612",
+    "defId": "meshy_ai_un_colibri__humanoide_biped_1780687916833",
+    "x": 12.4,
+    "z": -7,
+    "rotationY": 0
+  }
+]

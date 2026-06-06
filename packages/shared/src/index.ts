@@ -13,4 +13,5 @@ export * from "./schema/Stone";
 export * from "./schema/Banana";
 export * from "./schema/Item";
 export * from "./schema/House";
+export * from "./schema/Structure";
 export * from "./schema/GameState";

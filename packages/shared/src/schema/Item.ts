@@ -6,4 +6,6 @@ export class Item extends Schema {
   @type("string") itemId = "";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") rotY = 0;
+  @type("number") scale = 1;
 }

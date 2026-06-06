@@ -30,7 +30,14 @@ supported Linux/macOS systems it installs `ca-certificates`, `curl`, `git`, Node
 native CLI as `npx gorilator install`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/cli/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/agustinkassis/gorilator-rpg/main/packages/cli/install.sh | sudo bash
+```
+
+From a checked-out repo on Windows, use the Node/Command Prompt wrapper instead of the POSIX shell wrapper:
+
+```powershell
+pnpm gorilator install
+.\packages\cli\gorilator.cmd install
 ```
 
 ## Go public — `gorilator setup`
@@ -84,6 +91,8 @@ install record, global npm command, and installed app directory. Use
 - **git** (to fetch the game source).
 - **Linux** (systemd) or **macOS** (launchd). Linux uses a system service and may prompt for `sudo`;
   macOS uses a per-user LaunchAgent (no `sudo`).
+- **Windows** can run the checkout/npm wrappers, but the native service installer is still limited to
+  Linux/macOS. Use WSL/Linux/macOS for `gorilator install` service deployment.
 - For `setup`: a **domain on Cloudflare** (free plan is fine). No DNS records to pre-create — `setup` makes them.
 
 ## Configuration

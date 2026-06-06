@@ -611,10 +611,176 @@
 
       body.devMode #healthGlobe,
       body.devMode #xpBar,
-      body.devMode #xpLevelUp { display: none !important; }
+      body.devMode #xpLevelUp,
+      body.devMode #rpgMiniMap,
+      body.devMode #playerBadge,
+      body.devMode #respawnOverlay { display: none !important; }
+
+      /* "Update available" banner — a small pill near the top of the splash,
+         revealed only when the daemon's /api/update check finds a new release. */
+      #updateBanner {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-12px);
+        z-index: 10050;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
+        padding: 8px 12px 8px 14px;
+        border: 1.5px solid rgba(255, 206, 110, 0.95);
+        border-radius: 999px;
+        background: rgba(46, 30, 10, 0.97);
+        color: #ffe1a3;
+        font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        box-shadow:
+          0 10px 28px rgba(0, 0, 0, 0.55),
+          0 0 0 3px rgba(255, 200, 90, 0.14),
+          0 0 22px rgba(255, 176, 60, 0.45);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.4s ease, transform 0.4s ease;
+        animation: updateBannerPulse 2.6s ease-in-out infinite;
+      }
+      @keyframes updateBannerPulse {
+        0%, 100% { box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 0 3px rgba(255,200,90,0.14), 0 0 18px rgba(255,176,60,0.35); }
+        50% { box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 0 3px rgba(255,200,90,0.22), 0 0 30px rgba(255,176,60,0.6); }
+      }
+      #updateBanner.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+        pointer-events: auto;
+      }
+      #updateBannerIcon {
+        font-size: 13px;
+        line-height: 1;
+      }
+      /* The icon + label together are one link to the GitHub release page. */
+      #updateBannerLink {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #ffe6a8;
+        text-decoration: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #updateBannerLink:hover #updateBannerText {
+        text-decoration: underline;
+      }
+      #updateBannerClose {
+        margin-left: 2px;
+        padding: 0 4px;
+        border: none;
+        background: transparent;
+        color: #ffd479;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0.7;
+      }
+      #updateBannerClose:hover {
+        opacity: 1;
+      }
+
+      /* Actions directly under the update banner (admin button / CLI hint / the
+         self-update progress bar). Pinned just below the banner pill. */
+      #updateActions {
+        position: fixed;
+        top: 58px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10050;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100vw - 24px);
+        text-align: center;
+      }
+      /* The `display: flex` on #updateActions / #updateProgress would otherwise
+         override the `hidden` attribute (UA `[hidden]{display:none}`), leaving the
+         progress UI visible before any click. An id+attribute selector out-specifies
+         the plain id rule, so `hidden` is respected without !important. */
+      #updateActions[hidden],
+      #updateProgress[hidden] {
+        display: none;
+      }
+      /* When the update alert is showing, the splash title + subtitle are slid
+         down (so the banner + actions sit in clear space above them) by composing
+         a downward translate onto their existing transform — applied inline from
+         splash.ts (setTitleShift), which reliably wins the cascade. Applied
+         without a transform transition (transform-list interpolation from the
+         title's skew doesn't settle reliably), so the shift is instant. */
+      #updateAdminBtn {
+        /* The splash overlay is pointer-events:none (clicks pass through); the
+           button must opt back in to be clickable. */
+        pointer-events: auto;
+        /* Fill the actions column, which is sized to match the banner pill width
+           (set in splash.ts when the banner is shown). */
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 18px;
+        border: 1px solid rgba(255, 212, 121, 0.85);
+        border-radius: 999px;
+        background: linear-gradient(180deg, #ffd479, #f0a83c);
+        color: #2a1a05;
+        font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        box-shadow: 0 6px 18px rgba(240, 168, 60, 0.35);
+      }
+      #updateAdminBtn:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
+      #updateAdminBtn:disabled {
+        filter: grayscale(0.4) brightness(0.85);
+        cursor: default;
+      }
+      #updateCliHint {
+        padding: 6px 12px;
+        border-radius: 8px;
+        background: rgba(8, 6, 10, 0.72);
+        color: #d7c39a;
+        font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #updateCliHint code {
+        color: #ffe6a8;
+        background: rgba(255, 212, 121, 0.12);
+        padding: 1px 6px;
+        border-radius: 5px;
+      }
+      #updateProgress {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+      }
+      #updateProgressTrack {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+      #updateProgressFill {
+        width: 4%;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #ffd479, #f0a83c);
+        transition: width 0.6s ease;
+      }
+      #updateProgressStatus {
+        color: #ffe6a8;
+        font: 600 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
 
       /* Tiny always-on version tag, pinned to the bottom-right corner — above the
-         splash + HUD, and never intercepts clicks. */
+         splash + HUD. Clicking it toggles the package-versions popup. */
       #versionTag {
         position: fixed;
         right: 9px;
@@ -624,9 +790,48 @@
         letter-spacing: 0.5px;
         color: #fff;
         opacity: 0.32;
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: pointer;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
         user-select: none;
+      }
+      #versionTag:hover {
+        opacity: 0.7;
+      }
+      /* Package-versions popup, anchored above the version tag (bottom-right). */
+      #versionPanel {
+        position: fixed;
+        right: 9px;
+        bottom: 26px;
+        z-index: 10010;
+        min-width: 168px;
+        max-width: calc(100vw - 18px);
+        box-sizing: border-box;
+        padding: 8px 10px 9px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 8px;
+        background: rgba(10, 9, 13, 0.94);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+        color: #e7e1d6;
+        font: 600 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        user-select: text;
+      }
+      #versionPanel .vpTitle {
+        margin-bottom: 5px;
+        color: #ffd479;
+        font-weight: 800;
+        letter-spacing: 0.4px;
+      }
+      #versionPanel .vpRow {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      #versionPanel .vpName {
+        color: #9c95a6;
+      }
+      #versionPanel .vpVer {
+        color: #fff;
       }
 
       #worktreeTag {
@@ -2139,6 +2344,28 @@
         <div id="splashTitle">GORILATOR</div>
         <div id="splashSub">Defend La Crypta</div>
       </div>
+      <!-- Daemon "update available" banner. Hidden unless the server's
+           /api/update auto-check reports a newer GitHub release. -->
+      <div id="updateBanner" hidden>
+        <a id="updateBannerLink" href="https://github.com/agustinkassis/gorilator-rpg/releases" target="_blank" rel="noopener noreferrer">
+          <span id="updateBannerIcon">⬆</span>
+          <span id="updateBannerText">Update available</span>
+        </a>
+        <button id="updateBannerClose" type="button" aria-label="Dismiss update notice">×</button>
+      </div>
+      <!-- Actions under the update banner. For a logged-in admin: an "Update now"
+           button that triggers the server self-update. For everyone else: the
+           CLI command to run on the server. Both hidden until /api/update fires. -->
+      <div id="updateActions" hidden>
+        <button id="updateAdminBtn" type="button" hidden>⟳ Update now</button>
+        <div id="updateCliHint" hidden>
+          To update, run <code>gorilator update</code> on the server
+        </div>
+        <div id="updateProgress" hidden>
+          <div id="updateProgressTrack"><div id="updateProgressFill"></div></div>
+          <div id="updateProgressStatus">Starting update…</div>
+        </div>
+      </div>
       <div id="assetLoad">
         <div id="assetLoadHead">
           <div id="assetLoadTitle"><span id="assetStatus">warming up assets</span></div>
@@ -2198,6 +2425,8 @@
     <div id="status">connecting…</div>
     <!-- Tiny footer labels are filled by vite.config.ts. -->
     <div id="versionTag"></div>
+    <!-- Package-versions popup, toggled by clicking #versionTag (filled by main.ts). -->
+    <div id="versionPanel" hidden></div>
     <!-- Current linked worktree, always visible in the lower-left during local dev. -->
     <div id="worktreePanel" hidden></div>
     <div id="worktreeTag" hidden></div>

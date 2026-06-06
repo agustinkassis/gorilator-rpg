@@ -10,6 +10,7 @@ export interface Placement {
   x: number;
   z: number;
   rotationY: number;
+  scale?: number;
 }
 
 /** A placed character instance in the world. */
@@ -59,7 +60,7 @@ export class CharacterManager {
   /** Place a character live (called by the importer's "Add to game"). */
   async placeNew(
     def: CharacterDef,
-    placement: { id: string; x: number; z: number; rotationY: number },
+    placement: { id: string; x: number; z: number; rotationY: number; scale?: number },
   ): Promise<void> {
     this.defs.set(def.id, def);
     await this.spawn({ ...placement, defId: def.id });
@@ -72,6 +73,7 @@ export class CharacterManager {
     const built = await assembleCharacter(this.scene, def);
     built.root.position.x = placement.x;
     built.root.position.z = placement.z;
+    built.root.scaling.setAll((def.scale || 1) * (placement.scale ?? 1));
     built.root.rotation.y = (def.yaw || 0) + (placement.rotationY || 0);
     const md = { charPlacementId: placement.id, kind: "character" };
     (built.root as TransformNode).metadata = md;
@@ -124,13 +126,20 @@ export class CharacterManager {
     c.shadow = this.createShadow(id, c.built);
   }
 
+  setScale(id: string, scale: number) {
+    const c = this.chars.get(id);
+    if (!c) return;
+    c.placement.scale = Math.max(0.05, Math.min(40, Number(scale) || 1));
+    c.built.root.scaling.setAll((c.def.scale || 1) * c.placement.scale);
+  }
+
   async persist(id: string): Promise<void> {
     const c = this.chars.get(id);
     if (!c) return;
     await fetch("/__char/placement-update", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, x: c.placement.x, z: c.placement.z, rotationY: c.placement.rotationY }),
+      body: JSON.stringify({ id, x: c.placement.x, z: c.placement.z, rotationY: c.placement.rotationY, scale: c.placement.scale ?? 1 }),
     }).catch((e) => console.warn("[char] placement-update failed", e));
   }
 

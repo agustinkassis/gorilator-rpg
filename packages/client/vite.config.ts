@@ -31,6 +31,30 @@ function appVersion(): string {
   }
 }
 
+/** Versions of every workspace package, read at build time, for the footer
+ *  version popup (click the bottom-right tag). Skips any that can't be read. */
+function packageVersions(): Record<string, string> {
+  const root = resolve(configDir, "..", "..");
+  const files: Array<[string, string]> = [
+    ["app", "package.json"],
+    ["client", "packages/client/package.json"],
+    ["server", "packages/server/package.json"],
+    ["shared", "packages/shared/package.json"],
+    ["cli", "packages/cli/package.json"],
+    ["landing", "packages/landing/package.json"],
+  ];
+  const out: Record<string, string> = {};
+  for (const [label, rel] of files) {
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(root, rel), "utf8")) as { version?: string };
+      if (typeof pkg.version === "string" && pkg.version) out[label] = pkg.version;
+    } catch {
+      /* missing/unreadable — skip */
+    }
+  }
+  return out;
+}
+
 function captureGit(args: string[], cwd?: string, trim = true): string | null {
   try {
     const raw = execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -958,6 +982,18 @@ const DEV_TUNING_CONSTANTS: Record<string, { name: string; min: number; max: num
   goblinHouseDamage: { name: "GOBLIN_HOUSE_DAMAGE", min: 0, max: 1_000 },
   damageDivisor: { name: "DAMAGE_DIVISOR", min: 0.1, max: 100 },
   playerRespawnMs: { name: "PLAYER_RESPAWN_MS", min: 0, max: 120_000, integer: true },
+  playerMaxHp: { name: "PLAYER_MAX_HP", min: 1, max: 100_000, integer: true },
+  playerAttack: { name: "PLAYER_ATTACK", min: 0, max: 100_000 },
+  playerArmor: { name: "PLAYER_ARMOR", min: 0, max: 100_000 },
+  playerCritChance: { name: "PLAYER_CRIT_CHANCE", min: 0, max: 1 },
+  playerMoveSpeed: { name: "MOVE_SPEED", min: 0.1, max: 100 },
+  sprintSpeedMult: { name: "SPRINT_SPEED_MULT", min: 1, max: 10 },
+  enemyMaxHp: { name: "GOBLIN_MAX_HP", min: 1, max: 100_000, integer: true },
+  enemyAttack: { name: "GOBLIN_ATTACK", min: 0, max: 100_000 },
+  enemyMoveSpeed: { name: "GOBLIN_CHASE_SPEED", min: 0, max: 100 },
+  berserkerAttackMult: { name: "BERSERKER_ATTACK_MULT", min: 1, max: 50 },
+  berserkerDurationMs: { name: "BERSERKER_DURATION_MS", min: 0, max: 600_000, integer: true },
+  dropRateMult: { name: "DROP_RATE_MULT", min: 0, max: 10 },
 };
 
 function formatConstantValue(value: number, integer?: boolean): string {
@@ -1023,6 +1059,7 @@ interface Placement {
   x: number;
   z: number;
   rotationY: number;
+  scale?: number;
   brain?: BrainId;
   stats?: CharacterStatsConfig;
 }
@@ -1030,6 +1067,7 @@ interface Placement {
 const charsPathFor = (root: string) => resolve(root, "public/characters.json");
 const npcsPathFor = (root: string) => resolve(root, "public/npcs.json");
 const spawnersPathFor = (root: string) => resolve(root, "public/spawners.json");
+const wavesPathFor = (root: string) => resolve(root, "public/waves.json");
 const resourcesPathFor = (root: string) => resolve(root, "public/resources.json");
 const structuresPathFor = (root: string) => resolve(root, "public/structures.json");
 const entityFeaturesPathFor = (root: string) => resolve(root, "public/entity-features.json");
@@ -1426,6 +1464,7 @@ function modelImporter(): Plugin {
               x: Number(b.x) || 0,
               z: Number(b.z) || 0,
               rotationY: Number(b.rotationY) || 0,
+              scale: Math.max(0.05, Number(b.scale) || 1),
               ...(b.brain ? { brain: String(b.brain) } : {}),
               ...(b.stats && typeof b.stats === "object" ? { stats: b.stats } : {}),
             };
@@ -1526,7 +1565,7 @@ function modelImporter(): Plugin {
             const npcs = readJsonArray<Placement>(npcsPathFor(root));
             const p = npcs.find((n) => n.id === String(patch.id ?? ""));
             if (!p) return fail(res, 404, "no such placement");
-            for (const f of ["x", "z", "rotationY"] as const)
+            for (const f of ["x", "z", "rotationY", "scale"] as const)
               if (patch[f] !== undefined) p[f] = Number(patch[f]);
             if (patch.brain !== undefined) (p as Record<string, unknown>).brain = String(patch.brain);
             if (patch.stats && typeof patch.stats === "object") (p as Record<string, unknown>).stats = patch.stats;
@@ -1623,6 +1662,28 @@ function modelImporter(): Plugin {
           }
         });
       });
+      server.middlewares.use("/__features/delete", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}") as Record<string, unknown>;
+            const scope = b.scope === "instance" ? "instances" : "defaults";
+            const key = String(b.key || "");
+            if (!key) return fail(res, 400, "missing key");
+            const manifest = readFeatures();
+            const bucket = scope === "instances"
+              ? { ...(manifest.instances ?? {}) }
+              : { ...(manifest.defaults ?? {}) };
+            delete bucket[key];
+            if (scope === "instances") manifest.instances = bucket;
+            else manifest.defaults = bucket;
+            writeFeatures(manifest);
+            sendJson(res, { ok: true, scope, key });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
 
       // ======== Gameplay tuning defaults (shared constants edited from Dev Mode) ========
       server.middlewares.use("/__gameplay/default", (req, res) => {
@@ -1674,6 +1735,25 @@ function modelImporter(): Plugin {
               list.filter((x) => x.id !== id && x.ownerId !== ownerId),
             );
             sendJson(res, { ok: true });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
+      // ======== Custom wave compositions (dev-authored per-wave overrides) ========
+      server.middlewares.use("/__waves/list", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        sendJson(res, readJsonArray<Record<string, unknown>>(wavesPathFor(root)));
+      });
+      server.middlewares.use("/__waves/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const arr = JSON.parse(buf.toString("utf8") || "[]");
+            if (!Array.isArray(arr)) return fail(res, 400, "expected an array of waves");
+            writeJsonArray(wavesPathFor(root), arr as unknown[]);
+            sendJson(res, { ok: true, count: arr.length });
           } catch (e) {
             fail(res, 500, String(e));
           }
@@ -1929,6 +2009,7 @@ export default defineConfig(({ command }) => {
     // Inject local build metadata for the always-visible footer tags.
     define: {
       __APP_VERSION__: JSON.stringify(appVersion()),
+      __PKG_VERSIONS__: JSON.stringify(packageVersions()),
       __WORKTREE_LABEL__: JSON.stringify(worktree.label),
       __WORKTREE_FULL_LABEL__: JSON.stringify(worktree.fullLabel),
     },

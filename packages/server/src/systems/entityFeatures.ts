@@ -23,6 +23,7 @@ import {
   TREE_HP,
   ROCK_HP,
   HOUSE_HP,
+  STRUCTURE_HP,
 } from "@rpg/shared";
 
 const PUBLIC_DIRS = [
@@ -48,6 +49,10 @@ const DEFAULTS: Required<Pick<EntityFeatureManifest, "defaults" | "instances">> 
     },
     house: {
       hp: HOUSE_HP,
+      drops: [],
+    },
+    structure: {
+      hp: STRUCTURE_HP,
       drops: [],
     },
     dummy: {

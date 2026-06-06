@@ -3,15 +3,16 @@
 // to expose it publicly via a Cloudflare tunnel.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
+  buildOrFetch,
   cloneOrUpdate,
   ensureAppDir,
   ensureGit,
   ensureNode,
   ensurePnpm,
-  installAndBuild,
   resolveServiceExec,
 } from "../lib/build.js";
 import { saveConfig } from "../lib/config.js";
+import { latestReleaseTag, repoSlug } from "../lib/dist.js";
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import {
   durableGorilatorOnPath,
@@ -35,7 +36,7 @@ import {
 } from "../lib/proc.js";
 import { installService, manager, startService } from "../lib/service.js";
 import { printPorts, readEnvInfo } from "../lib/summary.js";
-import { runSetup } from "./setup.js";
+import { setupCloudflare } from "./setup.js";
 
 export async function install(opts: Options, version: string): Promise<void> {
   log.banner(version);
@@ -46,11 +47,24 @@ export async function install(opts: Options, version: string): Promise<void> {
   const appDir = opts.appDir;
   const user = targetUser();
   ensureAppDir(appDir, user);
-  cloneOrUpdate(opts.repo, opts.ref, appDir);
+
+  // Resolve the install ref. The default "latest" tracks the newest GitHub release
+  // (and unlocks the prebuilt-dist fast path); an explicit --ref pins a branch/tag.
+  const slug = repoSlug(opts.repo);
+  const channel: "latest" | undefined = opts.ref === "latest" ? "latest" : undefined;
+  let ref = opts.ref;
+  if (channel === "latest") {
+    ref = (slug && (await latestReleaseTag(slug))) || "main";
+    log.info(slug && ref !== "main" ? `Latest release: ${ref}` : "No release found; tracking 'main'.");
+  }
+
+  cloneOrUpdate(opts.repo, ref, appDir);
   ensureEnv(appDir, user, opts.port, opts.clientPort);
-  // Default native build is one-port/same-origin. If --client-port is explicitly
-  // set, build the optional local client page to dial the server port.
-  installAndBuild(appDir, opts.clientPort ? { serverPort: opts.port } : {});
+  // Default native build is one-port/same-origin → eligible for the prebuilt dist.
+  // With an explicit --client-port we build the client to dial the server port.
+  const sameOrigin = !opts.clientPort;
+  const prebuilt = slug && sameOrigin ? { slug, tag: ref } : null;
+  buildOrFetch(appDir, opts.clientPort ? { serverPort: opts.port } : {}, prebuilt);
 
   if (opts.noService) {
     log.ok(`Build ready at ${appDir}. Service registration skipped (--skip-service).`);
@@ -66,7 +80,8 @@ export async function install(opts: Options, version: string): Promise<void> {
     port: opts.port,
     clientPort: opts.clientPort || undefined,
     repo: opts.repo,
-    ref: opts.ref,
+    ref,
+    channel,
     user,
     serviceManager: manager(),
   });
@@ -195,9 +210,9 @@ async function maybeRunSetup(opts: Options): Promise<void> {
     return;
   }
   process.stdout.write("\n");
-  if (!confirm("Expose this publicly now via a Cloudflare tunnel (gorilator setup)?")) {
+  if (!confirm("Expose this publicly now via a Cloudflare tunnel? (temporary by default, no login)")) {
     log.info("Skipped. Run 'gorilator setup' anytime to wire up Cloudflare.");
     return;
   }
-  await runSetup(opts);
+  await setupCloudflare(opts);
 }
