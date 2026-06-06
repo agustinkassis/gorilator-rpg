@@ -62,7 +62,11 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
     if (isRoot() && cfg.user && cfg.user !== "root") run("chown", [cfg.user, ef]);
     log.warn(`Generated ${reason} NOSTR_NSEC in ${ef}`);
   }
-  const tunnelConfigured = Boolean(env.SERVER_HOSTNAME || env.CLIENT_HOSTNAME);
+  // Only a permanent (named) tunnel is bounced around the daemon restart. A
+  // temporary quick tunnel is an independent service pointing at localhost, so
+  // leaving it running avoids a pointless ephemeral-URL change.
+  const tunnelConfigured =
+    Boolean(env.SERVER_HOSTNAME || env.CLIENT_HOSTNAME) && env.TUNNEL_MODE !== "temporary";
   const buildOpts =
     env.VITE_SAME_ORIGIN === "1"
       ? {}

@@ -36,7 +36,7 @@ import {
 } from "../lib/proc.js";
 import { installService, manager, startService } from "../lib/service.js";
 import { printPorts, readEnvInfo } from "../lib/summary.js";
-import { runSetup } from "./setup.js";
+import { setupCloudflare } from "./setup.js";
 
 export async function install(opts: Options, version: string): Promise<void> {
   log.banner(version);
@@ -210,9 +210,9 @@ async function maybeRunSetup(opts: Options): Promise<void> {
     return;
   }
   process.stdout.write("\n");
-  if (!confirm("Expose this publicly now via a Cloudflare tunnel (gorilator setup)?")) {
+  if (!confirm("Expose this publicly now via a Cloudflare tunnel? (temporary by default, no login)")) {
     log.info("Skipped. Run 'gorilator setup' anytime to wire up Cloudflare.");
     return;
   }
-  await runSetup(opts);
+  await setupCloudflare(opts);
 }
