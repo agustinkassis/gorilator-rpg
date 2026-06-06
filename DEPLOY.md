@@ -112,7 +112,7 @@ gorilator start         Start the daemon (prints the port it listens on)
 gorilator stop          Stop the daemon
 gorilator restart       Restart the daemon
 gorilator logs          Show recent server logs (--follow, --lines, --filter, --since)
-gorilator update        stop services, git pull, rebuild, start services
+gorilator update        fetch latest; rebuild & restart only the packages that changed
 gorilator setup         Interactive setup: server ports, NSEC, Cloudflare, env settings
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
 gorilator uninstall     Stop & remove services, config, command, and installed files

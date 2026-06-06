@@ -92,6 +92,23 @@ runs the server from source via `tsx`, so building the client on the box is unne
 - `gorilator update` re-resolves the newest release each run when installed on the `latest`
   channel (stored in the install config); a pinned `--ref` updates to that ref.
 
+### Change-aware updates
+
+`gorilator update` compares **each package's version** (local vs incoming `package.json`) and
+applies only what changed:
+
+- **client** changed → refresh the client only; the daemon keeps running and serves the new
+  static assets with **no restart / no downtime**.
+- **server** changed → **restart the daemon** (and bounce the Cloudflare tunnel).
+- **cli** changed → rebuild the in-repo CLI only.
+- **shared** changed → it's foundational (server imports it, client bundles it, CLI uses it),
+  so it fans out to all of the above, including a server restart.
+- **app**/**landing** bumps alone → no daemon impact, nothing to apply.
+
+If nothing actionable changed, the update is a no-op. The prebuilt fast path downloads the
+release dist atomically (it already contains shared+client+cli `dist/`); the server-scoped
+`pnpm install` runs only when the server runtime actually changed.
+
 Build the artifact for an existing tag manually via **Actions → Release prebuilt dist → Run
 workflow** (`tag` input). The asset is **same-origin only**.
 
