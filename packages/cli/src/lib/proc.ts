@@ -81,6 +81,35 @@ export function capture(cmd: string, args: string[], opts: RunOpts = {}): string
   return (r.stdout ?? "").trim();
 }
 
+/** Run a command AS the target user, capturing combined stdout+stderr instead of
+ *  inheriting the terminal — for progress UIs that show their own spinner and
+ *  only surface the subprocess output on failure. */
+export function captureStep(
+  cmd: string,
+  args: string[],
+  opts: RunOpts = {},
+): { ok: boolean; output: string } {
+  const user = targetUser();
+  let realCmd = cmd;
+  let realArgs = args;
+  let env = opts.env ? { ...process.env, ...opts.env } : process.env;
+  if (isRoot() && user !== "root") {
+    const pairs = Object.entries(opts.env ?? {}).map(([k, v]) => `${k}=${v ?? ""}`);
+    realCmd = "sudo";
+    realArgs = ["-u", user, "--", "env", ...pairs, cmd, ...args];
+    env = process.env; // env is forwarded via the `env` prefix above
+  }
+  const r = spawnSync(realCmd, realArgs, {
+    cwd: opts.cwd,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const output = `${r.stdout ?? ""}${r.stderr ?? ""}`.trimEnd();
+  if (r.error) return { ok: false, output: `${output}\n${r.error.message}`.trim() };
+  return { ok: r.status === 0, output };
+}
+
 export function printCommandOutput(
   cmd: string,
   args: string[],
