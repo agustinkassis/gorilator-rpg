@@ -29,7 +29,7 @@ import { Game } from "./game/Game";
 import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
 import { TopBar } from "./ui/topBar";
-import { GameMenu } from "./ui/gameMenu";
+import { GameMenu, loadStoredShadowMode } from "./ui/gameMenu";
 import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
 import { preloadMouseCursors, setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
@@ -1106,7 +1106,8 @@ if (import.meta.env.DEV) {
 }
 
 const engine = new Engine(canvas, true, { stencil: true }, true);
-const { scene, camera, ground, shadows } = createScene(engine);
+const shadowMode = loadStoredShadowMode();
+const { scene, camera, ground, shadows } = createScene(engine, { shadowMode });
 
 const factory = new CharacterFactory(scene);
 const hud = new HUD(scene);
@@ -1472,6 +1473,16 @@ engine.runRenderLoop(() => {
     splash.update(dt);
     const renderStartedAt = performance.now();
     splash.scene.render();
+    const frameEndedAt = performance.now();
+    perf.setFrameMetrics({
+      fps: engine.getFps(),
+      frameMs: frameEndedAt - frameStartedAt,
+      gpuMs: null,
+      drawCalls: 0,
+      activeMeshes: splash.scene.getActiveMeshes().length,
+      triangles: Math.round(splash.scene.getActiveIndices() / 3),
+    });
+    perf.tick();
     debugStats.endFrame(frameStartedAt, renderStartedAt);
     return;
   }

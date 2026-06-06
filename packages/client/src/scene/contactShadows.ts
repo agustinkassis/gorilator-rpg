@@ -5,6 +5,7 @@ import {
   DirectionalLight,
   Material,
   Mesh,
+  MeshBuilder,
   RenderTargetTexture,
   Scene,
   ShadowGenerator,
@@ -15,6 +16,7 @@ import {
   VertexData,
 } from "@babylonjs/core";
 
+export type ShadowMode = "off" | "contact2d" | "legacy3d";
 export type ContactShadowShape = "character" | "pickup" | "structure";
 
 export interface ContactShadowOptions {
@@ -34,6 +36,30 @@ export interface ProjectedContactShadowOptions extends ContactShadowOptions {
   casters: AbstractMesh[];
   castStaticShadow?: boolean;
   receiveShadows?: boolean;
+}
+
+export interface ShadowHandle {
+  setPosition(x: number, z: number, height?: number): void;
+  setHeight(height: number): void;
+  setSize(width: number, depth: number): void;
+  setOpacity(opacity: number): void;
+  setEnabled(on: boolean): void;
+  refresh(): void;
+  dispose(): void;
+}
+
+export interface ShadowRuntime {
+  readonly mode: ShadowMode;
+  add(opts?: ContactShadowOptions): ShadowHandle;
+  addProjected(opts: ProjectedContactShadowOptions): ShadowHandle;
+  addWorldObject(opts: ProjectedContactShadowOptions): ShadowHandle;
+  registerMeshes(meshes: AbstractMesh[], opts?: { cast?: boolean; receive?: boolean }): void;
+  addReceivers(meshes: AbstractMesh[]): void;
+  sampleStaticShade(x: number, z: number, radius?: number): number;
+  refreshStaticShadows(): void;
+  setEnabled(on: boolean): void;
+  isEnabled(): boolean;
+  updateFocus(position: { x: number; y?: number; z: number } | null): void;
 }
 
 const SHADOW_Y = 0.02;
@@ -80,6 +106,19 @@ interface ShadowBounds {
 
 interface CachedShadowRings extends ShadowRings {
   bounds: ShadowBounds;
+}
+
+function hierarchyBounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 } {
+  let min = new Vector3(Infinity, Infinity, Infinity);
+  let max = new Vector3(-Infinity, -Infinity, -Infinity);
+  for (const mesh of meshes) {
+    if (!mesh.getTotalVertices || mesh.getTotalVertices() === 0) continue;
+    mesh.computeWorldMatrix(true);
+    const box = mesh.getBoundingInfo().boundingBox;
+    min = Vector3.Minimize(min, box.minimumWorld);
+    max = Vector3.Maximize(max, box.maximumWorld);
+  }
+  return { min, max };
 }
 
 function shapePoint(shape: ContactShadowShape, angle: number, radius: number): { x: number; z: number } {
@@ -338,7 +377,7 @@ function createProjectedShadowMesh(
   return mesh;
 }
 
-export class ContactShadowHandle {
+export class ContactShadowHandle implements ShadowHandle {
   private baseX = 0;
   private baseZ = 0;
   private width = 1;
@@ -507,7 +546,8 @@ export class ContactShadowHandle {
   }
 }
 
-export class ContactShadowSystem {
+export class ContactShadowSystem implements ShadowRuntime {
+  readonly mode: ShadowMode = "contact2d";
   private readonly material: StandardMaterial;
   private readonly staticShadow: ShadowGenerator;
   private readonly handles = new Set<ContactShadowHandle>();
@@ -673,6 +713,14 @@ export class ContactShadowSystem {
     this.prepareReceivers(meshes, true);
   }
 
+  registerMeshes(meshes: AbstractMesh[], opts: { cast?: boolean; receive?: boolean } = {}): void {
+    if (opts.receive ?? true) this.prepareReceivers(meshes, true);
+  }
+
+  updateFocus(_position: { x: number; y?: number; z: number } | null): void {
+    // The 2D renderer has no moving shadow frustum.
+  }
+
   private prepareReceivers(meshes: AbstractMesh[], forceMaterialRefresh = false): void {
     for (const mesh of meshes) {
       if (forceMaterialRefresh && mesh.receiveShadows) mesh.receiveShadows = false;
@@ -719,4 +767,226 @@ export class ContactShadowSystem {
   refreshStaticShadows(): void {
     this.staticShadow.getShadowMap()?.resetRefreshCounter();
   }
+}
+
+class NullShadowHandle implements ShadowHandle {
+  setPosition(_x: number, _z: number, _height?: number): void {}
+  setHeight(_height: number): void {}
+  setSize(_width: number, _depth: number): void {}
+  setOpacity(_opacity: number): void {}
+  setEnabled(_on: boolean): void {}
+  refresh(): void {}
+  dispose(): void {}
+}
+
+const NULL_SHADOW_HANDLE = new NullShadowHandle();
+
+export class NullShadowSystem implements ShadowRuntime {
+  readonly mode: ShadowMode = "off";
+  add(_opts: ContactShadowOptions = {}): ShadowHandle {
+    return NULL_SHADOW_HANDLE;
+  }
+  addProjected(_opts: ProjectedContactShadowOptions): ShadowHandle {
+    return NULL_SHADOW_HANDLE;
+  }
+  addWorldObject(_opts: ProjectedContactShadowOptions): ShadowHandle {
+    return NULL_SHADOW_HANDLE;
+  }
+  registerMeshes(_meshes: AbstractMesh[], _opts: { cast?: boolean; receive?: boolean } = {}): void {}
+  addReceivers(_meshes: AbstractMesh[]): void {}
+  sampleStaticShade(_x: number, _z: number, _radius = 0): number {
+    return 0;
+  }
+  refreshStaticShadows(): void {}
+  setEnabled(_on: boolean): void {}
+  isEnabled(): boolean {
+    return false;
+  }
+  updateFocus(_position: { x: number; y?: number; z: number } | null): void {}
+}
+
+class LegacyShadowHandle implements ShadowHandle {
+  private localEnabled = true;
+  private disposed = false;
+
+  constructor(
+    private system: LegacyShadowSystem,
+    private casters: AbstractMesh[] = [],
+    private proxy?: Mesh,
+    private proxyOffsetX = 0,
+    private proxyOffsetZ = 0,
+  ) {}
+
+  setPosition(x: number, z: number, _height = 0): void {
+    if (!this.proxy || this.disposed) return;
+    this.proxy.position.x = x + this.proxyOffsetX;
+    this.proxy.position.z = z + this.proxyOffsetZ;
+  }
+  setHeight(_height: number): void {}
+  setSize(_width: number, _depth: number): void {}
+  setOpacity(_opacity: number): void {}
+  setEnabled(on: boolean): void {
+    if (this.disposed || on === this.localEnabled) return;
+    this.localEnabled = on;
+    this.system.setCasterEnabled(this.casters, on);
+    if (this.proxy) this.proxy.setEnabled(on);
+  }
+  refresh(): void {}
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.system.unregisterCasters(this.casters);
+    this.proxy?.dispose();
+    this.casters = [];
+  }
+}
+
+export class LegacyShadowSystem implements ShadowRuntime {
+  readonly mode: ShadowMode = "legacy3d";
+  private readonly shadow: ShadowGenerator;
+  private readonly casters = new Set<AbstractMesh>();
+  private enabled = true;
+
+  constructor(
+    private scene: Scene,
+    private sun: DirectionalLight,
+    environmentCasters: AbstractMesh[] = [],
+  ) {
+    this.sun.autoUpdateExtends = false;
+    this.sun.orthoLeft = -40;
+    this.sun.orthoRight = 40;
+    this.sun.orthoTop = 40;
+    this.sun.orthoBottom = -40;
+    this.sun.shadowMinZ = 80;
+    this.sun.shadowMaxZ = 180;
+    this.sun.position = new Vector3(51, 102, 61);
+
+    this.shadow = new ShadowGenerator(2048, sun);
+    this.shadow.usePercentageCloserFiltering = true;
+    this.shadow.filteringQuality = ShadowGenerator.QUALITY_HIGH;
+    this.shadow.bias = 0.0009;
+    this.shadow.normalBias = 0.02;
+    this.shadow.darkness = 0.18;
+
+    this.registerMeshes(environmentCasters, { cast: true, receive: false });
+  }
+
+  add(_opts: ContactShadowOptions = {}): ShadowHandle {
+    return NULL_SHADOW_HANDLE;
+  }
+
+  addProjected(opts: ProjectedContactShadowOptions): ShadowHandle {
+    if (opts.receiveShadows !== false) this.registerMeshes(opts.casters, { cast: false, receive: true });
+    if ((opts.shape ?? "structure") === "structure") return this.addProxyCaster(opts);
+    const casters = this.registerCasters(opts.casters);
+    return new LegacyShadowHandle(this, casters);
+  }
+
+  addWorldObject(opts: ProjectedContactShadowOptions): ShadowHandle {
+    if (opts.receiveShadows !== false) this.registerMeshes(opts.casters, { cast: false, receive: true });
+    const casters = opts.castStaticShadow === false ? [] : this.registerCasters(opts.casters);
+    return new LegacyShadowHandle(this, casters);
+  }
+
+  registerMeshes(meshes: AbstractMesh[], opts: { cast?: boolean; receive?: boolean } = {}): void {
+    if (opts.receive ?? true) {
+      for (const mesh of meshes) mesh.receiveShadows = true;
+    }
+    if (opts.cast) this.registerCasters(meshes);
+  }
+
+  addReceivers(meshes: AbstractMesh[]): void {
+    this.registerMeshes(meshes, { cast: false, receive: true });
+  }
+
+  sampleStaticShade(_x: number, _z: number, _radius = 0): number {
+    return 0;
+  }
+
+  refreshStaticShadows(): void {
+    this.shadow.getShadowMap()?.resetRefreshCounter();
+  }
+
+  setEnabled(on: boolean): void {
+    this.enabled = on;
+    this.sun.shadowEnabled = on;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  updateFocus(position: { x: number; y?: number; z: number } | null): void {
+    if (!position || !this.enabled) return;
+    const d = this.sun.direction;
+    const len = Math.hypot(d.x, d.y, d.z) || 1;
+    const dist = 130;
+    this.sun.position.set(
+      position.x - (d.x / len) * dist,
+      (position.y ?? 0) - (d.y / len) * dist,
+      position.z - (d.z / len) * dist,
+    );
+  }
+
+  setCasterEnabled(meshes: AbstractMesh[], on: boolean): void {
+    if (on) this.registerCasters(meshes);
+    else this.unregisterCasters(meshes);
+  }
+
+  unregisterCasters(meshes: AbstractMesh[]): void {
+    for (const mesh of meshes) {
+      if (!this.casters.delete(mesh)) continue;
+      this.shadow.removeShadowCaster(mesh);
+    }
+  }
+
+  private registerCasters(meshes: AbstractMesh[]): AbstractMesh[] {
+    const added: AbstractMesh[] = [];
+    for (const mesh of meshes) {
+      if (this.casters.has(mesh) || mesh.getTotalVertices() === 0) continue;
+      this.casters.add(mesh);
+      this.shadow.addShadowCaster(mesh);
+      added.push(mesh);
+    }
+    return added;
+  }
+
+  private addProxyCaster(opts: ProjectedContactShadowOptions): ShadowHandle {
+    const bounds = hierarchyBounds(opts.casters);
+    const width = bounds.max.x - bounds.min.x;
+    const height = bounds.max.y - bounds.min.y;
+    const depth = bounds.max.z - bounds.min.z;
+    if (![width, height, depth].every((v) => Number.isFinite(v) && v > 0)) return NULL_SHADOW_HANDLE;
+    const proxy = MeshBuilder.CreateBox(
+      `${opts.name ?? "legacyShadow"}Proxy`,
+      { width, height, depth },
+      this.scene,
+    );
+    proxy.position.set(
+      (bounds.min.x + bounds.max.x) / 2,
+      (bounds.min.y + bounds.max.y) / 2,
+      (bounds.min.z + bounds.max.z) / 2,
+    );
+    proxy.isVisible = false;
+    proxy.isPickable = false;
+    const casters = this.registerCasters([proxy]);
+    return new LegacyShadowHandle(
+      this,
+      casters,
+      proxy,
+      proxy.position.x - (opts.x ?? opts.root.position.x),
+      proxy.position.z - (opts.z ?? opts.root.position.z),
+    );
+  }
+}
+
+export function createShadowRuntime(
+  mode: ShadowMode,
+  scene: Scene,
+  sun: DirectionalLight,
+  environmentCasters: AbstractMesh[] = [],
+): ShadowRuntime {
+  if (mode === "off") return new NullShadowSystem();
+  if (mode === "legacy3d") return new LegacyShadowSystem(scene, sun, environmentCasters);
+  return new ContactShadowSystem(scene, sun);
 }

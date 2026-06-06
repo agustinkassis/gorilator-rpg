@@ -1,7 +1,7 @@
 import type { Engine } from "@babylonjs/core";
 import type { AudioManager } from "../audio/AudioManager";
 import type { NetworkClient } from "../net/NetworkClient";
-import type { ContactShadowSystem } from "../scene/contactShadows";
+import type { ShadowMode, ShadowRuntime } from "../scene/contactShadows";
 
 type View = "main" | "hotkeys" | "sound" | "graphics" | "developer";
 type Quality = "low" | "medium" | "high";
@@ -10,22 +10,45 @@ interface Settings {
   master: number; // 0..100
   music: number; // 0..100
   sfx: number; // 0..100
-  shadows: boolean;
+  shadowMode: ShadowMode;
   quality: Quality;
   devLabels: boolean;
 }
 
 const STORE = "gorilator-settings";
-const CONTACT_SHADOW_SETTINGS_VERSION = 1;
-const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadows: true, quality: "medium", devLabels: false };
+const SHADOW_MODE_SETTINGS_VERSION = 1;
+const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadowMode: "contact2d", quality: "medium", devLabels: false };
 // hardware scaling: >1 lower-res/faster, <1 super-sampled/sharper-slower.
 const QUALITY_SCALE: Record<Quality, number> = { low: 2.0, medium: 1.0, high: 0.66 };
+const SHADOW_LABELS: Record<ShadowMode, string> = {
+  off: "Off",
+  contact2d: "2D Optimized",
+  legacy3d: "Legacy 3D",
+};
+
+function isShadowMode(value: unknown): value is ShadowMode {
+  return value === "off" || value === "contact2d" || value === "legacy3d";
+}
+
+export function loadStoredShadowMode(): ShadowMode {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || "{}") as {
+      shadowMode?: unknown;
+      shadows?: unknown;
+    };
+    if (isShadowMode(saved.shadowMode)) return saved.shadowMode;
+    if (typeof saved.shadows === "boolean") return saved.shadows ? "contact2d" : "off";
+  } catch {
+    /* storage unavailable */
+  }
+  return DEFAULTS.shadowMode;
+}
 
 export interface GameMenuDeps {
   net: NetworkClient;
   audio: AudioManager;
   engine: Engine;
-  shadows: ContactShadowSystem;
+  shadows: ShadowRuntime;
   isNostrVerified: () => boolean;
   developerLabels?: {
     isEnabled: () => boolean;
@@ -92,28 +115,35 @@ export class GameMenu {
   private load(): Settings {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE) || "{}") as Partial<Settings> & {
-        contactShadowSettingsVersion?: number;
+        shadows?: unknown;
       };
-      return {
+      const settings = {
         ...DEFAULTS,
         ...saved,
-        shadows:
-          saved.contactShadowSettingsVersion === CONTACT_SHADOW_SETTINGS_VERSION
-            ? saved.shadows ?? DEFAULTS.shadows
-            : DEFAULTS.shadows,
-      };
+        shadowMode: isShadowMode(saved.shadowMode)
+          ? saved.shadowMode
+          : typeof saved.shadows === "boolean"
+            ? saved.shadows
+              ? "contact2d"
+              : "off"
+            : DEFAULTS.shadowMode,
+      } as Settings & { shadows?: unknown };
+      delete settings.shadows;
+      return settings;
     } catch {
       return { ...DEFAULTS };
     }
   }
   private save() {
     this.syncAudioSettings();
+    const persisted = { ...(this.settings as Settings & { shadows?: unknown }) };
+    delete persisted.shadows;
     try {
       localStorage.setItem(
         STORE,
         JSON.stringify({
-          ...this.settings,
-          contactShadowSettingsVersion: CONTACT_SHADOW_SETTINGS_VERSION,
+          ...persisted,
+          shadowModeSettingsVersion: SHADOW_MODE_SETTINGS_VERSION,
         }),
       );
     } catch {
@@ -130,12 +160,8 @@ export class GameMenu {
     this.deps.audio.setMasterVolume(s.master / 100);
     this.deps.audio.setMusicVolume(s.music / 100);
     this.deps.audio.setSfxVolume(s.sfx / 100);
-    this.setShadows(s.shadows);
     this.deps.engine.setHardwareScalingLevel(QUALITY_SCALE[s.quality]);
     this.deps.developerLabels?.setEnabled(s.devLabels);
-  }
-  private setShadows(on: boolean) {
-    this.deps.shadows.setEnabled(on);
   }
 
   // ---- views ----
@@ -265,22 +291,31 @@ export class GameMenu {
     const s = this.settings;
     const qBtn = (q: Quality, label: string) =>
       `<button class="gmQual${s.quality === q ? " gmQualOn" : ""}" data-q="${q}">${label}</button>`;
+    const shadowBtn = (mode: ShadowMode) =>
+      `<button class="gmShadowMode${s.shadowMode === mode ? " gmShadowModeOn" : ""}" data-shadow-mode="${mode}">${SHADOW_LABELS[mode]}</button>`;
     this.panel.innerHTML =
       this.head("Graphics", true) +
       `<div class="gmBody">` +
-      `<div class="gmRow"><label>🌑 Shadows</label><button id="gmShadows" class="gmToggle">${s.shadows ? "On" : "Off"}</button></div>` +
+      `<div class="gmRow gmShadowRow"><label>🌑 Shadows</label><div class="gmShadowModes">${shadowBtn("off")}${shadowBtn("contact2d")}${shadowBtn("legacy3d")}</div></div>` +
       `<div class="gmRow"><label>✨ Quality</label><div class="gmQuals">${qBtn("low", "Low")}${qBtn("medium", "Medium")}${qBtn("high", "High")}</div></div>` +
       `<div class="gmNote">Quality sets the render resolution — lower it if the game runs slow.</div>` +
       `</div>`;
     this.wireHead();
-    const sh = this.panel.querySelector<HTMLElement>("#gmShadows");
-    if (sh)
-      sh.onclick = () => {
-        this.settings.shadows = !this.settings.shadows;
-        this.setShadows(this.settings.shadows);
-        sh.textContent = this.settings.shadows ? "On" : "Off";
+    this.panel.querySelectorAll<HTMLElement>(".gmShadowMode").forEach((b) => {
+      b.onclick = () => {
+        const mode = b.dataset.shadowMode as ShadowMode;
+        if (!isShadowMode(mode) || mode === this.settings.shadowMode) return;
+        const current = SHADOW_LABELS[this.settings.shadowMode];
+        const next = SHADOW_LABELS[mode];
+        const reload = window.confirm(
+          `Switch shadows from ${current} to ${next}?\n\nThis requires reloading the game to rebuild the scene with only the selected shadow system active.`,
+        );
+        if (!reload) return;
+        this.settings.shadowMode = mode;
         this.save();
+        window.location.reload();
       };
+    });
     this.panel.querySelectorAll<HTMLElement>(".gmQual").forEach((b) => {
       b.onclick = () => {
         const q = b.dataset.q as Quality;
@@ -372,6 +407,10 @@ function injectStyles() {
     #gameMenu .gmQuals { display:flex; gap:6px; flex:1; }
     #gameMenu .gmQual { flex:1; cursor:pointer; padding:6px 0; background:#222a38; color:#cdd3e0; border:1px solid #3a4456; border-radius:6px; font-size:12px; font-weight:600; }
     #gameMenu .gmQualOn { background:#c9a24a; color:#1a1207; border-color:#c9a24a; }
+    #gameMenu .gmShadowRow { align-items:flex-start; }
+    #gameMenu .gmShadowModes { display:flex; flex:1; gap:6px; flex-wrap:wrap; }
+    #gameMenu .gmShadowMode { flex:1 1 72px; min-height:30px; cursor:pointer; padding:6px 8px; background:#222a38; color:#cdd3e0; border:1px solid #3a4456; border-radius:6px; font-size:12px; font-weight:700; }
+    #gameMenu .gmShadowModeOn { background:#c9a24a; color:#1a1207; border-color:#c9a24a; }
     body.preGame #gameMenu { display: none !important; }
   `;
   const style = document.createElement("style");

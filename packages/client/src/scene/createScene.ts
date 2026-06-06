@@ -12,16 +12,20 @@ import {
 } from "@babylonjs/core";
 import { createIsoCamera } from "./camera";
 import { createEnvironment } from "./environment";
-import { ContactShadowSystem } from "./contactShadows";
+import {
+  createShadowRuntime,
+  type ShadowMode,
+  type ShadowRuntime,
+} from "./contactShadows";
 
 export interface SceneBundle {
   scene: Scene;
   camera: ArcRotateCamera;
   ground: Mesh;
-  shadows: ContactShadowSystem;
+  shadows: ShadowRuntime;
 }
 
-export function createScene(engine: Engine): SceneBundle {
+export function createScene(engine: Engine, opts: { shadowMode?: ShadowMode } = {}): SceneBundle {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.05, 0.06, 0.09, 1);
   scene.ambientColor = new Color3(0.3, 0.3, 0.36);
@@ -46,8 +50,8 @@ export function createScene(engine: Engine): SceneBundle {
   sun.autoUpdateExtends = true;
   sun.autoCalcShadowZBounds = true;
 
-  const shadows = new ContactShadowSystem(scene, sun);
-  const { ground } = createEnvironment(scene);
+  const { ground, shadowCasters } = createEnvironment(scene);
+  const shadows = createShadowRuntime(opts.shadowMode ?? "contact2d", scene, sun, shadowCasters);
 
   return { scene, camera, ground, shadows };
 }

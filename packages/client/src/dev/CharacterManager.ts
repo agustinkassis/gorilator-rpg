@@ -2,7 +2,7 @@ import { Scene, AbstractMesh, TransformNode, Nullable } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
 import { assembleCharacter, CharacterDef, AssembledCharacter } from "../entities/characterDef";
 import { bounds } from "../scene/props";
-import { ContactShadowHandle, ContactShadowSystem } from "../scene/contactShadows";
+import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 export interface Placement {
   id: string;
@@ -17,7 +17,7 @@ export interface PlacedCharacter {
   placement: Placement;
   def: CharacterDef;
   built: AssembledCharacter;
-  shadow: ContactShadowHandle;
+  shadow: ShadowHandle;
 }
 
 /**
@@ -33,7 +33,7 @@ export class CharacterManager {
 
   constructor(
     private scene: Scene,
-    private shadows: ContactShadowSystem,
+    private shadows: ShadowRuntime,
   ) {}
 
   /** Fetch the def library + placements and instantiate every placed character. */
@@ -79,17 +79,17 @@ export class CharacterManager {
       m.metadata = md;
       m.isPickable = this.pickable;
     }
-    this.shadows.addReceivers(built.meshes);
+    this.shadows.registerMeshes(built.meshes, { cast: false, receive: true });
     const shadow = this.createShadow(placement.id, built);
     built.controller.play(AnimState.IDLE); // idle loops on the scene clock
     this.chars.set(placement.id, { placement, def, built, shadow });
   }
 
-  private createShadow(id: string, built: AssembledCharacter): ContactShadowHandle {
+  private createShadow(id: string, built: AssembledCharacter): ShadowHandle {
     const b = bounds(built.meshes);
     const width = Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
     const shadowSize = Number.isFinite(width) && width > 0 ? width : 1.8;
-    return this.shadows.add({
+    const opts = {
       name: `shadow_character_${id}`,
       shape: "character",
       x: built.root.position.x,
@@ -98,7 +98,10 @@ export class CharacterManager {
       width: shadowSize,
       depth: shadowSize,
       opacity: 0.34,
-    });
+    } as const;
+    return this.shadows.mode === "legacy3d"
+      ? this.shadows.addProjected({ ...opts, root: built.root, casters: built.meshes })
+      : this.shadows.add(opts);
   }
 
   /** Relocate a placed character (drag/inspector) + persist. */

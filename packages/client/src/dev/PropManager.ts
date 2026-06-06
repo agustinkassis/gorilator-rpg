@@ -5,7 +5,7 @@ import {
   Nullable,
 } from "@babylonjs/core";
 import { PropDef, LoadedProp, importModel, applyTransform, bounds } from "../scene/props";
-import { ContactShadowHandle, ContactShadowSystem } from "../scene/contactShadows";
+import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 /** A prop that has been placed into the world and registered for editing. `def`
  *  is the live, mutable manifest entry the inspector edits; `loaded` is its glTF
@@ -14,7 +14,7 @@ export interface PlacedProp {
   id: string;
   def: PropDef;
   loaded: LoadedProp;
-  shadow: ContactShadowHandle;
+  shadow: ShadowHandle;
 }
 
 /**
@@ -30,7 +30,7 @@ export class PropManager {
 
   constructor(
     private scene: Scene,
-    private shadows: ContactShadowSystem,
+    private shadows: ShadowRuntime,
   ) {}
 
   /** Fetch the manifest and place every persisted prop (replaces `loadProps`). */
@@ -57,9 +57,7 @@ export class PropManager {
     if (existing) return existing;
     const loaded = await importModel(this.scene, def.model);
     applyTransform(loaded, def.scale, def.x, def.z, def.rotationY || 0);
-    for (const m of loaded.meshes) {
-      m.receiveShadows = true;
-    }
+    this.shadows.registerMeshes(loaded.meshes, { cast: false, receive: true });
     const shadow = this.createShadow(loaded, def, id);
     const placed: PlacedProp = { id, def: { ...def, id }, loaded, shadow };
     this.tag(placed);
@@ -67,7 +65,7 @@ export class PropManager {
     return placed;
   }
 
-  private createShadow(loaded: LoadedProp, def: PropDef, id: string): ContactShadowHandle {
+  private createShadow(loaded: LoadedProp, def: PropDef, id: string): ShadowHandle {
     const b = bounds(loaded.meshes);
     return this.shadows.addWorldObject({
       name: `shadow_prop_${id}`,

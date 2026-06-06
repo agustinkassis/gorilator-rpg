@@ -66,7 +66,7 @@ import {
 import { smooth } from "../util/math";
 import { applyTransform, bounds, importModel } from "../scene/props";
 import { itemDef, loadItemDefs } from "../items/itemRegistry";
-import { ContactShadowHandle, ContactShadowShape, ContactShadowSystem } from "../scene/contactShadows";
+import type { ContactShadowShape, ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 interface ServerView {
   x: number;
@@ -101,7 +101,7 @@ interface Hop {
  *  hands off to the real (server-spawned) collectible resting at the same spot. */
 interface ThrownBanana {
   model: BananaModel;
-  shadow: ContactShadowHandle;
+  shadow: ShadowHandle;
   hops: Hop[];
   hopIndex: number;
   t: number; // time into the current hop
@@ -180,7 +180,7 @@ export class Game {
   private pendingItems = new Set<string>();
   private removedItems = new Set<string>();
   private houses = new Map<string, { hp: number; maxHp: number; alive: boolean; anchor: TransformNode; visual?: TransformNode; meshes?: AbstractMesh[] }>();
-  private contactShadows = new Map<string, ContactShadowHandle>();
+  private contactShadows = new Map<string, ShadowHandle>();
   private characterShadeRadii = new Map<string, number>();
   private houseModel: HouseModel | null = null; // the loaded house glb (to hide on collapse)
   private housePickable = false;
@@ -206,7 +206,7 @@ export class Game {
     private camera: ArcRotateCamera,
     private factory: CharacterFactory,
     private hud: HUD,
-    private shadows: ContactShadowSystem,
+    private shadows: ShadowRuntime,
   ) {
     const canvas = camera.getScene().getEngine().getRenderingCanvas();
     if (canvas) this.damageFx = new DamageFx(canvas);
@@ -783,7 +783,7 @@ export class Game {
       mesh.metadata = { entityId: id, kind: "stone" };
       this.receiveContactShadow(mesh);
     }
-    this.addContactShadow("stone", id, model.root, "pickup", 1.15, 1.3, 0.42);
+    this.addContactShadow("stone", id, model.root, "pickup", 1.15, 1.3, 0.42, model.meshes);
     this.stones.set(id, {
       ...model,
       bob: Math.random() * Math.PI * 2,
@@ -1008,7 +1008,7 @@ export class Game {
     const item: "banana" | "stone" = ev.item === "stone" ? "stone" : "banana";
     const model = ev.item === "stone" ? buildStoneShot(scene) : buildBanana(scene);
     for (const mesh of model.meshes) this.receiveContactShadow(mesh);
-    const thrownShadow = this.shadows.add({
+    const throwShadowOpts = {
       name: `shadow_throw_${Date.now()}`,
       shape: "pickup",
       x: ev.fromX,
@@ -1017,7 +1017,11 @@ export class Game {
       width: item === "stone" ? 0.8 : 0.75,
       depth: item === "stone" ? 0.9 : 1.05,
       opacity: item === "stone" ? 0.38 : 0.24,
-    });
+    } as const;
+    const thrownShadow =
+      this.shadows.mode === "legacy3d"
+        ? this.shadows.addProjected({ ...throwShadowOpts, root: model.root, casters: model.meshes })
+        : this.shadows.add(throwShadowOpts);
     this.audio?.throwItem({ x: ev.fromX, z: ev.fromZ }, item); // whoosh from the thrower
     const HAND_Y = 1.1;
     const R = THROW_RESTITUTION;
@@ -1217,9 +1221,9 @@ export class Game {
   }
 
   // ---- internals ----
-  /** Keep the old receiver flag on materials; contact shadows provide the visible grounding. */
+  /** Declare meshes as shadow receivers; the active runtime decides what that means. */
   private receiveContactShadow(mesh: AbstractMesh) {
-    this.shadows.addReceivers([mesh]);
+    this.shadows.registerMeshes([mesh], { cast: false, receive: true });
   }
 
   private shadowKey(kind: string, id: string): string {
@@ -1236,7 +1240,7 @@ export class Game {
     opacity: number,
     casters?: AbstractMesh[],
     staticWorld = false,
-  ): ContactShadowHandle {
+  ): ShadowHandle {
     const key = this.shadowKey(kind, id);
     this.removeContactShadow(kind, id);
     const opts = {
@@ -1249,11 +1253,12 @@ export class Game {
       depth,
       opacity,
     };
-    const handle = casters?.length
-      ? staticWorld
+    const handle =
+      casters?.length && staticWorld
         ? this.shadows.addWorldObject({ ...opts, root, casters })
-        : this.shadows.addProjected({ ...opts, root, casters })
-      : this.shadows.add(opts);
+        : casters?.length && (shape === "structure" || this.shadows.mode === "legacy3d")
+          ? this.shadows.addProjected({ ...opts, root, casters })
+          : this.shadows.add(opts);
     this.contactShadows.set(key, handle);
     return handle;
   }
@@ -1301,6 +1306,7 @@ export class Game {
       shadowSize,
       shadowSize,
       isEnemy ? 0.46 : 0.5,
+      entity.meshes,
     );
     this.hud.addCharacter(entity, isEnemy);
     this.entities.set(entity.id, entity);
@@ -1354,10 +1360,10 @@ export class Game {
     const kind = (entity.root.metadata as { kind?: string } | null)?.kind ?? "enemy";
     this.footprints.remove(kind, id);
     this.characterShadeRadii.delete(id);
+    this.removeContactShadow(kind, id);
     entity.dispose();
     this.entities.delete(id);
     this.audio?.forget(id); // drop footstep/death bookkeeping for this entity
-    this.removeContactShadow(kind, id);
   }
 
   /** Strike a lightning bolt at a spot (used for player respawns). */
@@ -1574,6 +1580,7 @@ export class Game {
     }
 
     const local = this.localId ? this.entities.get(this.localId) : null;
+    this.shadows.updateFocus(local?.root.position ?? null);
     const focus = this.focusOverride; // dev: explorer is holding the camera off the player
     if (focus || local) {
       const f = smooth(dt, 0.12);

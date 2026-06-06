@@ -7,7 +7,7 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
-import { ContactShadowHandle, ContactShadowSystem } from "./contactShadows";
+import type { ShadowHandle, ShadowRuntime } from "./contactShadows";
 
 export interface PropDef {
   id?: string; // stable handle for editing/deleting (assigned by the importer endpoint)
@@ -141,7 +141,7 @@ export function applyTransform(
 }
 
 /** Soft projected prop shadow. Returns the handle so callers can reposition/dispose it. */
-export function addPropContactShadow(shadows: ContactShadowSystem, p: LoadedProp, name: string): ContactShadowHandle {
+export function addPropContactShadow(shadows: ShadowRuntime, p: LoadedProp, name: string): ShadowHandle {
   const b = bounds(p.meshes);
   return shadows.addWorldObject({
     name: `propShadow_${name}`,
@@ -157,7 +157,7 @@ export function addPropContactShadow(shadows: ContactShadowSystem, p: LoadedProp
 }
 
 /** Fetch the manifest and place every persisted prop into the world. */
-export async function loadProps(scene: Scene, shadows: ContactShadowSystem): Promise<void> {
+export async function loadProps(scene: Scene, shadows: ShadowRuntime): Promise<void> {
   let defs: PropDef[] = [];
   try {
     const res = await fetch("/props.json", { cache: "no-store" });

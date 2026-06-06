@@ -6,7 +6,7 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
-import { ContactShadowHandle, ContactShadowSystem } from "../../scene/contactShadows";
+import type { ShadowHandle, ShadowRuntime } from "../../scene/contactShadows";
 
 const HOUSE_URL = "/models/house.glb";
 const HOUSE_SIZE = 11; // footprint matches the centre cross (its arms span 11 units)
@@ -44,7 +44,7 @@ export interface HouseModel {
  */
 export async function loadHouse(
   scene: Scene,
-  shadows: ContactShadowSystem,
+  shadows: ShadowRuntime,
 ): Promise<HouseModel | null> {
   // HEAD probe so a missing file doesn't crash the client.
   try {
@@ -103,7 +103,7 @@ export async function loadHouse(
     // Contact shadow: the real house is far too heavy for a live shadow map. A soft
     // projected footprint grounds it visually without rendering the GLB from the sun.
     b = hierarchyBounds(r.meshes);
-    const contactShadow: ContactShadowHandle = shadows.addProjected({
+    const contactShadow: ShadowHandle = shadows.addProjected({
       name: "houseContactShadow",
       shape: "structure",
       root,

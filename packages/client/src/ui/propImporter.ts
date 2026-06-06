@@ -1,6 +1,6 @@
 import { Scene } from "@babylonjs/core";
 import { importModel, applyTransform, LoadedProp, bounds } from "../scene/props";
-import { ContactShadowHandle, ContactShadowSystem } from "../scene/contactShadows";
+import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 /**
  * Dev tool: upload a .glb, position/resize/rotate it live in the world, name it,
@@ -14,13 +14,13 @@ export class PropImporter {
   private open = false;
   private file: File | null = null;
   private prop: LoadedProp | null = null;
-  private previewShadow: ContactShadowHandle | null = null;
+  private previewShadow: ShadowHandle | null = null;
   private state = { size: 5, rotDeg: 0, x: 0, z: 0, name: "prop", concrete: true };
   private status: HTMLElement;
 
   constructor(
     private scene: Scene,
-    private shadows: ContactShadowSystem,
+    private shadows: ShadowRuntime,
     private getPlayerPos: () => { x: number; z: number } | null,
   ) {
     const btn = document.createElement("button");
@@ -142,7 +142,7 @@ export class PropImporter {
     this.refreshPreviewShadow();
   }
 
-  private createPreviewShadow(): ContactShadowHandle | null {
+  private createPreviewShadow(): ShadowHandle | null {
     if (!this.prop) return null;
     const b = bounds(this.prop.meshes);
     return this.shadows.addProjected({
