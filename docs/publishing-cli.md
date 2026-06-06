@@ -83,7 +83,9 @@ for the standard same-origin deploy, **download the release's prebuilt dist** ra
 running the ~45s client build. The daemon serves that prebuilt `packages/client/dist` and
 runs the server from source via `tsx`, so building the client on the box is unnecessary.
 
-- It still runs `pnpm install` (for the server's runtime deps + `tsx`); only the build is skipped.
+- It still runs `pnpm install`, but **scoped to the server subtree** (`--filter @rpg/server...`)
+  — the server's runtime deps + `tsx` + `@rpg/shared`. The client's build-only deps (Babylon,
+  Vite) are skipped, since the daemon runs the server from source and serves the prebuilt client.
 - Falls back to **building from source** when there's no prebuilt asset — branch refs
   (`--ref main`), forks without the asset, non-same-origin builds (`--server-url` / an explicit
   `--client-port`), a checksum mismatch, or offline.

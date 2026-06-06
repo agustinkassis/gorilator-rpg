@@ -112,11 +112,23 @@ function fetchedRefIsBranch(appDir: string, ref: string): boolean {
 
 /** pnpm install. node_modules is kept whole (no prune — pnpm 10's prune is
  *  interactive and hangs non-TTY; robustness over size). A failed
- *  msgpackr-extract native build is non-fatal (pure-JS fallback). */
-export function pnpmInstall(appDir: string): void {
-  log.info("Installing dependencies (pnpm install)…");
-  runAsTargetUser("pnpm", ["install"], { cwd: appDir });
+ *  msgpackr-extract native build is non-fatal (pure-JS fallback).
+ *
+ *  `filter` scopes the install to a subset of the workspace (e.g.
+ *  `@rpg/server...` = the server + its deps, including @rpg/shared and tsx).
+ *  Used on the prebuilt fast path to skip the client's heavy build-only deps
+ *  (Babylon, Vite) the running daemon never imports. */
+export function pnpmInstall(appDir: string, opts: { filter?: string } = {}): void {
+  const args = ["install"];
+  if (opts.filter) args.push("--filter", opts.filter);
+  log.info(opts.filter ? `Installing dependencies (${opts.filter})…` : "Installing dependencies (pnpm install)…");
+  runAsTargetUser("pnpm", args, { cwd: appDir });
 }
+
+/** The server subtree filter: @rpg/server plus everything it depends on
+ *  (@rpg/shared, tsx/esbuild). The daemon runs the server from source via tsx
+ *  and serves a prebuilt static client, so this is all it needs at runtime. */
+const SERVER_FILTER = "@rpg/server...";
 
 export function buildShared(appDir: string): void {
   log.info("Building @rpg/shared…");
@@ -179,20 +191,27 @@ export function installAndBuild(
   log.ok("Build complete.");
 }
 
-/** Install deps, then either fetch a prebuilt release dist (skipping the build)
- *  or build from source. `prebuilt` is set only for same-origin release-tag
- *  installs; on any download miss it transparently falls back to building. */
+/** Either fetch a prebuilt release dist (skipping the build) or build from
+ *  source, installing only what each path needs. `prebuilt` is set only for
+ *  same-origin release-tag installs; on any download miss it transparently
+ *  falls back to a full install + source build.
+ *
+ *  Fast path: download the prebuilt dist first (curl/tar only — no node_modules
+ *  needed), then a server-scoped `pnpm install` (@rpg/server...) — skipping the
+ *  client's build-only deps (Babylon, Vite) the daemon never imports.
+ *  Fallback: full `pnpm install` + build shared/client/cli from source. */
 export function buildOrFetch(
   appDir: string,
   opts: { serverUrl?: string; serverPort?: number } = {},
   prebuilt?: { slug: string; tag: string } | null,
 ): void {
-  pnpmInstall(appDir);
   if (prebuilt && downloadReleaseDist(prebuilt.slug, prebuilt.tag, appDir)) {
+    pnpmInstall(appDir, { filter: SERVER_FILTER });
     log.ok(`Fetched prebuilt build for ${prebuilt.tag} — skipped the local build.`);
     return;
   }
   if (prebuilt) log.info("No prebuilt build for this release — building from source.");
+  pnpmInstall(appDir);
   buildShared(appDir);
   buildClient(appDir, opts);
   buildCli(appDir);
