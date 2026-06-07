@@ -236,12 +236,16 @@ export class SplashScreen {
       if (!res.ok) return;
       const s = (await res.json()) as {
         updateAvailable?: boolean;
+        current?: { version?: string } | null;
         latest?: { tag?: string; name?: string; url?: string } | null;
       };
       if (!s.updateAvailable || !s.latest) return;
 
       const text = document.getElementById("updateBannerText");
-      if (text) text.textContent = `Update available — ${s.latest.tag ?? "new release"}`;
+      // Name the running server's version too, so it's clear the gap is the
+      // server you're connected to — not (e.g.) the checkout you're developing in.
+      const installed = s.current?.version ? ` (server on ${s.current.version})` : "";
+      if (text) text.textContent = `Update available — ${s.latest.tag ?? "new release"}${installed}`;
       // The banner links straight to the GitHub release page for this update.
       const link = document.getElementById("updateBannerLink") as HTMLAnchorElement | null;
       if (link && s.latest.url) link.href = s.latest.url;
