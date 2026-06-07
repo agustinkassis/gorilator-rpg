@@ -497,7 +497,7 @@ async function runMainMenu(ctx: RuntimeContext, opts: MenuOpts): Promise<void> {
 
     const actions: MenuAction[] = [
       { key: "status", label: "Status", run: async () => { await statusCmd(ctx, opts); pause(); } },
-      { key: "setup", label: "Setup", hint: gate, disabled: !available, run: () => runSetup(opts, ctx) },
+      { key: "setup", label: "Setup", hint: gate, disabled: !available, run: () => runSetup(opts, ctx, { fromMenu: true }) },
     ];
     // Lifecycle actions reflect the running state: Start only when stopped,
     // Stop/Restart only when running. Hidden entirely when not installed.
@@ -606,7 +606,9 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<{ title: string; r
     lines.push(
       `  ${log.dim("Server:")}  ${statusDot(running)}${running ? log.dim(` · http://localhost:${info.port}`) : ""}`,
     );
-    const pub = systemPublicUrl(info.serverHost);
+    // The tunnel forwards to the local server, so only surface its URL while the
+    // service is actually running (a stopped server would 502).
+    const pub = running ? systemPublicUrl(info.serverHost) : null;
     if (pub) lines.push(`  ${log.dim("Public:")}  ${log.green(pub)}`);
   }
 

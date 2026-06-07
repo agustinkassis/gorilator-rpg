@@ -34,7 +34,11 @@ type EnvMap = Record<string, string>;
 const DEFAULT_SERVER_NAME = "Gorilator Server";
 const DEFAULT_CLIENT_PORT = 5173;
 
-export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promise<void> {
+export async function runProjectSetup(
+  opts: Options,
+  ctx: RuntimeContext,
+  { fromMenu = false }: { fromMenu?: boolean } = {},
+): Promise<void> {
   if (!canPrompt() || opts.yes) {
     saveProjectConfigFromEnv(opts, ctx);
     showCurrentSettings(opts, ctx);
@@ -60,7 +64,7 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
       { label: "Tunnel (Cloudflare)", hint: tunnelHint(ctx, env) },
       { label: "Auto-update check interval", hint: updateCheckHint(env.UPDATE_CHECK_HOURS) },
       { label: "Show current settings" },
-      { label: "Back" },
+      { label: fromMenu ? "Back" : "Exit" },
     ]);
 
     if (choice === 0) await generalSettingsMenu(opts, ctx);
