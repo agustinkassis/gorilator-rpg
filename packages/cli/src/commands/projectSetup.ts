@@ -47,7 +47,7 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
     const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
     const running = (await projectStatus(ctx)).active;
     const choice = await selectMenu(
-      `Gorilator project setup\n${ctx.appDir}\n  ${devStatusText(running, serverPort)}`,
+      `Gorilator project setup\n  ${devStatusText(running, serverPort)}`,
       [
       { label: "General settings", hint: "display name, NSEC, admins" },
       {

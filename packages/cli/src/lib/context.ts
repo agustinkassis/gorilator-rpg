@@ -73,6 +73,35 @@ export function resolveRuntimeContext(opts: Options, cwd = process.cwd()): Runti
   };
 }
 
+export interface TargetSummary {
+  kind: "project" | "system";
+  appDir: string;
+  /** Current git branch (or short SHA) of the targeted checkout, if any. */
+  ref: string | null;
+  /** `owner/repo` slug of the checkout's first remote, if any. */
+  remote: string | null;
+  /** Whether the targeted install exists (always true for project mode; for
+   *  system mode, whether an install record is on disk). */
+  installed: boolean;
+}
+
+/** Summarize what a command is about to act on — the local git checkout
+ *  (project mode) or the system-wide install (global mode) — for the banner the
+ *  CLI prints before context-aware commands. */
+export function describeTarget(ctx: RuntimeContext): TargetSummary {
+  const remoteUrl = firstRemoteUrl(ctx.appDir);
+  const normalized = remoteUrl ? normalizeRepoUrl(remoteUrl) : null;
+  // normalized is "host/owner/repo" → drop the host for a tidy "owner/repo".
+  const remote = normalized ? normalized.split("/").slice(1).join("/") || normalized : null;
+  return {
+    kind: ctx.kind,
+    appDir: ctx.appDir,
+    ref: currentGitRef(ctx.appDir),
+    remote,
+    installed: ctx.kind === "project" ? true : loadConfig() !== null,
+  };
+}
+
 export function loadProjectConfig(ctx: RuntimeContext, opts: Options): InstallConfig {
   if (ctx.kind !== "project") {
     const cfg = loadConfig(ctx.configPath);

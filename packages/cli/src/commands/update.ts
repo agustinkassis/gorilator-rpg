@@ -83,7 +83,7 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   }
 
   process.stdout.write(
-    `\n${log.bold("🦍 Gorilator update")}  ${log.dim(`${cfg.appDir} · ${ref}`)}\n\n`,
+    `\n${log.bold("🦍 Gorilator update")}\n\n`,
   );
 
   // 1. Fetch the ref and detect what changed (shown before we touch anything).
