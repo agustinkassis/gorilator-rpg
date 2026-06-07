@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { saveConfig } from "../lib/config.js";
 import { loadProjectConfig, readProjectEnv, type RuntimeContext } from "../lib/context.js";
+import { devTunnelRunning, readDevTunnelState, startDevTunnels, stopDevTunnels } from "../lib/devTunnel.js";
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
@@ -39,6 +40,7 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
         }`,
       },
       { label: "Colyseus and environment", hint: "monitor auth, stats files" },
+      { label: "Cloudflare (share dev)", hint: devTunnelRunning(ctx) ? "sharing — temporary tunnel" : "temporary tunnel" },
       { label: "Auto-update check interval", hint: updateCheckHint(env.UPDATE_CHECK_HOURS) },
       { label: "Show current settings" },
       { label: "Exit" },
@@ -47,12 +49,77 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
     if (choice === 0) await generalSettingsMenu(opts, ctx);
     else if (choice === 1) await portsMenu(opts, ctx);
     else if (choice === 2) await environmentMenu(opts, ctx);
-    else if (choice === 3) await updateAutoUpdateInterval(settingsCtx(opts, ctx));
-    else if (choice === 4) {
+    else if (choice === 3) await cloudflareDevMenu(opts, ctx);
+    else if (choice === 4) await updateAutoUpdateInterval(settingsCtx(opts, ctx));
+    else if (choice === 5) {
       showCurrentSettings(opts, ctx);
       pause();
     } else return;
   }
+}
+
+/** Share the local dev server over a TEMPORARY Cloudflare tunnel (quick tunnels,
+ *  no account). Spins up two tunnels — one for the Vite client page and one for
+ *  the game server — and points the client at the server tunnel via
+ *  VITE_SERVER_URL. The URLs are ephemeral; the dev server is restarted so Vite
+ *  bakes the new VITE_SERVER_URL (and trusts the trycloudflare host). */
+async function cloudflareDevMenu(opts: Options, ctx: RuntimeContext): Promise<void> {
+  for (;;) {
+    const running = devTunnelRunning(ctx);
+    const state = readDevTunnelState(ctx);
+    const title = running && state?.clientUrl ? `Cloudflare (share dev)\n  ${state.clientUrl}\n` : "Cloudflare (share dev)";
+    const choice = await selectMenu(title, [
+      { label: running ? "Restart sharing" : "Start sharing", hint: "temporary tunnel, no login" },
+      { label: "Stop sharing", hint: running ? "kill the tunnels" : "not sharing" },
+      { label: "Show share URL", hint: state?.clientUrl || "—" },
+      { label: "Back" },
+    ]);
+
+    if (choice === 0) await startSharing(opts, ctx);
+    else if (choice === 1) await stopSharing(opts, ctx);
+    else if (choice === 2) {
+      const s = readDevTunnelState(ctx);
+      log.info(s?.clientUrl ? `Share URL: ${s.clientUrl}` : "Not sharing — start a tunnel first.");
+      pause();
+    } else return;
+  }
+}
+
+async function startSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
+  if (devTunnelRunning(ctx)) stopDevTunnels(ctx);
+  const cfg = loadProjectConfig(ctx, opts);
+  const env = readProjectEnv(ctx);
+  const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
+  const clientPort = Number(env.CLIENT_PORT) || cfg.clientPort || DEFAULT_CLIENT_PORT;
+
+  log.info("Starting temporary Cloudflare tunnels (client + server)…");
+  const state = await startDevTunnels(ctx, serverPort, clientPort);
+  if (!state.serverUrl || !state.clientUrl) {
+    log.warn("Could not capture a tunnel URL yet — the tunnels are starting; try 'Show share URL' shortly.");
+  }
+  // Point the dev client at the server tunnel; Vite bakes this on (re)start.
+  if (state.serverUrl) writeEnvPatch(ctx, { VITE_SERVER_URL: state.serverUrl }, "Pointed the client at the server tunnel.");
+
+  log.info("Restarting the dev server so it picks up the tunnel settings…");
+  await restartIfRunning(opts, ctx);
+
+  process.stdout.write("\n");
+  if (state.clientUrl) {
+    log.ok(`Sharing your dev server: ${state.clientUrl}`);
+    log.info("Ephemeral URLs — they change each time you restart sharing. If the dev server wasn't running, start it (npm/pnpm dev) and re-open this menu.");
+  }
+  pause();
+}
+
+async function stopSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
+  if (stopDevTunnels(ctx)) log.ok("Stopped sharing — tunnels killed.");
+  else log.info("No active share tunnels.");
+  // Drop the baked server URL so the client returns to localhost dev defaults.
+  if (readProjectEnv(ctx).VITE_SERVER_URL) {
+    writeEnvPatch(ctx, { VITE_SERVER_URL: "" }, "Cleared VITE_SERVER_URL.");
+    await restartIfRunning(opts, ctx);
+  }
+  pause();
 }
 
 /** General settings: the server's public identity — display name, Nostr key, and

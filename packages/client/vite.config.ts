@@ -2017,6 +2017,10 @@ export default defineConfig(({ command }) => {
     server: {
       port: Number(process.env.CLIENT_PORT) || 5173,
       strictPort: true,
+      // Allow the dev server to be reached through a Cloudflare quick tunnel
+      // (`gorilator setup → Cloudflare → Share dev`), which sends a
+      // `*.trycloudflare.com` Host header Vite would otherwise reject.
+      allowedHosts: [".trycloudflare.com"],
     },
   };
 });
