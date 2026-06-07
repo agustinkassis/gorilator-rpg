@@ -169,11 +169,11 @@ ${ingress}
 `;
 }
 
-/** Write config.yml (+ copy credentials into the system dir on Linux). */
-export function writeTunnelConfig(
+/** Write config.yml (+ copy credentials into the system dir on Linux) for one or
+ *  more hostname→port ingress routes. */
+export function writeTunnelConfigRoutes(
   id: string,
-  host: string,
-  port: number,
+  routes: { host: string; port: number }[],
 ): void {
   const credsSrc = ensureTunnelCredentials(id);
   const dir = cloudflaredDir();
@@ -186,11 +186,12 @@ export function writeTunnelConfig(
     runPrivileged("chmod", ["600", credsPath]);
   }
   log.info(`Writing ${join(dir, "config.yml")}…`);
-  writeFileMaybeSudo(
-    join(dir, "config.yml"),
-    renderConfig(id, credsPath, [{ host, port }]),
-    0o644,
-  );
+  writeFileMaybeSudo(join(dir, "config.yml"), renderConfig(id, credsPath, routes), 0o644);
+}
+
+/** Single-hostname convenience over {@link writeTunnelConfigRoutes}. */
+export function writeTunnelConfig(id: string, host: string, port: number): void {
+  writeTunnelConfigRoutes(id, [{ host, port }]);
 }
 
 /** Point a hostname's DNS at the tunnel (idempotent; warns if it already exists). */

@@ -11,7 +11,7 @@ import {
 import { get } from "node:http";
 import { dirname, join } from "node:path";
 import { ensureNode, ensurePnpm } from "./build.js";
-import { loadProjectConfig, type ProjectDevState, type RuntimeContext } from "./context.js";
+import { loadProjectConfig, readProjectEnv, type ProjectDevState, type RuntimeContext } from "./context.js";
 import { probeHealth } from "./health.js";
 import * as log from "./log.js";
 import type { Options } from "./options.js";
@@ -42,8 +42,12 @@ export async function startProjectDev(ctx: RuntimeContext, opts: Options): Promi
 
   const cfg = loadProjectConfig(ctx, opts);
   const logFd = openSync(ctx.logPath!, "a");
+  // Merge the project's .env so its vars reach the dev process — notably any
+  // VITE_* (e.g. VITE_SERVER_URL / VITE_ALLOWED_HOSTS set by the tunnel menu),
+  // which Vite picks up from process.env. The explicit ports below win.
   const env = {
     ...process.env,
+    ...readProjectEnv(ctx),
     GAME_SERVER_PORT: String(cfg.port),
     CLIENT_PORT: String(cfg.clientPort ?? 5173),
     GORILATOR_STATE_FILE: ctx.statePath!,
