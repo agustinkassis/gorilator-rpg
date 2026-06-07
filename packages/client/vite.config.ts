@@ -18,11 +18,11 @@ import { fileURLToPath } from "url";
 
 const configDir = dirname(fileURLToPath(import.meta.url));
 
-/** The app version shown in-game (the tiny footer tag), read from this package's
- *  package.json. Falls back to 0.0.0 if it can't be read. */
+/** The app version shown in-game (the tiny footer tag), read from the workspace
+ *  root package.json. Falls back to 0.0.0 if it can't be read. */
 function appVersion(): string {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(configDir, "package.json"), "utf8")) as {
+    const pkg = JSON.parse(readFileSync(resolve(configDir, "..", "..", "package.json"), "utf8")) as {
       version?: string;
     };
     return pkg.version ?? "0.0.0";
@@ -2017,6 +2017,17 @@ export default defineConfig(({ command }) => {
     server: {
       port: Number(process.env.CLIENT_PORT) || 5173,
       strictPort: true,
+      // Allow the dev server to be reached through a Cloudflare tunnel
+      // (`gorilator setup → Tunnel (Cloudflare)`), which sends a Host header Vite
+      // would otherwise reject: quick tunnels are `*.trycloudflare.com`; a
+      // permanent tunnel's own hostnames arrive via VITE_ALLOWED_HOSTS.
+      allowedHosts: [
+        ".trycloudflare.com",
+        ...(process.env.VITE_ALLOWED_HOSTS ?? "")
+          .split(",")
+          .map((h) => h.trim())
+          .filter(Boolean),
+      ],
     },
   };
 });

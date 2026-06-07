@@ -1,5 +1,6 @@
-import { Scene, ShadowGenerator } from "@babylonjs/core";
-import { importModel, applyTransform, LoadedProp } from "../scene/props";
+import { Scene } from "@babylonjs/core";
+import { importModel, applyTransform, LoadedProp, bounds } from "../scene/props";
+import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 /**
  * Dev tool: upload a .glb, position/resize/rotate it live in the world, name it,
@@ -13,12 +14,13 @@ export class PropImporter {
   private open = false;
   private file: File | null = null;
   private prop: LoadedProp | null = null;
+  private previewShadow: ShadowHandle | null = null;
   private state = { size: 5, rotDeg: 0, x: 0, z: 0, name: "prop", concrete: true };
   private status: HTMLElement;
 
   constructor(
     private scene: Scene,
-    private shadow: ShadowGenerator,
+    private shadows: ShadowRuntime,
     private getPlayerPos: () => { x: number; z: number } | null,
   ) {
     const btn = document.createElement("button");
@@ -129,6 +131,7 @@ export class PropImporter {
         (this.panel.querySelector("#piName") as HTMLInputElement).value = this.state.name;
       }
       this.refresh();
+      this.previewShadow = this.createPreviewShadow();
       this.status.textContent = "drag the sliders, then Add to game";
     } catch (e) {
       this.status.textContent = "load failed: " + (e as Error).message;
@@ -138,9 +141,34 @@ export class PropImporter {
   private refresh() {
     if (!this.prop) return;
     applyTransform(this.prop, this.state.size, this.state.x, this.state.z, (this.state.rotDeg * Math.PI) / 180);
+    this.refreshPreviewShadow();
+  }
+
+  private createPreviewShadow(): ShadowHandle | null {
+    if (!this.prop) return null;
+    const b = bounds(this.prop.meshes);
+    return this.shadows.addProjected({
+      name: "shadow_prop_import_preview",
+      shape: "structure",
+      root: this.prop.root,
+      casters: this.prop.meshes,
+      x: this.prop.root.position.x,
+      z: this.prop.root.position.z,
+      width: Math.max(0.8, b.max.x - b.min.x),
+      depth: Math.max(0.8, b.max.z - b.min.z),
+      opacity: 0.42,
+    });
+  }
+
+  private refreshPreviewShadow() {
+    if (!this.prop || !this.previewShadow) return;
+    this.previewShadow.dispose();
+    this.previewShadow = this.createPreviewShadow();
   }
 
   private discard() {
+    this.previewShadow?.dispose();
+    this.previewShadow = null;
     this.prop?.dispose();
     this.prop = null;
     this.file = null;
@@ -172,6 +200,7 @@ export class PropImporter {
       this.status.textContent = `✓ saved "${out.name}" → it persists on reload${s.concrete ? " (collision active)" : ""}`;
       // keep the current preview in the world; it'll re-load from props.json next reload
       this.prop = null; // detach so Discard doesn't remove the now-permanent prop
+      this.previewShadow = null;
       this.file = null;
     } catch (e) {
       this.status.textContent = "save failed: " + (e as Error).message;

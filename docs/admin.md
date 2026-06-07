@@ -19,7 +19,7 @@ ADMIN_NPUBS=npub1abc…,npub1def…
 Manage it from the CLI (validates input, writes `.env`, restarts the daemon):
 
 ```
-# system install:  gorilator setup → Server settings → Manage admins (NIP-98)
+# system install:  gorilator setup → General settings → Manage admins (NIP-98)
 # from the repo:    gorilator setup → Manage admins (NIP-98)
    • Add admin        — paste an npub1… OR a NIP-05 identifier (name@domain,
                         resolved to an npub via /.well-known/nostr.json)

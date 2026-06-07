@@ -43,7 +43,8 @@ the section comments in the file:
 | `VITE_SERVER_URL` | Legacy `wss://…` URL baked into the client bundle for split-host deploys |
 | `NOSTR_NSEC` | the server's Nostr secret key — signs player saves **and** the server discovery event. **Keep it stable** across restarts, or saved progress + a stable server identity are lost. Ephemeral if unset (printed at boot). |
 | `MONITOR_USER` / `MONITOR_PASS` | HTTP Basic auth for the `/colyseus` monitor (open if unset) |
-| `SERVER_HOSTNAME` | public game hostname (informational + `PLAY_URL` fallback) |
+| `SERVER_HOSTNAME` | public game hostname (informational + `PLAY_URL` fallback). Set by `gorilator setup` — your domain for a permanent tunnel, or the ephemeral `…trycloudflare.com` host for a temporary one. |
+| `TUNNEL_MODE` | which Cloudflare tunnel `gorilator` manages: `temporary` (quick, no login — ephemeral `…trycloudflare.com` URL; the default) or `permanent` (your domain, requires `cloudflared login`). Set by `gorilator setup → Cloudflare`. |
 | `CLIENT_DIST` | single-service deploys: path to the built client to serve from the server |
 | `SERVER_NAME` | display name in the realm event + `/api/*` |
 | `PLAY_URL` | public URL players join at (defaults to `https://$SERVER_HOSTNAME`) |
@@ -51,8 +52,8 @@ the section comments in the file:
 | `UPDATE_CHECK_HOURS` | how often the daemon checks GitHub for a newer release (default `1`; `0` disables). Configure via `gorilator setup → Server settings`. See [publishing-cli.md](publishing-cli.md#auto-update-check). |
 | `UPDATE_REPO` | `owner/repo` the auto-update check queries (default `agustinkassis/gorilator-rpg`) |
 | `GITHUB_TOKEN` | optional — raises the GitHub API rate limit for the auto-update check |
-| `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → Server settings → Manage admins`. See [admin.md](admin.md). |
-| `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer`. Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
+| `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → General settings → Manage admins`. See [admin.md](admin.md). |
+| `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer` (enabling it runs a full `pnpm install` first, so a prebuilt/slim install gains the build-only deps the dev server needs). Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
 
 ## 3. Runtime content files (live-reloaded JSON)
 

@@ -1,11 +1,11 @@
 import {
   Scene,
-  ShadowGenerator,
   AbstractMesh,
   TransformNode,
   Nullable,
 } from "@babylonjs/core";
-import { PropDef, LoadedProp, importModel, applyTransform } from "../scene/props";
+import { PropDef, LoadedProp, importModel, applyTransform, bounds } from "../scene/props";
+import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 /** A prop that has been placed into the world and registered for editing. `def`
  *  is the live, mutable manifest entry the inspector edits; `loaded` is its glTF
@@ -14,6 +14,7 @@ export interface PlacedProp {
   id: string;
   def: PropDef;
   loaded: LoadedProp;
+  shadow: ShadowHandle;
 }
 
 /**
@@ -29,7 +30,7 @@ export class PropManager {
 
   constructor(
     private scene: Scene,
-    private shadow: ShadowGenerator,
+    private shadows: ShadowRuntime,
   ) {}
 
   /** Fetch the manifest and place every persisted prop (replaces `loadProps`). */
@@ -56,18 +57,27 @@ export class PropManager {
     if (existing) return existing;
     const loaded = await importModel(this.scene, def.model);
     applyTransform(loaded, def.scale, def.x, def.z, def.rotationY || 0);
-    // Cast + receive real shadows exactly like characters and trees: each mesh
-    // throws its true silhouette into the sun's shadow map (no box proxy), and
-    // other objects' shadows fall on it. Shadows track the live transform, so
-    // moving/scaling the prop updates them automatically.
-    for (const m of loaded.meshes) {
-      this.shadow.addShadowCaster(m);
-      m.receiveShadows = true;
-    }
-    const placed: PlacedProp = { id, def: { ...def, id }, loaded };
+    this.shadows.registerMeshes(loaded.meshes, { cast: false, receive: true });
+    const shadow = this.createShadow(loaded, def, id);
+    const placed: PlacedProp = { id, def: { ...def, id }, loaded, shadow };
     this.tag(placed);
     this.props.set(id, placed);
     return placed;
+  }
+
+  private createShadow(loaded: LoadedProp, def: PropDef, id: string): ShadowHandle {
+    const b = bounds(loaded.meshes);
+    return this.shadows.addWorldObject({
+      name: `shadow_prop_${id}`,
+      shape: "structure",
+      root: loaded.root,
+      casters: loaded.meshes,
+      x: loaded.root.position.x,
+      z: loaded.root.position.z,
+      width: Math.max(0.8, def.collisionRadius ? def.collisionRadius * 2 : b.max.x - b.min.x),
+      depth: Math.max(0.8, def.collisionRadius ? def.collisionRadius * 2 : b.max.z - b.min.z),
+      opacity: def.collisionRadius && def.collisionRadius > 0 ? 0.52 : 0.42,
+    });
   }
 
   /** Tag the holder + meshes with the prop id so selection can resolve them, and
@@ -81,20 +91,21 @@ export class PropManager {
     }
   }
 
-  /** Re-apply the (mutated) def's transform. Real-mesh shadows follow the live
-   *  transform automatically, so there's nothing else to refresh.
-   *  Call after editing def.scale / x / z / rotationY. */
+  /** Re-apply the (mutated) def's transform and refresh its projected shadow. */
   applyDef(id: string) {
     const p = this.props.get(id);
     if (!p) return;
     applyTransform(p.loaded, p.def.scale, p.def.x, p.def.z, p.def.rotationY || 0);
+    p.shadow.dispose();
+    p.shadow = this.createShadow(p.loaded, p.def, id);
+    this.shadows.refreshStaticShadows();
   }
 
-  /** Drop a prop's meshes from the shadow map and dispose them; forget it. */
+  /** Dispose a prop and its projected shadow; forget it. */
   remove(id: string) {
     const p = this.props.get(id);
     if (!p) return;
-    for (const m of p.loaded.meshes) this.shadow.removeShadowCaster(m);
+    p.shadow.dispose();
     p.loaded.dispose();
     this.props.delete(id);
   }

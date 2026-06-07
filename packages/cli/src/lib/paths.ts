@@ -33,6 +33,18 @@ export function cloudflaredDir(): string {
   return isMac ? join(homedir(), ".cloudflared") : "/etc/cloudflared";
 }
 
+// Quick (temporary) tunnel — a dedicated boot service that runs
+// `cloudflared tunnel --url http://localhost:PORT` (ephemeral *.trycloudflare.com,
+// no Cloudflare account). Kept separate from the named-tunnel `cloudflared`
+// service so the two never collide.
+export const QUICK_TUNNEL_SYSTEMD_UNIT = "gorilator-tunnel.service";
+export const QUICK_TUNNEL_SYSTEMD_UNIT_PATH = `/etc/systemd/system/${QUICK_TUNNEL_SYSTEMD_UNIT}`;
+export const QUICK_TUNNEL_LAUNCHD_LABEL = "com.gorilator.tunnel";
+export const quickTunnelPlistPath = (): string =>
+  join(homedir(), "Library", "LaunchAgents", `${QUICK_TUNNEL_LAUNCHD_LABEL}.plist`);
+/** Where the quick tunnel's stdout/stderr (incl. the trycloudflare URL) lands. */
+export const quickTunnelLog = (): string => join(cloudflaredDir(), "quick-tunnel.log");
+
 /** Fixed, platform-specific location for the install record (so the global
  *  `gorilator` command can find the install on later invocations). */
 export function configPath(): string {

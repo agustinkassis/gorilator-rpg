@@ -2,8 +2,8 @@
   {
     "name": "Meshy_AI_Timberstone_Tow",
     "model": "/models/meshy_ai_timberstone_tow_1780332210503.glb",
-    "x": -12,
-    "z": -14.2,
+    "x": -11.7,
+    "z": -14.1,
     "scale": 5,
     "rotationY": 0,
     "collisionRadius": 2.5,
