@@ -1,6 +1,6 @@
 // `gorilator start|stop|restart|status|logs` — drive the OS service.
 import { loadConfig } from "../lib/config.js";
-import type { RuntimeContext } from "../lib/context.js";
+import { describeTarget, gitWorktreeName, type RuntimeContext } from "../lib/context.js";
 import { probeHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
@@ -115,6 +115,9 @@ export async function statusCmd(ctx?: RuntimeContext, opts?: Options): Promise<v
     const healthy = await probeHealth(info.port);
     printField("Files", cfg.appDir);
     printField("Ref", cfg.ref);
+    printField("Environment", info.dev ? "development (dev server)" : "production");
+    const wt = ctx ? describeTarget(ctx).worktree : gitWorktreeName(cfg.appDir);
+    if (wt) printField("Worktree", wt);
     process.stdout.write("\n");
     printSection("Local URLs");
     printPorts(info, healthy);

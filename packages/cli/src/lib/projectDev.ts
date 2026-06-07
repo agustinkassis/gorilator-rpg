@@ -11,7 +11,13 @@ import {
 import { get } from "node:http";
 import { dirname, join } from "node:path";
 import { ensureNode, ensurePnpm } from "./build.js";
-import { loadProjectConfig, readProjectEnv, type ProjectDevState, type RuntimeContext } from "./context.js";
+import {
+  gitWorktreeName,
+  loadProjectConfig,
+  readProjectEnv,
+  type ProjectDevState,
+  type RuntimeContext,
+} from "./context.js";
 import { probeHealth } from "./health.js";
 import * as log from "./log.js";
 import type { Options } from "./options.js";
@@ -132,6 +138,9 @@ export async function printProjectStatus(ctx: RuntimeContext, opts: Options): Pr
   printField("State", label);
   printField("Files", ctx.appDir);
   printField("Ref", cfg.ref);
+  const wt = gitWorktreeName(ctx.appDir);
+  if (wt) printField("Worktree", wt);
+  printField("Environment", "development (dev server)");
   if (state) {
     const info = readEnvInfo(ctx.appDir, state.serverPort, state.clientPort);
     printField("PID", String(state.pid));

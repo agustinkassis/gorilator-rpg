@@ -182,7 +182,9 @@ async function developerMenu(opts: Options): Promise<void> {
   }
 }
 
-function toggleDevMode(opts: Options, on: boolean): void {
+/** Switch the system install between the production build and the development
+ *  environment (live dev server). Exported so the Main Menu can offer it too. */
+export function toggleDevMode(opts: Options, on: boolean): void {
   const ctx = requireInstall(opts);
   if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
     return;

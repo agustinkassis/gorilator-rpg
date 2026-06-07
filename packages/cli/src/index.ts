@@ -18,7 +18,7 @@ import { install } from "./commands/install.js";
 import { remoteCmd } from "./commands/remote.js";
 import { serve } from "./commands/serve.js";
 import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/service.js";
-import { runSetup, tunnelCmd } from "./commands/setup.js";
+import { runSetup, toggleDevMode, tunnelCmd } from "./commands/setup.js";
 import { uninstall } from "./commands/uninstall.js";
 import { update } from "./commands/update.js";
 import { activeTunnelMode, quickTunnelUrl } from "./lib/cloudflare.js";
@@ -90,8 +90,9 @@ function printContextBanner(ctx: RuntimeContext): void {
   const head = t.remote
     ? `${mode} ${log.dim("·")} ${log.bold(t.remote)}${t.ref ? log.dim(`@${t.ref}`) : ""}`
     : mode;
+  const wt = t.worktree ? ` ${log.dim("·")} ${log.blue(`worktree ${t.worktree}`)}` : "";
   process.stdout.write(
-    `${log.dim(`🦍 gorilator ${VERSION}`)} ${log.dim("·")} ${head}\n` +
+    `${log.dim(`🦍 gorilator ${VERSION}`)} ${log.dim("·")} ${head}${wt}\n` +
       `  ${log.dim(t.appDir)}\n\n`,
   );
 }
@@ -513,7 +514,16 @@ async function runMainMenu(ctx: RuntimeContext, opts: MenuOpts): Promise<void> {
       { key: "update", label: "Update", hint: gate, disabled: !available, run: async () => { await update(ctx, opts); pause(); } },
       { key: "install", label: "Install ▸", hint: "globally or current directory", run: () => runInstallMenu(opts) },
     );
+    // Switch the system install's environment (production build ⇄ live dev
+    // server). A project checkout always runs the dev server, so no switch there.
     if (!isProject && serviceInstalled()) {
+      const dev = readEnvInfo(ctx.appDir, 2567).dev === true;
+      actions.push({
+        key: "environment",
+        label: dev ? "Switch to production environment" : "Switch to development environment",
+        hint: dev ? "currently development" : "currently production",
+        run: () => toggleDevMode(opts, !dev),
+      });
       actions.push({ key: "uninstall", label: "Uninstall", run: async () => { await uninstall(opts); pause(); } });
     }
     actions.push({ key: "exit", label: "Exit", run: () => {} });
@@ -577,7 +587,8 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<{ title: string; r
     const slug = t.remote
       ? `${log.bold(t.remote)}${t.ref ? log.dim(`@${t.ref}`) : ""}`
       : log.dim(t.appDir);
-    lines.push(`  ${log.dim("Context:")} ${log.green("project")} ${log.dim("·")} ${slug}`);
+    const wt = t.worktree ? ` ${log.dim("·")} ${log.blue(`worktree ${t.worktree}`)}` : "";
+    lines.push(`  ${log.dim("Context:")} ${log.green("project")} ${log.dim("·")} ${slug}${wt}`);
     lines.push(`           ${log.dim(t.appDir)}`);
   } else {
     lines.push(`  ${log.dim("Context:")} ${log.dim(`no gorilator repo · ${process.cwd()}`)}`);
@@ -593,6 +604,7 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<{ title: string; r
     running = ps.active;
     const info = readEnvInfo(ctx.appDir, ps.state?.serverPort ?? 2567, ps.state?.clientPort);
     const localPort = info.clientPort ?? info.port;
+    lines.push(`  ${log.dim("Env:")}     ${log.bold("development")} ${log.dim("(dev server)")}`);
     lines.push(
       `  ${log.dim("Dev:")}     ${statusDot(running)}${running ? log.dim(` · http://localhost:${localPort}`) : ""}`,
     );
@@ -603,6 +615,9 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<{ title: string; r
   } else {
     running = statusService().active;
     const info = readEnvInfo(cfg?.appDir ?? ctx.appDir, cfg?.port ?? 2567, cfg?.clientPort);
+    if (cfg) {
+      lines.push(`  ${log.dim("Env:")}     ${log.bold(info.dev ? "development" : "production")}`);
+    }
     lines.push(
       `  ${log.dim("Server:")}  ${statusDot(running)}${running ? log.dim(` · http://localhost:${info.port}`) : ""}`,
     );

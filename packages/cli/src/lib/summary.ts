@@ -14,6 +14,7 @@ export interface SummaryInfo {
   clientHost?: string; // legacy public play.* (from old split-host setups)
   serverHost?: string; // public game host (or legacy api.*)
   tunnelMode?: string; // "temporary" | "permanent" (from TUNNEL_MODE)
+  dev?: boolean; // GORILATOR_DEV=1 → development environment (live dev server)
 }
 
 export interface PackageVersion {
@@ -99,6 +100,7 @@ export function readEnvInfo(
     clientHost: e.CLIENT_HOSTNAME,
     serverHost: e.SERVER_HOSTNAME,
     tunnelMode: e.TUNNEL_MODE,
+    dev: e.GORILATOR_DEV === "1",
   };
 }
 
