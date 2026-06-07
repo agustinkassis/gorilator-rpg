@@ -12,6 +12,7 @@ import { loadConfig, updateConfig } from "../lib/config.js";
 import type { RuntimeContext } from "../lib/context.js";
 import { latestReleaseTag, repoSlug } from "../lib/dist.js";
 import { generateNsec, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
+import { refreshGlobalCli } from "../lib/globalCommand.js";
 import { waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
@@ -233,6 +234,9 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   // The daemon was left running for a no-restart update (e.g. client-only); the
   // freshly-swapped static assets are served without downtime — confirm it's up.
   if (!restart) healthy = await waitForHealth(cfg.port);
+
+  // Keep the typed `gorilator` command in sync with the updated checkout.
+  refreshGlobalCli(cfg.appDir);
 
   // 4. Success summary.
   const msg = restart
