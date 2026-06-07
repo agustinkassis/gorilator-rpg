@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { loadConfig, type InstallConfig } from "./config.js";
 import { parseEnv } from "./env.js";
 import type { Options } from "./options.js";
@@ -80,6 +80,9 @@ export interface TargetSummary {
   ref: string | null;
   /** `owner/repo` slug of the checkout's first remote, if any. */
   remote: string | null;
+  /** Name of the linked git worktree the checkout lives in, or null when it's
+   *  the main worktree / not a worktree. */
+  worktree: string | null;
   /** Whether the targeted install exists (always true for project mode; for
    *  system mode, whether an install record is on disk). */
   installed: boolean;
@@ -98,8 +101,18 @@ export function describeTarget(ctx: RuntimeContext): TargetSummary {
     appDir: ctx.appDir,
     ref: currentGitRef(ctx.appDir),
     remote,
+    worktree: gitWorktreeName(ctx.appDir),
     installed: ctx.kind === "project" ? true : loadConfig() !== null,
   };
+}
+
+/** When `root` is a linked git worktree (its git dir lives under
+ *  `.git/worktrees/…`), return a friendly name (the worktree directory's
+ *  basename); otherwise null (the main worktree, or not a repo). */
+export function gitWorktreeName(root: string): string | null {
+  const gitDir = captureGit(root, ["rev-parse", "--git-dir"]);
+  if (!gitDir || !/[/\\]worktrees[/\\]/.test(gitDir)) return null;
+  return basename(resolve(root));
 }
 
 export function loadProjectConfig(ctx: RuntimeContext, opts: Options): InstallConfig {

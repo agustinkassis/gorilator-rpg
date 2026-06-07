@@ -62,14 +62,18 @@ const CLOUDFLARE_ENV_KEYS = [
   "GORILATOR_DOMAIN",
 ];
 
-export async function runSetup(opts: Options, ctx?: RuntimeContext): Promise<void> {
+export async function runSetup(
+  opts: Options,
+  ctx?: RuntimeContext,
+  { fromMenu = false }: { fromMenu?: boolean } = {},
+): Promise<void> {
   if (ctx?.kind === "project") {
-    await runProjectSetup(opts, ctx);
+    await runProjectSetup(opts, ctx, { fromMenu });
     return;
   }
   const envDriven = CLOUDFLARE_ENV_KEYS.some((k) => Boolean(process.env[k]));
   if (canPrompt() && !opts.yes && !envDriven) {
-    await runSetupMenu(opts);
+    await runSetupMenu(opts, { fromMenu });
     return;
   }
   await configureCloudflare(opts, { pauseAtEnd: false });
@@ -81,7 +85,7 @@ export async function setupCloudflare(opts: Options): Promise<void> {
   await configureCloudflare(opts, { pauseAtEnd: false });
 }
 
-async function runSetupMenu(opts: Options): Promise<void> {
+async function runSetupMenu(opts: Options, { fromMenu = false }: { fromMenu?: boolean } = {}): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
     const info = readEnvInfo(ctx.appDir, ctx.cfg.port, ctx.cfg.clientPort);
@@ -111,7 +115,7 @@ async function runSetupMenu(opts: Options): Promise<void> {
         hint: ctx.env.GORILATOR_DEV === "1" ? "dev mode ON" : "dev mode off",
       },
       { label: "Show current settings" },
-      { label: "Exit" },
+      { label: fromMenu ? "Back" : "Exit" },
     ]);
 
     switch (choice) {
@@ -178,7 +182,9 @@ async function developerMenu(opts: Options): Promise<void> {
   }
 }
 
-function toggleDevMode(opts: Options, on: boolean): void {
+/** Switch the system install between the production build and the development
+ *  environment (live dev server). Exported so the Main Menu can offer it too. */
+export function toggleDevMode(opts: Options, on: boolean): void {
   const ctx = requireInstall(opts);
   if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
     return;
