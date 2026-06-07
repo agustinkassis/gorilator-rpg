@@ -41,7 +41,7 @@ import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
 import { waitForHealth } from "../lib/health.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
-import { restartService, startService } from "../lib/service.js";
+import { restartService, startService, statusService } from "../lib/service.js";
 import { printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
 import { runProjectSetup } from "./projectSetup.js";
 
@@ -85,7 +85,7 @@ async function runSetupMenu(opts: Options): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
     const info = readEnvInfo(ctx.appDir, ctx.cfg.port, ctx.cfg.clientPort);
-    const choice = await selectMenu("Gorilator setup", [
+    const choice = await selectMenu(`Gorilator setup\n  ${serverStatusText(info.port)}`, [
       {
         label: "General settings",
         hint: "display name, NSEC, admins",
@@ -374,15 +374,20 @@ function generateServerNsec(opts: Options): void {
 async function cloudflareMenu(opts: Options): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
-    const choice = await selectMenu(`Tunnel (Cloudflare)\n  ${tunnelStatusLine(ctx.env)}`, [
-      { label: "Set up temporary tunnel", hint: "quick, no login — …trycloudflare.com URL" },
-      { label: "Set up permanent tunnel", hint: "your domain — requires a Cloudflare login" },
-      { label: "Remove Cloudflare settings", hint: "local service/config only" },
-      { label: "Tunnel status" },
-      { label: "Authorize Cloudflare login", hint: "for permanent tunnels" },
-      { label: "Restart tunnel" },
-      { label: "Back" },
-    ]);
+    const running = serverRunning();
+    const gate = running ? undefined : "start the server first";
+    const choice = await selectMenu(
+      `Tunnel (Cloudflare)\n  ${serverStatusText(Number(ctx.env.GAME_SERVER_PORT) || ctx.cfg.port)}\n  ${tunnelStatusLine(ctx.env)}`,
+      [
+        { label: "Set up temporary tunnel", hint: gate ?? "quick, no login — …trycloudflare.com URL", disabled: !running },
+        { label: "Set up permanent tunnel", hint: gate ?? "your domain — requires a Cloudflare login", disabled: !running },
+        { label: "Remove Cloudflare settings", hint: "local service/config only" },
+        { label: "Tunnel status" },
+        { label: "Authorize Cloudflare login", hint: "for permanent tunnels" },
+        { label: "Restart tunnel" },
+        { label: "Back" },
+      ],
+    );
 
     if (choice === 0) await configureCloudflare(opts, { mode: "temporary" });
     else if (choice === 1) await configureCloudflare(opts, { mode: "permanent" });
@@ -398,6 +403,22 @@ async function cloudflareMenu(opts: Options): Promise<void> {
       pause();
     } else return;
   }
+}
+
+/** Whether the daemon service is currently active (best-effort). */
+function serverRunning(): boolean {
+  try {
+    return statusService().active;
+  } catch {
+    return false;
+  }
+}
+
+/** A colored "server running/stopped" line for the menu titles. */
+function serverStatusText(port: number): string {
+  return serverRunning()
+    ? `${log.green("● server running")} ${log.dim(`· :${port}`)}`
+    : log.yellow("○ server stopped");
 }
 
 /** A one-line description of the active tunnel + its live URL for the menu. */

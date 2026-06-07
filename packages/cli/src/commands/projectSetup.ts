@@ -20,7 +20,7 @@ import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
 import type { Options } from "../lib/options.js";
 import { ask, canPrompt, confirm, promptDefault } from "../lib/proc.js";
-import { projectStatus, restartProjectDev, startProjectDev } from "../lib/projectDev.js";
+import { projectStatus, restartProjectDev } from "../lib/projectDev.js";
 import {
   adminsHint,
   adminsMenu,
@@ -44,7 +44,11 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
   for (;;) {
     const cfg = loadProjectConfig(ctx, opts);
     const env = readProjectEnv(ctx);
-    const choice = await selectMenu(`Gorilator project setup\n${ctx.appDir}`, [
+    const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
+    const running = (await projectStatus(ctx)).active;
+    const choice = await selectMenu(
+      `Gorilator project setup\n${ctx.appDir}\n  ${devStatusText(running, serverPort)}`,
+      [
       { label: "General settings", hint: "display name, NSEC, admins" },
       {
         label: "Server and client ports",
@@ -86,15 +90,20 @@ function tunnelHint(ctx: RuntimeContext, env: EnvMap): string {
  *  via VITE_SERVER_URL. */
 async function cloudflareDevMenu(opts: Options, ctx: RuntimeContext): Promise<void> {
   for (;;) {
-    const running = devTunnelRunning(ctx);
-    const state = readDevTunnelState(ctx);
+    const cfg = loadProjectConfig(ctx, opts);
     const env = readProjectEnv(ctx);
-    const url = running ? state?.clientUrl : env.VITE_ALLOWED_HOSTS ? `https://${env.VITE_ALLOWED_HOSTS.split(",")[0]}` : "";
-    const title = `Tunnel (Cloudflare)\n${tunnelStatusBlock(ctx, env)}`;
+    const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
+    const tunnelUp = devTunnelRunning(ctx);
+    const serverUp = (await projectStatus(ctx)).active;
+    const state = readDevTunnelState(ctx);
+    const url = tunnelUp ? state?.clientUrl : env.VITE_ALLOWED_HOSTS ? `https://${env.VITE_ALLOWED_HOSTS.split(",")[0]}` : "";
+    // Tunnels only make sense once the dev server (with its ports) is up.
+    const gate = serverUp ? undefined : "start the dev server first";
+    const title = `Tunnel (Cloudflare)\n  ${devStatusText(serverUp, serverPort)}\n${tunnelStatusBlock(ctx, env)}`;
     const choice = await selectMenu(title, [
-      { label: "Temporary tunnel (share dev)", hint: "quick, no login — …trycloudflare.com URL" },
-      { label: "Permanent tunnel", hint: "your domain — requires a Cloudflare login" },
-      { label: "Stop / remove tunnel", hint: running || env.VITE_ALLOWED_HOSTS ? "tear it down" : "nothing active" },
+      { label: "Temporary tunnel (share dev)", hint: gate ?? "quick, no login — …trycloudflare.com URL", disabled: !serverUp },
+      { label: "Permanent tunnel", hint: gate ?? "your domain — requires a Cloudflare login", disabled: !serverUp },
+      { label: "Stop / remove tunnel", hint: tunnelUp || env.VITE_ALLOWED_HOSTS ? "tear it down" : "nothing active" },
       { label: "Show URL", hint: url || "—" },
       { label: "Back" },
     ]);
@@ -107,6 +116,13 @@ async function cloudflareDevMenu(opts: Options, ctx: RuntimeContext): Promise<vo
       pause();
     } else return;
   }
+}
+
+/** A colored "dev server running/stopped" line for the project menu titles. */
+function devStatusText(running: boolean, port: number): string {
+  return running
+    ? `${log.green("● dev server running")} ${log.dim(`· :${port}`)}`
+    : log.yellow("○ dev server stopped");
 }
 
 /** Permanent named tunnel for a dev checkout: routes a game host → the Vite
@@ -182,11 +198,12 @@ async function startSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
   const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
   const clientPort = Number(env.CLIENT_PORT) || cfg.clientPort || DEFAULT_CLIENT_PORT;
 
-  // The tunnels are useless until the dev server is actually serving — start it
-  // first if it isn't already running.
+  // The Tunnel menu only enables this once the dev server is up, but guard
+  // anyway in case it's invoked directly.
   if (!(await projectStatus(ctx)).active) {
-    log.info("Dev server isn't running — starting it first…");
-    await startProjectDev(ctx, opts);
+    log.warn("Dev server isn't running — start it first so the tunnel has something to serve.");
+    pause();
+    return;
   }
 
   log.info(`Starting temporary Cloudflare tunnels (client :${clientPort}, server :${serverPort})…`);
