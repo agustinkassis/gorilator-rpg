@@ -18,11 +18,11 @@ import { fileURLToPath } from "url";
 
 const configDir = dirname(fileURLToPath(import.meta.url));
 
-/** The app version shown in-game (the tiny footer tag), read from this package's
- *  package.json. Falls back to 0.0.0 if it can't be read. */
+/** The app version shown in-game (the tiny footer tag), read from the workspace
+ *  root package.json. Falls back to 0.0.0 if it can't be read. */
 function appVersion(): string {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(configDir, "package.json"), "utf8")) as {
+    const pkg = JSON.parse(readFileSync(resolve(configDir, "..", "..", "package.json"), "utf8")) as {
       version?: string;
     };
     return pkg.version ?? "0.0.0";
