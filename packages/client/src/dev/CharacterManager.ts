@@ -1,6 +1,8 @@
-import { Scene, ShadowGenerator, AbstractMesh, TransformNode, Nullable } from "@babylonjs/core";
+import { Scene, AbstractMesh, TransformNode, Nullable } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
 import { assembleCharacter, CharacterDef, AssembledCharacter } from "../entities/characterDef";
+import { bounds } from "../scene/props";
+import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 export interface Placement {
   id: string;
@@ -16,6 +18,7 @@ export interface PlacedCharacter {
   placement: Placement;
   def: CharacterDef;
   built: AssembledCharacter;
+  shadow: ShadowHandle;
 }
 
 /**
@@ -31,7 +34,7 @@ export class CharacterManager {
 
   constructor(
     private scene: Scene,
-    private shadow: ShadowGenerator,
+    private shadows: ShadowRuntime,
   ) {}
 
   /** Fetch the def library + placements and instantiate every placed character. */
@@ -77,10 +80,30 @@ export class CharacterManager {
     for (const m of built.meshes) {
       m.metadata = md;
       m.isPickable = this.pickable;
-      this.shadow.addShadowCaster(m); // cast + receive real shadows like every character
     }
+    this.shadows.registerMeshes(built.meshes, { cast: false, receive: true });
+    const shadow = this.createShadow(placement.id, built);
     built.controller.play(AnimState.IDLE); // idle loops on the scene clock
-    this.chars.set(placement.id, { placement, def, built });
+    this.chars.set(placement.id, { placement, def, built, shadow });
+  }
+
+  private createShadow(id: string, built: AssembledCharacter): ShadowHandle {
+    const b = bounds(built.meshes);
+    const width = Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
+    const shadowSize = Number.isFinite(width) && width > 0 ? width : 1.8;
+    const opts = {
+      name: `shadow_character_${id}`,
+      shape: "character",
+      x: built.root.position.x,
+      z: built.root.position.z,
+      height: built.root.position.y,
+      width: shadowSize,
+      depth: shadowSize,
+      opacity: 0.34,
+    } as const;
+    return this.shadows.mode === "legacy3d"
+      ? this.shadows.addProjected({ ...opts, root: built.root, casters: built.meshes })
+      : this.shadows.add(opts);
   }
 
   /** Relocate a placed character (drag/inspector) + persist. */
@@ -91,6 +114,7 @@ export class CharacterManager {
     c.placement.z = z;
     c.built.root.position.x = x;
     c.built.root.position.z = z;
+    c.shadow.setPosition(x, z, c.built.root.position.y);
   }
 
   setRotation(id: string, rotationY: number) {
@@ -98,6 +122,8 @@ export class CharacterManager {
     if (!c) return;
     c.placement.rotationY = rotationY;
     c.built.root.rotation.y = (c.def.yaw || 0) + rotationY;
+    c.shadow.dispose();
+    c.shadow = this.createShadow(id, c.built);
   }
 
   setScale(id: string, scale: number) {
@@ -120,7 +146,7 @@ export class CharacterManager {
   async remove(id: string): Promise<void> {
     const c = this.chars.get(id);
     if (!c) return;
-    for (const m of c.built.meshes) this.shadow.removeShadowCaster(m);
+    c.shadow.dispose();
     c.built.dispose();
     this.chars.delete(id);
     await fetch("/__char/placement-delete", {

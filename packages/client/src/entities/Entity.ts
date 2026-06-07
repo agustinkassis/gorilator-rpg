@@ -37,6 +37,7 @@ const SELECT_BLINK_MS = 0.1; // overlay toggles every this long → "flash, flas
 const DMG_BLINK_MS = 0.08; // local player's dark-red damage flash toggles this fast
 const GHOST_FLOAT = 0.845; // units a paused "ghost" player floats off the floor (0.65 + 30%)
 const GHOST_VISIBILITY = 0.7; // translucency of a ghosting player
+const SHADOW_SHADE = new Color3(0, 0, 0);
 const GHOST_BOB_AMPL = 0.08; // how far the ghost drifts up/down around its float height
 const GHOST_BOB_HZ = 0.6; // gentle bob cycles per second
 const GHOST_FLY_TILT = 0.6; // radians the ghost pitches forward when flying (~34°)
@@ -94,6 +95,8 @@ export class Entity {
   private selectFlashT = 0; // seconds left in the attack-target white flash
   private overlayOn = false; // current overlay on/off (HIT flash, damage flash, or select flash)
   private overlayColor: Color3 = HIT_FLASH; // current overlay tint
+  private overlayAlpha = 0;
+  private shadowShade = 0;
   private ghost = false; // Dev Mode: translucent + floating (paused free-roam)
   private animationTestOverride = false; // Dev tool: hold a manually-triggered clip until cleared
 
@@ -173,6 +176,14 @@ export class Entity {
   /** Briefly flash this character white — used when it's picked as an attack target. */
   flashSelect() {
     this.selectFlashT = SELECT_FLASH_MS;
+  }
+
+  /** Cheap 2D world-shadow darkening, sampled from projected ground shadows. */
+  setShadowShade(amount: number) {
+    const next = Math.max(0, Math.min(0.34, amount));
+    if (Math.abs(next - this.shadowShade) < 0.01) return;
+    this.shadowShade = next;
+    this.refreshOverlay();
   }
 
   /** Dev Mode transform scale. Gameplay effects like Berserker layer on top. */
@@ -367,30 +378,11 @@ export class Entity {
       }
     }
 
-    // Mesh overlay flash. While taking a HIT: EVERY character (the local player,
-    // other players, and enemies alike) flashes intermittent DARK RED ("ow").
-    // Berserker: vivid green shimmer (lower priority than HIT damage flash).
-    // Otherwise a brief WHITE blink when freshly picked as an attack target.
+    // Decorative mesh overlay. High-priority action flashes win; otherwise the
+    // 2D sampled world shadow can darken the body when it stands inside a tree or
+    // structure shadow footprint.
     if (this.selectFlashT > 0) this.selectFlashT -= dt;
-    const selElapsed = SELECT_FLASH_MS - this.selectFlashT;
-    const selectBlink =
-      this.selectFlashT > 0 && Math.floor(selElapsed / SELECT_BLINK_MS) % 2 === 0;
-    let wantOn = false;
-    let wantColor = HIT_FLASH;
-    if (this.state === AnimState.HIT) {
-      wantColor = DAMAGE_FLASH;
-      wantOn = Math.floor(this.stateTime / DMG_BLINK_MS) % 2 === 0; // intermittent dark red
-    } else if (this.berserkerActive) {
-      wantColor = BERSERK_FLASH;
-      wantOn = Math.sin(this.stateTime * 8) > 0; // ~4 Hz sine shimmer → green glow
-    } else if (selectBlink) {
-      wantOn = true;
-    }
-    if (wantOn !== this.overlayOn || wantColor !== this.overlayColor) {
-      this.spawned.flashHit(wantOn, wantColor);
-      this.overlayOn = wantOn;
-      this.overlayColor = wantColor;
-    }
+    this.refreshOverlay();
 
     // facing interpolates toward the server's rotY; the clip yaw correction blends
     // in at ~the animation cross-fade rate so attack/throw don't snap-turn.
@@ -434,8 +426,7 @@ export class Entity {
         this.stateTime = 0;
         this.anim.play(rs.nstate);
         this.shownState = rs.nstate; // keep refreshAnim() in sync after the teleport
-        this.spawned.flashHit(false);
-        this.overlayOn = false; // keep the centralized overlay state in sync
+        this.applyOverlay(HIT_FLASH, 0);
         this.selectFlashT = 0;
         this.onRespawn?.(rs.nx, rs.nz);
         this.setVisibility(0);
@@ -455,6 +446,46 @@ export class Entity {
   private setVisibility(v: number) {
     this.bodyAlpha = v;
     for (const m of this.spawned.meshes) m.visibility = v;
+  }
+
+  private refreshOverlay() {
+    const selElapsed = SELECT_FLASH_MS - this.selectFlashT;
+    const selectBlink =
+      this.selectFlashT > 0 && Math.floor(selElapsed / SELECT_BLINK_MS) % 2 === 0;
+    let wantColor = HIT_FLASH;
+    let wantAlpha = 0;
+    if (this.state === AnimState.HIT) {
+      wantColor = DAMAGE_FLASH;
+      wantAlpha = Math.floor(this.stateTime / DMG_BLINK_MS) % 2 === 0 ? 0.6 : 0;
+    } else if (this.berserkerActive) {
+      wantColor = BERSERK_FLASH;
+      wantAlpha = Math.sin(this.stateTime * 8) > 0 ? 0.6 : 0;
+    } else if (selectBlink) {
+      wantAlpha = 0.6;
+    } else if (this.shadowShade > 0.01 && this.bodyAlpha > 0.01) {
+      wantColor = SHADOW_SHADE;
+      wantAlpha = this.shadowShade * this.bodyAlpha;
+    }
+    this.applyOverlay(wantColor, wantAlpha);
+  }
+
+  private applyOverlay(color: Color3, alpha: number) {
+    const on = alpha > 0.01;
+    if (
+      on === this.overlayOn &&
+      color === this.overlayColor &&
+      Math.abs(alpha - this.overlayAlpha) < 0.01
+    ) {
+      return;
+    }
+    for (const m of this.spawned.meshes) {
+      m.renderOverlay = on;
+      m.overlayColor = color;
+      m.overlayAlpha = on ? alpha : 0;
+    }
+    this.overlayOn = on;
+    this.overlayColor = color;
+    this.overlayAlpha = alpha;
   }
 
   /** Current body opacity (0..1) — the HUD fades the nameplate/HP bar to match,

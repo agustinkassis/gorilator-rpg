@@ -1,15 +1,13 @@
 import {
   Scene,
   SceneLoader,
-  ShadowGenerator,
   PBRMaterial,
   AbstractMesh,
   TransformNode,
   Vector3,
-  MeshBuilder,
-  Mesh,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
+import type { ShadowHandle, ShadowRuntime } from "./contactShadows";
 
 export interface PropDef {
   id?: string; // stable handle for editing/deleting (assigned by the importer endpoint)
@@ -142,24 +140,24 @@ export function applyTransform(
   p.root.computeWorldMatrix(true);
 }
 
-/** Invisible box that casts the prop's shadow cheaply (the real mesh may be heavy).
- *  Returns the proxy so callers (the editor) can reposition/dispose it with the prop. */
-export function addShadowProxy(scene: Scene, shadow: ShadowGenerator, p: LoadedProp, name: string): Mesh {
+/** Soft projected prop shadow. Returns the handle so callers can reposition/dispose it. */
+export function addPropContactShadow(shadows: ShadowRuntime, p: LoadedProp, name: string): ShadowHandle {
   const b = bounds(p.meshes);
-  const proxy = MeshBuilder.CreateBox(
-    `propShadow_${name}`,
-    { width: Math.max(0.1, b.max.x - b.min.x), height: Math.max(0.1, b.max.y - b.min.y), depth: Math.max(0.1, b.max.z - b.min.z) },
-    scene,
-  );
-  proxy.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
-  proxy.isVisible = false;
-  proxy.isPickable = false;
-  shadow.addShadowCaster(proxy);
-  return proxy;
+  return shadows.addWorldObject({
+    name: `propShadow_${name}`,
+    shape: "structure",
+    root: p.root,
+    casters: p.meshes,
+    x: p.root.position.x,
+    z: p.root.position.z,
+    width: Math.max(0.8, b.max.x - b.min.x),
+    depth: Math.max(0.8, b.max.z - b.min.z),
+    opacity: 0.5,
+  });
 }
 
 /** Fetch the manifest and place every persisted prop into the world. */
-export async function loadProps(scene: Scene, shadow: ShadowGenerator): Promise<void> {
+export async function loadProps(scene: Scene, shadows: ShadowRuntime): Promise<void> {
   let defs: PropDef[] = [];
   try {
     const res = await fetch("/props.json", { cache: "no-store" });
@@ -171,7 +169,7 @@ export async function loadProps(scene: Scene, shadow: ShadowGenerator): Promise<
     importModel(scene, d.model)
       .then((p) => {
         applyTransform(p, d.scale, d.x, d.z, d.rotationY || 0);
-        addShadowProxy(scene, shadow, p, d.name || "prop");
+        addPropContactShadow(shadows, p, d.name || "prop");
       })
       .catch((e) => console.warn(`[props] failed to place ${d.model}`, e));
   }

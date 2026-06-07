@@ -12,7 +12,7 @@ export interface TreeModel {
   meshes: AbstractMesh[];
   setAlive: (alive: boolean) => void;
   shake: () => void;
-  update: (dt: number) => void;
+  update: (dt: number) => boolean;
   dispose: () => void;
 }
 
@@ -139,6 +139,7 @@ export function buildTree(scene: Scene): TreeModel {
       shakeT = 0.32;
     },
     update: (dt) => {
+      let shadowChanged = false;
       if (shakeT > 0) {
         shakeT -= dt;
         const k = Math.max(0, shakeT / 0.32);
@@ -154,9 +155,11 @@ export function buildTree(scene: Scene): TreeModel {
           if (k >= 1) {
             stumpG.setEnabled(false);
             phase = "hidden"; // stays gone until the server respawns the tree
+            shadowChanged = true;
           }
         }
       }
+      return shadowChanged;
     },
     dispose: () => {
       root.dispose();

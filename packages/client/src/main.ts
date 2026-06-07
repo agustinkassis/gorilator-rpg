@@ -29,7 +29,7 @@ import { Game } from "./game/Game";
 import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
 import { TopBar } from "./ui/topBar";
-import { GameMenu } from "./ui/gameMenu";
+import { GameMenu, loadStoredShadowMode } from "./ui/gameMenu";
 import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
 import { preloadMouseCursors, setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
@@ -1140,7 +1140,8 @@ if (import.meta.env.DEV && import.meta.env.VITE_NO_MOCK_NOSTR !== "1") {
 }
 
 const engine = new Engine(canvas, true, { stencil: true }, true);
-const { scene, camera, ground, shadow } = createScene(engine);
+const shadowMode = loadStoredShadowMode();
+const { scene, camera, ground, shadows } = createScene(engine, { shadowMode });
 
 const factory = new CharacterFactory(scene);
 const hud = new HUD(scene);
@@ -1150,7 +1151,7 @@ const staminaBar = new StaminaBar();
 const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
 const topBar = new TopBar(); // top HUD (La Crypta HP + wave); hidden on the splash via CSS
-const game = new Game(camera, factory, hud, shadow);
+const game = new Game(camera, factory, hud, shadows);
 const debugStats = new DebugStats(engine, scene);
 // Sound system: spatial SFX + music. Unlocks itself on the first user gesture
 // (the splash "ENTER" click), so it's safe to build up-front.
@@ -1188,7 +1189,7 @@ new GameMenu({
   net,
   audio,
   engine,
-  shadow,
+  shadows,
   isNostrVerified: () => !!(game.localId && net.room?.state.players.get(game.localId)?.nostrVerified),
   developerLabels: developerLabels
     ? {
@@ -1200,10 +1201,10 @@ new GameMenu({
 
 // Imported-prop registry (loads props.json into the world). In dev builds it also
 // backs Dev Mode, the in-game world editor (toggle with the button or ` backtick).
-const propManager = new PropManager(scene, shadow);
+const propManager = new PropManager(scene, shadows);
 game.setStructureProps(propManager); // destroyed structures hide their prop visual
 // Placed custom characters (imported Meshy zips) — loads npcs.json + renders them.
-const characterManager = new CharacterManager(scene, shadow);
+const characterManager = new CharacterManager(scene, shadows);
 minimap.setProps(propManager); // so the map can icon imported trees/rocks/concrete props
 const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
 devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
@@ -1293,7 +1294,7 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
     {
       label: "La Crypta house",
       weight: 4,
-      promise: loadHouse(scene, shadow).then((house) => {
+      promise: loadHouse(scene, shadows).then((house) => {
         game.setHouseModel(house);
       }),
     },
@@ -1492,7 +1493,7 @@ if (import.meta.env.DEV) {
 
   // Model importer: upload a .glb, place/resize/rotate/name it, concrete or not,
   // and persist it to the codebase (button bottom-right, or press M).
-  const propImporter = new PropImporter(scene, shadow, () => {
+  const propImporter = new PropImporter(scene, shadows, () => {
     const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
     return me ? { x: me.x, z: me.z } : null;
   });
@@ -1523,6 +1524,16 @@ engine.runRenderLoop(() => {
     splash.update(dt);
     const renderStartedAt = performance.now();
     splash.scene.render();
+    const frameEndedAt = performance.now();
+    perf.setFrameMetrics({
+      fps: engine.getFps(),
+      frameMs: frameEndedAt - frameStartedAt,
+      gpuMs: null,
+      drawCalls: 0,
+      activeMeshes: splash.scene.getActiveMeshes().length,
+      triangles: Math.round(splash.scene.getActiveIndices() / 3),
+    });
+    perf.tick();
     debugStats.endFrame(frameStartedAt, renderStartedAt);
     return;
   }
