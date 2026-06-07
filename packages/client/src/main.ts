@@ -2,6 +2,7 @@ import { ArcRotateCamera, Color4, Engine, HemisphericLight, Scene, SceneLoader, 
 import "@babylonjs/loaders/glTF";
 import { createScene } from "./scene/createScene";
 import { applyOrthoSize } from "./scene/camera";
+import { compareVer } from "./util/version";
 import { CharacterFactory } from "./entities/CharacterFactory";
 import { preloadBanana } from "./entities/models/banana";
 import { preloadBerserkerPotion } from "./entities/models/berserkerPotion";
@@ -55,17 +56,33 @@ if (versionEl) {
   wireVersionPanel(versionEl);
 }
 
+/** Re-render the footer version popup, optionally flagging packages whose remote
+ *  (latest release) version is newer than the local build. Reassigned by
+ *  wireVersionPanel; called again once /api/update reports remote versions. */
+let renderVersionPanel: (remote?: Record<string, string>) => void = () => {};
+
 /** Click the footer version tag to toggle a small popup listing every workspace
- *  package version (injected at build time as __PKG_VERSIONS__). */
+ *  package version (injected at build time as __PKG_VERSIONS__). An ⬆ appears
+ *  next to any package the latest release has a newer version of. */
 function wireVersionPanel(tag: HTMLElement): void {
   const panel = document.getElementById("versionPanel");
   if (!panel) return;
   const versions = __PKG_VERSIONS__ ?? {};
-  panel.innerHTML =
-    `<div class="vpTitle">Package versions</div>` +
-    Object.entries(versions)
-      .map(([label, v]) => `<div class="vpRow"><span class="vpName">${label}</span><span class="vpVer">v${v}</span></div>`)
-      .join("");
+  renderVersionPanel = (remote: Record<string, string> = {}) => {
+    panel.innerHTML =
+      `<div class="vpTitle">Package versions</div>` +
+      Object.entries(versions)
+        .map(([label, v]) => {
+          const r = remote[label];
+          const icon =
+            r && compareVer(r, v) > 0
+              ? ` <span class="vpUpd" style="color:#f5c542" title="v${r} available">⬆</span>`
+              : "";
+          return `<div class="vpRow"><span class="vpName">${label}</span><span class="vpVer">v${v}${icon}</span></div>`;
+        })
+        .join("");
+  };
+  renderVersionPanel();
   const close = () => {
     panel.hidden = true;
     document.removeEventListener("pointerdown", onOutside, true);
@@ -1334,6 +1351,15 @@ const splashReady = revealSplashWhenReady(splash, audio.ready);
 // Surface a daemon "update available" banner on the splash (best-effort, silent
 // when offline / up to date). Fed by the server's /api/update auto-check.
 void splash.showUpdateBanner(net.httpBase());
+// Flag any out-of-date packages in the footer version popup with an ⬆.
+void fetch(`${net.httpBase()}/api/update`, { cache: "no-store" })
+  .then((r) => (r.ok ? (r.json() as Promise<{ latest?: { packages?: Record<string, string> } | null }>) : null))
+  .then((s) => {
+    if (s?.latest?.packages) renderVersionPanel(s.latest.packages);
+  })
+  .catch(() => {
+    /* offline / not configured — leave the list unflagged */
+  });
 
 // homeMaxHp is kept so the home bar can still read "fallen" after the house is
 // removed from state on collapse.

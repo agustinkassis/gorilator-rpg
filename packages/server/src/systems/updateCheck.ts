@@ -22,13 +22,27 @@ export interface UpdateSnapshot {
   intervalHours: number;
   /** The `owner/repo` being checked. */
   repo: string;
-  /** True when the latest release's version is greater than the local app version. */
+  /** True when the latest release is ahead of the local code (app or any package). */
   updateAvailable: boolean;
-  /** The running code's **app (umbrella)** version + short commit. */
-  current: { version: string; sha: string | null; committedAt: string | null };
+  /** The running code's **app (umbrella)** version + short commit, plus the local
+   *  per-package versions (app/cli/client/server/shared/landing). */
+  current: {
+    version: string;
+    sha: string | null;
+    committedAt: string | null;
+    packages: Record<string, string>;
+  };
   /** The latest published GitHub release, when one was read (`version` is the
-   *  SemVer parsed from its tag, or null if the tag has none). */
-  latest: { tag: string; name: string; url: string; publishedAt: string; version: string | null } | null;
+   *  SemVer parsed from its tag, or null if the tag has none). `packages` are the
+   *  per-package versions read from that release tag (empty if unavailable). */
+  latest: {
+    tag: string;
+    name: string;
+    url: string;
+    publishedAt: string;
+    version: string | null;
+    packages: Record<string, string>;
+  } | null;
   /** Epoch ms of the last completed check (0 if never). */
   checkedAt: number;
   /** Last error message, if the most recent check failed. */
@@ -39,12 +53,15 @@ class UpdateChecker {
   private intervalHours = resolveIntervalHours();
   private readonly repo = (process.env.UPDATE_REPO?.trim() || DEFAULT_REPO).replace(/^https?:\/\/github\.com\//, "");
   private timer?: NodeJS.Timeout;
+  /** Remote per-package versions keyed by the release tag they were read from, so
+   *  we only re-fetch them when a new release appears. */
+  private packagesCache: { tag: string; packages: Record<string, string> } | null = null;
   private snap: UpdateSnapshot = {
     enabled: this.intervalHours > 0,
     intervalHours: this.intervalHours,
     repo: this.repo,
     updateAvailable: false,
-    current: { version: resolveAppVersion(), sha: null, committedAt: null },
+    current: { version: resolveAppVersion(), sha: null, committedAt: null, packages: localPackages() },
     latest: null,
     checkedAt: 0,
   };
@@ -76,12 +93,33 @@ class UpdateChecker {
       const sha = git("rev-parse", "--short", "HEAD");
       const committedAt = git("show", "-s", "--format=%cI", "HEAD");
       const appVersion = resolveAppVersion();
-      const latest = await fetchLatestRelease(this.repo);
+      const local = localPackages();
+      const release = await fetchLatestRelease(this.repo);
+
+      // Read the release's per-package versions, cached by tag (re-fetched only
+      // when a new release appears).
+      let remotePackages: Record<string, string> = {};
+      if (release) {
+        if (this.packagesCache?.tag === release.tag) {
+          remotePackages = this.packagesCache.packages;
+        } else {
+          remotePackages = await fetchReleasePackages(this.repo, release.tag);
+          if (Object.keys(remotePackages).length) {
+            this.packagesCache = { tag: release.tag, packages: remotePackages };
+          }
+        }
+      }
+      const latest = release ? { ...release, packages: remotePackages } : null;
 
       let updateAvailable = false;
       if (latest) {
-        if (latest.version) {
-          // Primary signal: the release's app version is newer than ours.
+        // Newer if ANY package (or the app umbrella) is ahead in the release.
+        const perPackage = Object.entries(latest.packages).some(
+          ([label, remote]) => compareSemver(remote, local[label] ?? appVersion) > 0,
+        );
+        if (perPackage) {
+          updateAvailable = true;
+        } else if (latest.version) {
           updateAvailable = compareSemver(latest.version, appVersion) > 0;
         } else if (committedAt) {
           // Tag has no parseable version → fall back to release-vs-HEAD date.
@@ -94,7 +132,7 @@ class UpdateChecker {
         intervalHours: this.intervalHours,
         repo: this.repo,
         updateAvailable,
-        current: { version: appVersion, sha, committedAt },
+        current: { version: appVersion, sha, committedAt, packages: local },
         latest,
         checkedAt: Date.now(),
       };
@@ -138,6 +176,66 @@ function resolveAppVersion(): string {
     }
   }
   return "0.0.0";
+}
+
+/** The workspace package.json files (label → path from the repo root). Mirrors
+ *  the CLI's PACKAGE_VERSION_FILES — keep them in sync. */
+const PACKAGE_PATHS: Array<[label: string, path: string]> = [
+  ["app", "package.json"],
+  ["cli", "packages/cli/package.json"],
+  ["client", "packages/client/package.json"],
+  ["server", "packages/server/package.json"],
+  ["shared", "packages/shared/package.json"],
+  ["landing", "packages/landing/package.json"],
+];
+
+/** The local per-package versions (app/cli/client/server/shared/landing). */
+function localPackages(): Record<string, string> {
+  const root = git("rev-parse", "--show-toplevel");
+  const out: Record<string, string> = {};
+  for (const [label, path] of PACKAGE_PATHS) {
+    const candidates: Array<string | URL> = [];
+    if (root) candidates.push(`${root}/${path}`);
+    candidates.push(new URL(`../../../../${path}`, import.meta.url));
+    for (const p of candidates) {
+      try {
+        const pkg = JSON.parse(readFileSync(p, "utf8")) as { version?: unknown };
+        if (typeof pkg?.version === "string" && pkg.version.trim()) {
+          out[label] = pkg.version;
+          break;
+        }
+      } catch {
+        /* try next candidate */
+      }
+    }
+  }
+  return out;
+}
+
+/** The per-package versions at a release tag, read from raw.githubusercontent.com.
+ *  Best-effort and parallel — missing files are simply omitted. */
+async function fetchReleasePackages(repo: string, tag: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  await Promise.all(
+    PACKAGE_PATHS.map(async ([label, path]) => {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(`https://raw.githubusercontent.com/${repo}/${tag}/${path}`, {
+          headers: { "User-Agent": "gorilator-update-check" },
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const pkg = (await res.json()) as { version?: unknown };
+        if (typeof pkg.version === "string" && pkg.version.trim()) out[label] = pkg.version;
+      } catch {
+        /* skip this package */
+      } finally {
+        clearTimeout(t);
+      }
+    }),
+  );
+  return out;
 }
 
 /** Extract the SemVer `MAJOR.MINOR.PATCH` from a release tag (e.g. `v0.4.0`,

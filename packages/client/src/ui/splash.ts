@@ -20,6 +20,7 @@ import { AnimState } from "@rpg/shared";
 import { SpawnedCharacter } from "../entities/types";
 import { CharacterFactory } from "../entities/CharacterFactory";
 import { AnimationController } from "../entities/AnimationController";
+import { anyPackageBehind, localPackageVersions } from "../util/version";
 import {
   nostrLogin,
   hasNostrExtension,
@@ -237,9 +238,19 @@ export class SplashScreen {
       const s = (await res.json()) as {
         updateAvailable?: boolean;
         current?: { version?: string } | null;
-        latest?: { tag?: string; name?: string; url?: string } | null;
+        latest?: { tag?: string; name?: string; url?: string; packages?: Record<string, string> } | null;
       };
-      if (!s.updateAvailable || !s.latest) return;
+      if (!s.latest) return;
+      // Compare the running game's own versions (baked at build) against the
+      // release's per-package versions: a newer app OR any newer package counts.
+      // Falls back to the server's verdict for older servers that don't report
+      // per-package versions.
+      const remotePackages = s.latest.packages ?? {};
+      const updateNeeded =
+        Object.keys(remotePackages).length > 0
+          ? anyPackageBehind(localPackageVersions(), remotePackages)
+          : Boolean(s.updateAvailable);
+      if (!updateNeeded) return;
 
       const text = document.getElementById("updateBannerText");
       // Name the running server's version too, so it's clear the gap is the
