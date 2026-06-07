@@ -109,21 +109,6 @@
         }
       ]
     },
-    "npc_1780687999612": {
-      "brain": "attacks_home",
-      "stats": {
-        "moveSpeed": 60,
-        "level": 1
-      },
-      "drops": [
-        {
-          "item": "berserker_potion",
-          "quantity": 1,
-          "probability": 1,
-          "trigger": "kill"
-        }
-      ]
-    },
     "rock-3": {
       "hp": 100,
       "drops": [
