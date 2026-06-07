@@ -63,12 +63,12 @@ gorilator start       # start the service
 gorilator stop        # stop the service
 gorilator restart     # restart the service
 gorilator logs -f     # follow logs
-gorilator update      # git pull, rebuild, restart
+gorilator update      # fetch latest; rebuild & restart only what changed
 gorilator remote      # compare local package versions against remote/latest
-gorilator setup       # ports, server NSEC, Cloudflare tunnel, env
+gorilator setup       # general (name/NSEC/admins), ports, Cloudflare tunnel, dev mode, env
 ```
 
-`gorilator setup` can put your realm online on **your own subdomain** (`game.<yourdomain>`) through a Cloudflare Tunnel — anyone can run a server. Full details in **[DEPLOY.md](DEPLOY.md)**.
+`gorilator setup` can put your realm online with **one click** — a **temporary** Cloudflare tunnel (no account, an ephemeral `…trycloudflare.com` URL) by default, or a **permanent** tunnel on **your own subdomain** (`game.<yourdomain>`) after a Cloudflare login. Anyone can run a server. Full details in **[DEPLOY.md](DEPLOY.md)**.
 
 > Prefer containers? A **Docker Compose** stack and a one-click **[Railway](RAILWAY.md)** template ship in the repo too.
 
