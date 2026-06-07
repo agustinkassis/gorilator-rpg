@@ -312,7 +312,10 @@ async function waitForStateRefresh(
 
 function probeHttp(port: number, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = get({ host: "127.0.0.1", port, path: "/", timeout: timeoutMs }, (res) => {
+    // Use "localhost" (not 127.0.0.1) so the probe reaches a server bound to
+    // IPv6 ::1 — Vite's dev server listens on ::1 only, so an IPv4-only probe
+    // would report it "starting…" forever even when it's up.
+    const req = get({ host: "localhost", port, path: "/", timeout: timeoutMs }, (res) => {
       res.resume();
       res.on("end", () => resolve(Boolean(res.statusCode && res.statusCode < 500)));
     });

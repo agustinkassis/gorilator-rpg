@@ -4,7 +4,8 @@ import { get } from "node:http";
 export function probeHealth(port: number, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {
     const req = get(
-      { host: "127.0.0.1", port, path: "/healthz", timeout: timeoutMs },
+      // "localhost" so the probe works whether the server bound IPv4 or IPv6 ::1.
+      { host: "localhost", port, path: "/healthz", timeout: timeoutMs },
       (res) => {
         let body = "";
         res.on("data", (c) => (body += c));
