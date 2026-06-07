@@ -93,7 +93,7 @@ async function runSetupMenu(opts: Options): Promise<void> {
         hint: `port ${info.port}${info.clientPort ? `, client ${info.clientPort}` : ", one-port"}`,
       },
       {
-        label: "Cloudflare",
+        label: "Tunnel (Cloudflare)",
         hint: info.serverHost ? `https://${info.serverHost}` : "not configured",
       },
       {
@@ -372,8 +372,9 @@ function generateServerNsec(opts: Options): void {
 async function cloudflareMenu(opts: Options): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
-    const choice = await selectMenu(`Cloudflare\n  ${tunnelStatusLine(ctx.env)}`, [
-      { label: "Set up / change tunnel", hint: "choose temporary or permanent" },
+    const choice = await selectMenu(`Tunnel (Cloudflare)\n  ${tunnelStatusLine(ctx.env)}`, [
+      { label: "Set up temporary tunnel", hint: "quick, no login — …trycloudflare.com URL" },
+      { label: "Set up permanent tunnel", hint: "your domain — requires a Cloudflare login" },
       { label: "Remove Cloudflare settings", hint: "local service/config only" },
       { label: "Tunnel status" },
       { label: "Authorize Cloudflare login", hint: "for permanent tunnels" },
@@ -381,15 +382,16 @@ async function cloudflareMenu(opts: Options): Promise<void> {
       { label: "Back" },
     ]);
 
-    if (choice === 0) await configureCloudflare(opts);
-    else if (choice === 1) removeCloudflare(opts);
-    else if (choice === 2) {
+    if (choice === 0) await configureCloudflare(opts, { mode: "temporary" });
+    else if (choice === 1) await configureCloudflare(opts, { mode: "permanent" });
+    else if (choice === 2) removeCloudflare(opts);
+    else if (choice === 3) {
       tunnelStatus();
       pause();
-    } else if (choice === 3) {
+    } else if (choice === 4) {
       tunnelLogin();
       pause();
-    } else if (choice === 4) {
+    } else if (choice === 5) {
       tunnelRestart();
       pause();
     } else return;
@@ -523,7 +525,7 @@ interface CloudflareCtx {
 
 async function configureCloudflare(
   opts: Options,
-  { pauseAtEnd = true }: { pauseAtEnd?: boolean } = {},
+  { pauseAtEnd = true, mode: forcedMode }: { pauseAtEnd?: boolean; mode?: TunnelMode } = {},
 ): Promise<void> {
   const cfg = loadConfig();
   const appDir = cfg?.appDir ?? opts.appDir;
@@ -537,7 +539,7 @@ async function configureCloudflare(
     sameOrigin: env.VITE_SAME_ORIGIN === "1" && !env.VITE_SERVER_URL && !env.CLIENT_PORT,
   };
 
-  const mode = await resolveTunnelMode(opts, env);
+  const mode = forcedMode ?? (await resolveTunnelMode(opts, env));
   if (mode === "temporary") await setupTemporaryTunnel(cf);
   else await setupPermanentTunnel(cf);
   if (pauseAtEnd) pause();

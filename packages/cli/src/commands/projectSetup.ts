@@ -1,12 +1,25 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { saveConfig } from "../lib/config.js";
+import {
+  createTunnel,
+  ensureCloudflared,
+  getTunnelId,
+  installTunnelService,
+  isAuthorized,
+  login,
+  removeTunnelLocalConfig,
+  routeDns,
+  TUNNEL_NAME,
+  uninstallTunnelService,
+  writeTunnelConfigRoutes,
+} from "../lib/cloudflare.js";
 import { loadProjectConfig, readProjectEnv, type RuntimeContext } from "../lib/context.js";
 import { devTunnelRunning, readDevTunnelState, startDevTunnels, stopDevTunnels } from "../lib/devTunnel.js";
 import { generateNsec, genSecret, isValidNsec, parseEnv, renderEnv } from "../lib/env.js";
 import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
 import type { Options } from "../lib/options.js";
-import { ask, canPrompt, confirm } from "../lib/proc.js";
+import { ask, canPrompt, confirm, promptDefault } from "../lib/proc.js";
 import { projectStatus, restartProjectDev } from "../lib/projectDev.js";
 import {
   adminsHint,
@@ -40,7 +53,7 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
         }`,
       },
       { label: "Colyseus and environment", hint: "monitor auth, stats files" },
-      { label: "Cloudflare (share dev)", hint: devTunnelRunning(ctx) ? "sharing — temporary tunnel" : "temporary tunnel" },
+      { label: "Tunnel (Cloudflare)", hint: tunnelHint(ctx, env) },
       { label: "Auto-update check interval", hint: updateCheckHint(env.UPDATE_CHECK_HOURS) },
       { label: "Show current settings" },
       { label: "Exit" },
@@ -58,31 +71,108 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
   }
 }
 
-/** Share the local dev server over a TEMPORARY Cloudflare tunnel (quick tunnels,
- *  no account). Spins up two tunnels — one for the Vite client page and one for
- *  the game server — and points the client at the server tunnel via
- *  VITE_SERVER_URL. The URLs are ephemeral; the dev server is restarted so Vite
- *  bakes the new VITE_SERVER_URL (and trusts the trycloudflare host). */
+/** One-line tunnel status for the project menu hint. */
+function tunnelHint(ctx: RuntimeContext, env: EnvMap): string {
+  if (devTunnelRunning(ctx)) return "temporary — sharing dev";
+  if (env.VITE_ALLOWED_HOSTS) return `permanent — ${env.VITE_ALLOWED_HOSTS.split(",")[0]}`;
+  return "temporary or permanent";
+}
+
+/** Expose the local dev server through a Cloudflare tunnel. Two kinds:
+ *  • Temporary — quick tunnels (no account), ephemeral …trycloudflare.com URL.
+ *  • Permanent — a named tunnel on your own domain (requires a Cloudflare login).
+ *  Either way the dev server runs the client (Vite) and game server on separate
+ *  ports, so two ingress routes are used and the client dials the server route
+ *  via VITE_SERVER_URL. */
 async function cloudflareDevMenu(opts: Options, ctx: RuntimeContext): Promise<void> {
   for (;;) {
     const running = devTunnelRunning(ctx);
     const state = readDevTunnelState(ctx);
-    const title = running && state?.clientUrl ? `Cloudflare (share dev)\n  ${state.clientUrl}\n` : "Cloudflare (share dev)";
+    const env = readProjectEnv(ctx);
+    const url = running ? state?.clientUrl : env.VITE_ALLOWED_HOSTS ? `https://${env.VITE_ALLOWED_HOSTS.split(",")[0]}` : "";
+    const title = url ? `Tunnel (Cloudflare)\n  ${url}\n` : "Tunnel (Cloudflare)";
     const choice = await selectMenu(title, [
-      { label: running ? "Restart sharing" : "Start sharing", hint: "temporary tunnel, no login" },
-      { label: "Stop sharing", hint: running ? "kill the tunnels" : "not sharing" },
-      { label: "Show share URL", hint: state?.clientUrl || "—" },
+      { label: "Temporary tunnel (share dev)", hint: "quick, no login — …trycloudflare.com URL" },
+      { label: "Permanent tunnel", hint: "your domain — requires a Cloudflare login" },
+      { label: "Stop / remove tunnel", hint: running || env.VITE_ALLOWED_HOSTS ? "tear it down" : "nothing active" },
+      { label: "Show URL", hint: url || "—" },
       { label: "Back" },
     ]);
 
     if (choice === 0) await startSharing(opts, ctx);
-    else if (choice === 1) await stopSharing(opts, ctx);
-    else if (choice === 2) {
-      const s = readDevTunnelState(ctx);
-      log.info(s?.clientUrl ? `Share URL: ${s.clientUrl}` : "Not sharing — start a tunnel first.");
+    else if (choice === 1) await setupPermanentDevTunnel(opts, ctx);
+    else if (choice === 2) await stopSharing(opts, ctx);
+    else if (choice === 3) {
+      log.info(url ? `URL: ${url}` : "No tunnel active — set up a temporary or permanent tunnel first.");
       pause();
     } else return;
   }
+}
+
+/** Permanent named tunnel for a dev checkout: routes a game host → the Vite
+ *  client and a server host → the game server, then points the client at the
+ *  server host via VITE_SERVER_URL. Unusual but supported (best-effort). */
+async function setupPermanentDevTunnel(opts: Options, ctx: RuntimeContext): Promise<void> {
+  const cfg = loadProjectConfig(ctx, opts);
+  const env = readProjectEnv(ctx);
+  const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
+  const clientPort = Number(env.CLIENT_PORT) || cfg.clientPort || DEFAULT_CLIENT_PORT;
+
+  const base = process.env.GORILATOR_DOMAIN || ask("Base domain on Cloudflare (e.g. example.com): ").trim();
+  if (!base) {
+    log.warn("A domain is required for a permanent tunnel. No change made.");
+    pause();
+    return;
+  }
+  const gameHost = promptDefault("  Game (client) subdomain", `game.${base}`);
+  const serverHost = promptDefault("  Server (WebSocket) subdomain", `api.${base}`);
+
+  // Retire any temporary tunnels first.
+  if (devTunnelRunning(ctx)) stopDevTunnels(ctx);
+
+  ensureCloudflared();
+  if (!isAuthorized()) {
+    log.info("Authorize cloudflared — a browser opens (or copy the printed URL); pick your domain:");
+    login();
+  } else {
+    log.ok("cloudflared already authorized.");
+  }
+
+  let id = getTunnelId(TUNNEL_NAME);
+  if (!id) {
+    log.info(`Creating tunnel '${TUNNEL_NAME}'…`);
+    createTunnel(TUNNEL_NAME);
+    id = getTunnelId(TUNNEL_NAME);
+  } else {
+    log.ok(`Tunnel '${TUNNEL_NAME}' already exists (${id}).`);
+  }
+  if (!id) {
+    log.warn("Could not determine the tunnel id. No change made.");
+    pause();
+    return;
+  }
+
+  writeTunnelConfigRoutes(id, [
+    { host: gameHost, port: clientPort },
+    { host: serverHost, port: serverPort },
+  ]);
+  log.info("Creating DNS routes…");
+  routeDns(gameHost);
+  routeDns(serverHost);
+  installTunnelService();
+
+  writeEnvPatch(
+    ctx,
+    { VITE_SERVER_URL: `https://${serverHost}`, VITE_ALLOWED_HOSTS: `${gameHost},${serverHost}` },
+    "Configured a permanent Cloudflare tunnel.",
+  );
+  log.info("Restarting the dev server so it serves the tunnel hosts…");
+  await restartIfRunning(opts, ctx);
+
+  process.stdout.write("\n");
+  log.ok(`Permanent tunnel live: https://${gameHost}`);
+  log.info("If the dev server wasn't running, start it (pnpm dev) so the tunnel has something to serve.");
+  pause();
 }
 
 async function startSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
@@ -112,11 +202,18 @@ async function startSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
 }
 
 async function stopSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
-  if (stopDevTunnels(ctx)) log.ok("Stopped sharing — tunnels killed.");
-  else log.info("No active share tunnels.");
-  // Drop the baked server URL so the client returns to localhost dev defaults.
-  if (readProjectEnv(ctx).VITE_SERVER_URL) {
-    writeEnvPatch(ctx, { VITE_SERVER_URL: "" }, "Cleared VITE_SERVER_URL.");
+  const env = readProjectEnv(ctx);
+  let changed = stopDevTunnels(ctx); // temporary quick tunnels
+  if (env.VITE_ALLOWED_HOSTS) {
+    // Permanent named tunnel: stop the boot service + drop local config.
+    if (uninstallTunnelService()) changed = true;
+    removeTunnelLocalConfig();
+  }
+  if (changed) log.ok("Tunnel stopped/removed.");
+  else log.info("No active tunnel.");
+  // Drop the baked client settings so dev returns to localhost defaults.
+  if (env.VITE_SERVER_URL || env.VITE_ALLOWED_HOSTS) {
+    writeEnvPatch(ctx, { VITE_SERVER_URL: "", VITE_ALLOWED_HOSTS: "" }, "Cleared tunnel client settings.");
     await restartIfRunning(opts, ctx);
   }
   pause();
