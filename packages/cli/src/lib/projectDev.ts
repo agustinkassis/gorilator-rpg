@@ -20,6 +20,7 @@ import {
 } from "./context.js";
 import { probeHealth } from "./health.js";
 import * as log from "./log.js";
+import { Stepper } from "./progress.js";
 import type { Options } from "./options.js";
 import { run, tryRun } from "./proc.js";
 import { printField, printPackageVersions, printSection, readEnvInfo } from "./summary.js";
@@ -85,8 +86,62 @@ export async function startProjectDev(ctx: RuntimeContext, opts: Options): Promi
 
   log.ok(`Started local Gorilator dev (pid ${child.pid}).`);
   await waitForStateRefresh(ctx, child.pid, startedAt);
+  await trackProjectServices(ctx, child.pid);
   await printProjectStatus(ctx, opts);
   process.stdout.write(`  Logs   : ${ctx.logPath}\n`);
+}
+
+/** Live per-service spinner while the dev server and Vite client come up. Each
+ *  tracks until its port answers (or the dev process dies / times out), and
+ *  surfaces the relevant log error inline if it doesn't. */
+async function trackProjectServices(ctx: RuntimeContext, pid: number): Promise<void> {
+  const state = readProjectState(ctx);
+  if (!state) return;
+  const ui = new Stepper("Starting services", [
+    { key: "server", label: `Game server :${state.serverPort}`, estimateMs: 12_000 },
+    { key: "client", label: `Client (Vite) :${state.clientPort}`, estimateMs: 16_000 },
+  ]);
+  ui.start();
+  try {
+    const serverUp = await ui.run("server", () =>
+      pollUntilUp(() => probeHealth(state.serverPort), pid),
+    );
+    if (!serverUp) ui.fail("server", devError(ctx) ?? "did not come up — check the logs");
+    const clientUp = await ui.run("client", () => pollUntilUp(() => probeHttp(state.clientPort), pid));
+    if (!clientUp) ui.fail("client", devError(ctx) ?? "did not come up — check the logs");
+  } finally {
+    ui.finish();
+  }
+}
+
+/** Poll `check` until it succeeds, the dev process exits, or the timeout. */
+async function pollUntilUp(
+  check: () => Promise<boolean>,
+  pid: number,
+  totalMs = 25_000,
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < totalMs) {
+    if (await check()) return true;
+    if (!isPidRunning(pid)) return false; // the dev process bailed
+    await sleep(400);
+  }
+  return false;
+}
+
+/** The most recent error-looking line from the dev log, for inline reporting. */
+function devError(ctx: RuntimeContext): string | null {
+  try {
+    const lines = readFileSync(ctx.logPath!, "utf8").split(/\r?\n/).filter(Boolean).slice(-80);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/error|EADDRINUSE|already in use|Exit status [1-9]|ELIFECYCLE|exited unexpectedly|failed/i.test(lines[i])) {
+        return lines[i].replace(/^\[\w+\]\s*/, "").trim().slice(0, 100);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export async function stopProjectDev(ctx: RuntimeContext): Promise<void> {

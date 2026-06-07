@@ -190,6 +190,17 @@ export class Stepper {
     }
   }
 
+  /** Mark a step as failed (✗) with a note, WITHOUT throwing — so a caller can
+   *  flag a service that didn't come up and still continue to the next one. */
+  fail(key: string, note?: string): void {
+    const step = this.find(key);
+    step.state = "failed";
+    step.end = step.end ?? Date.now();
+    if (note) step.note = note;
+    if (!TTY) process.stderr.write(`${log.red("✗")} ${step.label}${note ? ` — ${note}` : ""}\n`);
+    this.render();
+  }
+
   /** Mark a step as skipped (e.g. no Cloudflare tunnel configured). */
   skip(key: string, note?: string): void {
     const step = this.find(key);
