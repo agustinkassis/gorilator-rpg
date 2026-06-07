@@ -86,9 +86,10 @@ CLI as `npx gorilator install`. The installer, in order:
 gorilator setup
 ```
 
-It opens an arrow-key menu with categories for server settings, server NSEC, Cloudflare, Developer
-mode, and Colyseus/environment settings. Choosing **Cloudflare → Set up / change tunnel** asks which
-kind of tunnel you want:
+It opens an arrow-key menu with categories for **General settings** (server display name, server NSEC,
+admins), **Server settings** (ports, auto-update interval), **Cloudflare**, **Logs**, **Developer mode**,
+and **Colyseus/environment**. Choosing **Cloudflare → Set up / change tunnel** asks which kind of tunnel
+you want:
 
 **Temporary tunnel (default — no Cloudflare account):**
 
@@ -128,7 +129,7 @@ gorilator stop          Stop the daemon
 gorilator restart       Restart the daemon
 gorilator logs          Show recent server logs (--follow, --lines, --filter, --since)
 gorilator update        fetch latest; rebuild & restart only the packages that changed
-gorilator setup         Interactive setup: server ports, NSEC, Cloudflare, env settings
+gorilator setup         Interactive setup: general (name/NSEC/admins), ports, Cloudflare, dev mode, env
 gorilator tunnel <cmd>  Cloudflare tunnel — login | status | restart
 gorilator uninstall     Stop & remove services, config, command, and installed files
 gorilator help <cmd>    Show detailed help for any command
