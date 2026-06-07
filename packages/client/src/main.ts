@@ -1241,10 +1241,96 @@ setupClickToMove({
 // Hold SPACE to sprint (server drains stamina + applies the speed boost).
 setupSprint(net);
 
+const SPLASH_BOOT_TASKS = [
+  { pct: 0, label: "loading the cold open" },
+  { pct: 12, label: "waking the black screen" },
+  { pct: 24, label: "arming buttons, no mercy" },
+  { pct: 36, label: "polishing the boss entrance" },
+  { pct: 50, label: "loading the gorilla model" },
+  { pct: 64, label: "teaching the model to look dangerous" },
+  { pct: 76, label: "warming the bass for impact" },
+  { pct: 88, label: "making the splash behave" },
+  { pct: 98, label: "opening the arena gates" },
+] as const;
+
+let splashBootShown = 4;
+let splashBootTarget = 4;
+let splashBootOverrideLabel = "";
+let splashBootLabelTimer: number | undefined;
+
+function splashBootLabelFor(pct: number): string {
+  let label = SPLASH_BOOT_TASKS[0].label;
+  for (const task of SPLASH_BOOT_TASKS) {
+    if (pct >= task.pct) label = task.label;
+  }
+  return label;
+}
+
+function renderSplashBoot(): void {
+  const bar = document.getElementById("splashBootBar") as HTMLElement | null;
+  const label = document.getElementById("splashBootLabel") as HTMLElement | null;
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, splashBootShown))}%`;
+  if (label) label.textContent = splashBootOverrideLabel || splashBootLabelFor(splashBootShown);
+}
+
+const splashBootTicker = window.setInterval(() => {
+  if (!document.body.classList.contains("splashBooting")) {
+    window.clearInterval(splashBootTicker);
+    return;
+  }
+  if (splashBootShown < splashBootTarget) {
+    splashBootShown += Math.max(0.35, (splashBootTarget - splashBootShown) * 0.14);
+  } else if (splashBootTarget < 90) {
+    splashBootTarget += 0.28;
+    splashBootShown += 0.08;
+  }
+  renderSplashBoot();
+}, 60);
+
+function setSplashBootProgress(pct: number, label?: string): void {
+  const next = Math.max(0, Math.min(100, pct));
+  const previousTarget = splashBootTarget;
+  if (next >= splashBootTarget) {
+    splashBootTarget = next;
+  }
+  if (label && next >= previousTarget) {
+    splashBootOverrideLabel = label;
+    if (splashBootLabelTimer !== undefined) window.clearTimeout(splashBootLabelTimer);
+    splashBootLabelTimer = window.setTimeout(() => {
+      splashBootOverrideLabel = "";
+      renderSplashBoot();
+    }, next >= 100 ? 1800 : 920);
+  }
+  renderSplashBoot();
+}
+
+async function revealSplashWhenReady(splash: SplashScreen, audioReady: Promise<void>): Promise<void> {
+  const minimumDisplay = new Promise((resolve) => window.setTimeout(resolve, 760));
+  try {
+    const heroReady = splash.ready.then(() => {
+      setSplashBootProgress(72, "model signed the release waiver");
+    });
+    const soundReady = audioReady.then(() => {
+      setSplashBootProgress(84, "warming the bass for impact");
+    });
+    await Promise.all([heroReady, soundReady]);
+  } finally {
+    splashBootOverrideLabel = "";
+    setSplashBootProgress(94, "last second vanity check");
+    await minimumDisplay;
+    setSplashBootProgress(100, "opening the arena gates");
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    document.body.classList.remove("splashBooting");
+    window.setTimeout(() => document.getElementById("splashBoot")?.remove(), 320);
+  }
+}
+
 // The intro / character-select splash. It renders its own hero scene on this
 // same engine while the player picks a name; the main render loop below draws it
 // instead of the game world until `splash.active` flips during the launch.
-const splash = new SplashScreen(engine);
+const splash = new SplashScreen(engine, { onBootProgress: setSplashBootProgress });
+setSplashBootProgress(24, "arming buttons, no mercy");
+const splashReady = revealSplashWhenReady(splash, audio.ready);
 // Surface a daemon "update available" banner on the splash (best-effort, silent
 // when offline / up to date). Fed by the server's /api/update auto-check.
 void splash.showUpdateBanner(net.httpBase());
@@ -1345,9 +1431,10 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
 }
 
 async function start() {
-  // Kick the asset loads off immediately, in the background, so the splash time
-  // is useful. The launch waits for this, so gameplay starts with all known
-  // world assets already available instead of popping in after the cut.
+  // First reveal the splash only after its own scene/hero assets are ready. After
+  // that, the full game asset preload can run in the background while the player
+  // chooses how to enter.
+  await splashReady;
   const preload = buildAssetPreload();
 
   const handlers: NetHandlers = {
