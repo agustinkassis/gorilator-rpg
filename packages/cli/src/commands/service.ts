@@ -148,7 +148,10 @@ async function printUpdateLine(port: number): Promise<void> {
   const u = await fetchUpdateStatus(port);
   if (!u) return;
   if (u.updateAvailable && u.latest) {
-    printField("Update", `${log.yellow(`⬆ ${u.latest.tag} available`)} — run 'gorilator update'`);
+    // Show the installed version so it's clear the gap is this install's, not
+    // (e.g.) the repo you're standing in.
+    const installed = u.current?.version ? ` ${log.dim(`(installed ${u.current.version})`)}` : "";
+    printField("Update", `${log.yellow(`⬆ ${u.latest.tag} available`)}${installed} — run 'gorilator update'`);
     process.stdout.write(`  ${" ".repeat(11)}  ${log.dim(u.latest.url)}\n`);
   } else if (u.enabled) {
     printField("Update", u.error ? log.dim("(check failed)") : log.green("up to date"));
