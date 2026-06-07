@@ -510,7 +510,7 @@ async function runMainMenu(ctx: RuntimeContext, opts: MenuOpts): Promise<void> {
       actions.push({ key: "restart", label: "Restart", run: async () => { await restartCmd(ctx, opts); pause(); } });
     }
     actions.push(
-      { key: "logs", label: "Logs", hint: gate, disabled: !available, run: () => logsCmd(ctx) },
+      { key: "logs", label: "Logs", hint: gate, disabled: !available, run: () => { logsCmd(ctx, { lines: "100", "no-follow": true }); pause("Press Enter to return to the menu..."); } },
       { key: "update", label: "Update", hint: gate, disabled: !available, run: async () => { await update(ctx, opts); pause(); } },
       { key: "install", label: "Install ▸", hint: "globally or current directory", run: () => runInstallMenu(opts) },
     );
@@ -630,8 +630,8 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<{ title: string; r
   return { title: lines.join("\n"), running };
 }
 
-function pause(): void {
-  if (canPrompt()) ask("\nPress Enter to continue...");
+function pause(message = "Press Enter to continue..."): void {
+  if (canPrompt()) ask(`\n${message}`);
 }
 
 main().catch((e) => {

@@ -73,7 +73,10 @@ export interface LogsFlags {
 
 export function logsCmd(ctx?: RuntimeContext, flags: LogsFlags = {}): void {
   if (ctx?.kind === "project") {
-    logsProjectDev(ctx);
+    // Project logs follow by default (CLI `gorilator logs`), unless told not to
+    // (e.g. the Main Menu shows a recent, non-blocking snapshot).
+    const follow = !flags["no-follow"] && (flags.follow ?? true);
+    logsProjectDev(ctx, { follow });
     return;
   }
   const cfg = loadConfig();

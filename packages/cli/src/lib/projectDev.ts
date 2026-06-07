@@ -185,11 +185,12 @@ export async function printProjectStatus(ctx: RuntimeContext, opts: Options): Pr
   printPackageVersions(ctx.appDir, { heading: true });
 }
 
-export function logsProjectDev(ctx: RuntimeContext): void {
+export function logsProjectDev(ctx: RuntimeContext, { follow = true }: { follow?: boolean } = {}): void {
   assertProject(ctx);
   ensureLocalDir(ctx);
   if (!existsSync(ctx.logPath!)) writeFileSync(ctx.logPath!, "");
-  spawnSync("tail", ["-n", "100", "-f", ctx.logPath!], { stdio: "inherit" });
+  const args = ["-n", "100", ...(follow ? ["-f"] : []), ctx.logPath!];
+  spawnSync("tail", args, { stdio: "inherit" });
 }
 
 export async function updateProjectDev(ctx: RuntimeContext, opts: Options): Promise<void> {
