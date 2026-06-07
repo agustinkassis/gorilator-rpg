@@ -36,7 +36,7 @@ export interface SplashCredentials {
 }
 
 export interface SplashScreenOptions {
-  onBootProgress?: (pct: number) => void;
+  onBootProgress?: (pct: number, label?: string) => void;
 }
 
 /** Passed to CharacterFactory.spawn; ignored by the textured glb (and dummy). */
@@ -123,8 +123,9 @@ export class SplashScreen {
   private relayTicker?: number;
 
   constructor(engine: Engine, opts: SplashScreenOptions = {}) {
-    const setBootProgress = (pct: number) => opts.onBootProgress?.(Math.max(0, Math.min(100, pct)));
-    setBootProgress(8);
+    const setBootProgress = (pct: number, label?: string) =>
+      opts.onBootProgress?.(Math.max(0, Math.min(100, pct)), label);
+    setBootProgress(8, "lighting the black box");
 
     const scene = new Scene(engine);
     scene.clearColor = new Color4(0.03, 0.03, 0.05, 1);
@@ -174,21 +175,21 @@ export class SplashScreen {
     this.shadow.darkness = 0.35;
 
     this.buildStage();
-    setBootProgress(32);
+    setBootProgress(34, "polishing the boss entrance");
     try {
       this.embers = this.buildEmbers();
     } catch {
       /* particles are non-essential eye-candy — ignore any failure */
     }
-    setBootProgress(44);
+    setBootProgress(44, "teaching sparks to flirt");
     // Load the in-game rigged gorilla glb onto the pedestal; the stage + embers
     // are kept behind the bootstrap loader until the hero is ready.
-    this.ready = this.loadHero()
+    this.ready = this.loadHero(setBootProgress)
       .catch((err) => {
         console.warn("[splash] hero load failed", err);
       })
       .finally(() => {
-        setBootProgress(100);
+        setBootProgress(72, "model signed the release waiver");
       });
 
     // This is a *secondary* scene on a shared engine. The engine delivers its
@@ -565,12 +566,15 @@ export class SplashScreen {
    * the game uses) onto the pedestal. If the glb is absent the factory hands
    * back the straw-dummy fallback, which still poses fine.
    */
-  private async loadHero() {
+  private async loadHero(progress?: (pct: number, label?: string) => void) {
+    progress?.(52, "loading the gorilla model");
     const factory = new CharacterFactory(this.scene);
     await factory.preload({ playerOnly: true, includeAttack: true });
+    progress?.(64, "teaching the model to look dangerous");
     if (!this.active) return; // already launched / disposed
     // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
     this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
+    progress?.(70, "hero standing by, naturally");
   }
 
   // ---- launch animation ----------------------------------------------------

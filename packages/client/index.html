@@ -629,21 +629,81 @@
           opacity 0.22s ease,
           visibility 0s linear 0s;
       }
+      #splashBootInner {
+        display: grid;
+        justify-items: center;
+        gap: 10px;
+        transform: translateY(-2vh);
+      }
+      #splashBootLabel {
+        width: min(360px, 84vw);
+        min-height: 15px;
+        color: #78ff92;
+        font: 800 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.8px;
+        text-align: center;
+        text-transform: lowercase;
+        text-shadow: 0 0 10px rgba(57, 231, 100, 0.42);
+        opacity: 0.86;
+      }
       #splashBootTrack {
-        width: min(148px, 34vw);
-        height: 3px;
+        position: relative;
+        width: min(226px, 48vw);
+        height: 4px;
         border-radius: 999px;
         overflow: hidden;
         background: #031006;
-        box-shadow: 0 0 0 1px rgba(57, 231, 100, 0.16);
+        box-shadow:
+          0 0 0 1px rgba(57, 231, 100, 0.16),
+          0 0 18px rgba(57, 231, 100, 0.08);
+      }
+      #splashBootTrack::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(57, 231, 100, 0.2),
+          transparent
+        );
+        transform: translateX(-100%);
+        animation: splashBootScan 1.05s linear infinite;
       }
       #splashBootBar {
         width: 4%;
         height: 100%;
         border-radius: inherit;
-        background: #39e764;
-        box-shadow: 0 0 12px rgba(57, 231, 100, 0.72);
-        transition: width 0.24s cubic-bezier(0.22, 0.9, 0.22, 1);
+        min-width: 9px;
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(90deg, #22b84b, #78ff92 58%, #2bd75a);
+        box-shadow: 0 0 14px rgba(57, 231, 100, 0.78);
+        transition: width 0.16s cubic-bezier(0.22, 0.9, 0.22, 1);
+        animation: splashBootPulse 0.78s ease-in-out infinite;
+      }
+      #splashBootBar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          100deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.58) 45%,
+          transparent 74%
+        );
+        transform: translateX(-100%);
+        animation: splashBootShine 0.7s linear infinite;
+      }
+      @keyframes splashBootScan {
+        to { transform: translateX(100%); }
+      }
+      @keyframes splashBootPulse {
+        0%, 100% { filter: brightness(0.94); }
+        50% { filter: brightness(1.25); }
+      }
+      @keyframes splashBootShine {
+        to { transform: translateX(100%); }
       }
       body:not(.splashBooting) #splashBoot {
         opacity: 0;
@@ -2375,8 +2435,11 @@
     </style>
   </head>
   <body class="preGame splashBooting">
-    <div id="splashBoot" aria-hidden="true">
-      <div id="splashBootTrack"><div id="splashBootBar"></div></div>
+    <div id="splashBoot" role="status" aria-live="polite">
+      <div id="splashBootInner">
+        <div id="splashBootLabel">loading the cold open</div>
+        <div id="splashBootTrack"><div id="splashBootBar"></div></div>
+      </div>
     </div>
     <canvas id="renderCanvas"></canvas>
     <!-- Intro splash. The gorilla itself is rendered by WebGL
