@@ -20,7 +20,7 @@ import * as log from "../lib/log.js";
 import { selectMenu } from "../lib/menu.js";
 import type { Options } from "../lib/options.js";
 import { ask, canPrompt, confirm, promptDefault } from "../lib/proc.js";
-import { projectStatus, restartProjectDev } from "../lib/projectDev.js";
+import { projectStatus, restartProjectDev, startProjectDev } from "../lib/projectDev.js";
 import {
   adminsHint,
   adminsMenu,
@@ -90,7 +90,7 @@ async function cloudflareDevMenu(opts: Options, ctx: RuntimeContext): Promise<vo
     const state = readDevTunnelState(ctx);
     const env = readProjectEnv(ctx);
     const url = running ? state?.clientUrl : env.VITE_ALLOWED_HOSTS ? `https://${env.VITE_ALLOWED_HOSTS.split(",")[0]}` : "";
-    const title = url ? `Tunnel (Cloudflare)\n  ${url}\n` : "Tunnel (Cloudflare)";
+    const title = `Tunnel (Cloudflare)\n${tunnelStatusBlock(ctx, env)}`;
     const choice = await selectMenu(title, [
       { label: "Temporary tunnel (share dev)", hint: "quick, no login — …trycloudflare.com URL" },
       { label: "Permanent tunnel", hint: "your domain — requires a Cloudflare login" },
@@ -182,10 +182,17 @@ async function startSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
   const serverPort = Number(env.GAME_SERVER_PORT) || cfg.port;
   const clientPort = Number(env.CLIENT_PORT) || cfg.clientPort || DEFAULT_CLIENT_PORT;
 
-  log.info("Starting temporary Cloudflare tunnels (client + server)…");
+  // The tunnels are useless until the dev server is actually serving — start it
+  // first if it isn't already running.
+  if (!(await projectStatus(ctx)).active) {
+    log.info("Dev server isn't running — starting it first…");
+    await startProjectDev(ctx, opts);
+  }
+
+  log.info(`Starting temporary Cloudflare tunnels (client :${clientPort}, server :${serverPort})…`);
   const state = await startDevTunnels(ctx, serverPort, clientPort);
   if (!state.serverUrl || !state.clientUrl) {
-    log.warn("Could not capture a tunnel URL yet — the tunnels are starting; try 'Show share URL' shortly.");
+    log.warn("Could not capture a tunnel URL yet — the tunnels are starting; try 'Show URL' shortly.");
   }
   // Point the dev client at the server tunnel; Vite bakes this on (re)start.
   if (state.serverUrl) writeEnvPatch(ctx, { VITE_SERVER_URL: state.serverUrl }, "Pointed the client at the server tunnel.");
@@ -195,10 +202,32 @@ async function startSharing(opts: Options, ctx: RuntimeContext): Promise<void> {
 
   process.stdout.write("\n");
   if (state.clientUrl) {
-    log.ok(`Sharing your dev server: ${state.clientUrl}`);
-    log.info("Ephemeral URLs — they change each time you restart sharing. If the dev server wasn't running, start it (npm/pnpm dev) and re-open this menu.");
+    log.ok(`Sharing your dev server: ${log.green(state.clientUrl)}`);
+    if (state.serverUrl) log.info(`Game server tunnel: ${state.serverUrl}`);
+    log.info("Ephemeral URLs — they change each time you restart sharing.");
   }
   pause();
+}
+
+/** A multi-line block listing the active tunnel(s) and their URLs for the menu. */
+function tunnelStatusBlock(ctx: RuntimeContext, env: EnvMap): string {
+  const state = readDevTunnelState(ctx);
+  if (devTunnelRunning(ctx) && state) {
+    return (
+      `  ${log.dim("temporary · sharing dev")}\n` +
+      `  client: ${state.clientUrl || log.dim("starting…")}\n` +
+      `  server: ${state.serverUrl || log.dim("starting…")}\n`
+    );
+  }
+  if (env.VITE_ALLOWED_HOSTS) {
+    const [gameHost, serverHost] = env.VITE_ALLOWED_HOSTS.split(",");
+    return (
+      `  ${log.dim("permanent")}\n` +
+      `  client: https://${gameHost ?? "?"}\n` +
+      `  server: https://${serverHost ?? "?"}\n`
+    );
+  }
+  return `  ${log.dim("no tunnel active")}\n`;
 }
 
 async function stopSharing(opts: Options, ctx: RuntimeContext): Promise<void> {

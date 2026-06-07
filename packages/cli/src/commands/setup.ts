@@ -15,6 +15,7 @@ import {
   installTunnelService,
   isAuthorized,
   login,
+  quickTunnelUrl,
   removeQuickTunnelService,
   removeTunnelLocalConfig,
   routeDns,
@@ -38,8 +39,9 @@ import {
 } from "../lib/serverSettings.js";
 import type { Options } from "../lib/options.js";
 import { envFile } from "../lib/paths.js";
+import { waitForHealth } from "../lib/health.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
-import { restartService } from "../lib/service.js";
+import { restartService, startService } from "../lib/service.js";
 import { printPorts, printPublic, readEnvInfo } from "../lib/summary.js";
 import { runProjectSetup } from "./projectSetup.js";
 
@@ -398,10 +400,14 @@ async function cloudflareMenu(opts: Options): Promise<void> {
   }
 }
 
-/** A one-line description of the configured tunnel for the Cloudflare menu. */
+/** A one-line description of the active tunnel + its live URL for the menu. */
 function tunnelStatusLine(env: EnvMap): string {
   if (env.TUNNEL_MODE === "temporary") {
-    return `temporary${env.SERVER_HOSTNAME ? ` · https://${env.SERVER_HOSTNAME}` : " · starting…"}`;
+    // Prefer the live URL from the running quick tunnel (it changes on restart);
+    // fall back to the last-saved host.
+    const live = quickTunnelUrl();
+    const url = live || (env.SERVER_HOSTNAME ? `https://${env.SERVER_HOSTNAME}` : "");
+    return `temporary${url ? ` · ${url}` : " · starting…"}`;
   }
   if (env.TUNNEL_MODE === "permanent" || env.SERVER_HOSTNAME) {
     return `permanent · https://${env.SERVER_HOSTNAME || "?"}`;
@@ -571,11 +577,11 @@ async function setupTemporaryTunnel(cf: CloudflareCtx): Promise<void> {
     if (uninstallTunnelService()) log.ok("Stopped the previous permanent tunnel service.");
     removeTunnelLocalConfig();
   }
-  installQuickTunnelService(cf.port);
-  log.info("Waiting for the tunnel URL…");
-  const url = await awaitQuickTunnelUrl();
-  const host = url ? url.replace(/^https?:\/\//, "") : "";
+  // Tunnel the port the server actually serves on right now.
+  const port = Number(cf.env.GAME_SERVER_PORT) || cf.port;
 
+  // Build same-origin + (re)start the daemon FIRST, and confirm it's healthy, so
+  // the tunnel has something to serve before we expose it.
   mergeEnv(
     cf.appDir,
     cf.user,
@@ -585,19 +591,32 @@ async function setupTemporaryTunnel(cf: CloudflareCtx): Promise<void> {
       VITE_SAME_ORIGIN: "1",
       CLIENT_PORT: "",
       CLIENT_HOSTNAME: "",
-      SERVER_HOSTNAME: host,
-      PLAY_URL: url ?? "",
     },
-    "Configured a temporary Cloudflare tunnel.",
+    "Preparing the server for a temporary Cloudflare tunnel.",
   );
-  updateConfig({ clientPort: undefined, clientHost: undefined, serverHost: host || undefined });
-
+  updateConfig({ clientPort: undefined, clientHost: undefined });
   rebuildSameOriginIfNeeded(cf);
   restartDaemonForTunnel();
+  if (!(await ensureServing(port))) {
+    log.warn(`The server isn't answering on :${port} yet — the tunnel may 502 until it is. Check 'gorilator logs'.`);
+  }
+
+  // Now expose the running server.
+  installQuickTunnelService(port);
+  log.info("Waiting for the tunnel URL…");
+  const url = await awaitQuickTunnelUrl();
+  const host = url ? url.replace(/^https?:\/\//, "") : "";
+  mergeEnv(
+    cf.appDir,
+    cf.user,
+    { SERVER_HOSTNAME: host, PLAY_URL: url ?? "" },
+    url ? "Saved the temporary tunnel URL." : "Temporary tunnel configured.",
+  );
+  updateConfig({ serverHost: host || undefined });
 
   process.stdout.write("\n");
   if (url) {
-    log.ok(`Temporary tunnel is live: ${url}`);
+    log.ok(`Temporary tunnel is live: ${log.green(url)}`);
     log.info(
       "This URL is ephemeral — it changes if the tunnel restarts. For a stable address, switch to a permanent tunnel.",
     );
@@ -606,6 +625,19 @@ async function setupTemporaryTunnel(cf: CloudflareCtx): Promise<void> {
       "The tunnel service started but no URL was captured yet — run 'gorilator tunnel status' in a few seconds.",
     );
   }
+}
+
+/** Make sure the daemon is answering on `port` before exposing it: quick health
+ *  check, then start the service and wait if it isn't up. */
+async function ensureServing(port: number): Promise<boolean> {
+  if (await waitForHealth(port, 8000)) return true;
+  log.info("Server isn't responding yet — starting it…");
+  try {
+    startService();
+  } catch (e) {
+    log.warn(`Could not start the daemon: ${(e as Error).message}`);
+  }
+  return waitForHealth(port);
 }
 
 /** Permanent (named) tunnel: requires `cloudflared login` and your own domain;
