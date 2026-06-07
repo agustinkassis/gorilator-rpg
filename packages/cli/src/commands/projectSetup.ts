@@ -60,7 +60,7 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
       { label: "Tunnel (Cloudflare)", hint: tunnelHint(ctx, env) },
       { label: "Auto-update check interval", hint: updateCheckHint(env.UPDATE_CHECK_HOURS) },
       { label: "Show current settings" },
-      { label: "Exit" },
+      { label: "Back" },
     ]);
 
     if (choice === 0) await generalSettingsMenu(opts, ctx);

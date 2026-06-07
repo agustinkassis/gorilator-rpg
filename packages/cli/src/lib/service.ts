@@ -29,6 +29,8 @@ export interface ServiceBackend {
   stop(): void;
   restart(): void;
   status(): ServiceStatus;
+  /** Whether the OS service definition exists (the unit/plist file is present). */
+  installed(): boolean;
   logs(appDir: string, opts: ServiceLogOptions): void;
   uninstall(): void;
 }
@@ -53,6 +55,12 @@ export const startService = (): void => backend().start();
 export const stopService = (): void => backend().stop();
 export const restartService = (): void => backend().restart();
 export const statusService = (): ServiceStatus => backend().status();
+/** Whether the OS service is installed (unit/plist present). Safe on any
+ *  platform — returns false where there's no supported service manager. */
+export const serviceInstalled = (): boolean => {
+  if (!isLinux && !isMac) return false;
+  return backend().installed();
+};
 export const logsService = (appDir: string, opts: ServiceLogOptions): void =>
   backend().logs(appDir, opts);
 export const uninstallService = (): void => backend().uninstall();

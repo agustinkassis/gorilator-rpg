@@ -111,7 +111,7 @@ async function runSetupMenu(opts: Options): Promise<void> {
         hint: ctx.env.GORILATOR_DEV === "1" ? "dev mode ON" : "dev mode off",
       },
       { label: "Show current settings" },
-      { label: "Exit" },
+      { label: "Back" },
     ]);
 
     switch (choice) {

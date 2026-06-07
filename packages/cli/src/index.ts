@@ -21,11 +21,17 @@ import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/se
 import { runSetup, tunnelCmd } from "./commands/setup.js";
 import { uninstall } from "./commands/uninstall.js";
 import { update } from "./commands/update.js";
+import { activeTunnelMode, quickTunnelUrl } from "./lib/cloudflare.js";
+import { loadConfig } from "./lib/config.js";
 import { describeTarget, resolveRuntimeContext, type RuntimeContext } from "./lib/context.js";
+import { devTunnelRunning, readDevTunnelState } from "./lib/devTunnel.js";
 import * as log from "./lib/log.js";
 import { selectMenu } from "./lib/menu.js";
 import { resolveOptions, type RawFlags } from "./lib/options.js";
-import { ask, canPrompt } from "./lib/proc.js";
+import { projectStatus } from "./lib/projectDev.js";
+import { ask, canPrompt, confirm } from "./lib/proc.js";
+import { serviceInstalled, statusService } from "./lib/service.js";
+import { readEnvInfo } from "./lib/summary.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VERSION = readCliPackageVersion();
@@ -395,7 +401,7 @@ async function main(): Promise<void> {
     }
     return;
   }
-  if (values.help || cmd === undefined) {
+  if (values.help) {
     usage();
     return;
   }
@@ -403,11 +409,8 @@ async function main(): Promise<void> {
   const opts = resolveOptions(values as RawFlags);
   const ctx = resolveRuntimeContext(opts);
 
-  // Show what this command is about to act on: the local git checkout (project
-  // mode) or the system-wide install (global mode). Skipped for the internal
-  // supervised process and pure-info commands.
-  if (CONTEXT_AWARE_COMMANDS.has(cmd)) printContextBanner(ctx);
-
+  // No command → open the interactive Main Menu in a TTY; otherwise print usage
+  // (CI-safe). The menu shows its own context/status header.
   if (cmd === undefined) {
     if (process.stdin.isTTY && process.stdout.isTTY) {
       await runMainMenu(ctx, opts);
@@ -416,6 +419,11 @@ async function main(): Promise<void> {
     usage();
     return;
   }
+
+  // Show what this command is about to act on: the local git checkout (project
+  // mode) or the system-wide install (global mode). Skipped for the internal
+  // supervised process and pure-info commands.
+  if (CONTEXT_AWARE_COMMANDS.has(cmd)) printContextBanner(ctx);
 
   switch (cmd) {
     case "install":
@@ -465,133 +473,131 @@ async function main(): Promise<void> {
   }
 }
 
-async function runMainMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
-  printContextBanner(ctx);
+type MenuOpts = ReturnType<typeof resolveOptions>;
+
+interface MenuAction {
+  key: string;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  run: () => void | Promise<void>;
+}
+
+/** The interactive Main Menu shown for a bare `gorilator` invocation. Unified
+ *  and context-adaptive: Start/Stop/Restart drive the local dev server inside a
+ *  checkout, or the global system service otherwise — enabled only when that
+ *  target is installed/available. */
+async function runMainMenu(ctx: RuntimeContext, opts: MenuOpts): Promise<void> {
+  for (;;) {
+    const isProject = ctx.kind === "project";
+    const available = isProject || serviceInstalled();
+    const gate = available ? undefined : "service not installed";
+    const title = await renderMainStatus(ctx);
+
+    const actions: MenuAction[] = [
+      { key: "status", label: "Status", run: async () => { await statusCmd(ctx, opts); pause(); } },
+      { key: "setup", label: "Setup", hint: gate, disabled: !available, run: () => runSetup(opts, ctx) },
+      { key: "start", label: "Start", hint: gate, disabled: !available, run: async () => { await startCmd(ctx, opts); pause(); } },
+      { key: "stop", label: "Stop", hint: gate, disabled: !available, run: async () => { await stopCmd(ctx); pause(); } },
+      { key: "restart", label: "Restart", hint: gate, disabled: !available, run: async () => { await restartCmd(ctx, opts); pause(); } },
+      { key: "logs", label: "Logs", hint: gate, disabled: !available, run: () => logsCmd(ctx) },
+      { key: "update", label: "Update", hint: gate, disabled: !available, run: async () => { await update(ctx, opts); pause(); } },
+      { key: "install", label: "Install ▸", hint: "globally or current directory", run: () => runInstallMenu(opts) },
+    ];
+    if (!isProject && serviceInstalled()) {
+      actions.push({ key: "uninstall", label: "Uninstall", run: async () => { await uninstall(opts); pause(); } });
+    }
+    actions.push({ key: "exit", label: "Exit", run: () => {} });
+
+    const choice = await selectMenu(
+      title,
+      actions.map((a) => ({ label: a.label, hint: a.hint, disabled: a.disabled })),
+    );
+    if (choice < 0) return;
+    const action = actions[choice];
+    if (action.key === "exit") return;
+    await action.run();
+  }
+}
+
+/** Install submenu: globally (default dir) or into the current directory. */
+async function runInstallMenu(opts: MenuOpts): Promise<void> {
+  const cwd = process.cwd();
+  const choice = await selectMenu("Install", [
+    { label: "Install globally", hint: opts.appDir },
+    { label: "Install in current directory", hint: cwd },
+    { label: "Back" },
+  ]);
+  if (choice === 0) {
+    await install(opts, VERSION);
+    pause();
+  } else if (choice === 1) {
+    if (
+      confirm(
+        `Install into ${cwd}? This clones/checks out the release here and may overwrite local changes.`,
+      )
+    ) {
+      await install({ ...opts, appDir: cwd, dirExplicit: true }, VERSION);
+      pause();
+    }
+  }
+}
+
+function statusDot(running: boolean): string {
+  return running ? log.green("● running") : log.yellow("○ stopped");
+}
+
+/** The public/tunnel URL for a system install, if any (live for temporary). */
+function systemPublicUrl(serverHost?: string): string | null {
+  if (activeTunnelMode() === "temporary") {
+    return quickTunnelUrl() ?? (serverHost ? `https://${serverHost}` : null);
+  }
+  return serverHost ? `https://${serverHost}` : null;
+}
+
+/** Multi-line header for the Main Menu: working context, global install, the
+ *  adaptive server status, and the current tunnel/local URLs. */
+async function renderMainStatus(ctx: RuntimeContext): Promise<string> {
+  const t = describeTarget(ctx);
+  const cfg = loadConfig();
+  const lines: string[] = [log.dim(`🦍 gorilator ${VERSION}`)];
+
   if (ctx.kind === "project") {
-    await runProjectMenu(ctx, opts);
-    return;
+    const slug = t.remote
+      ? `${log.bold(t.remote)}${t.ref ? log.dim(`@${t.ref}`) : ""}`
+      : log.dim(t.appDir);
+    lines.push(`  ${log.dim("Context:")} ${log.green("project")} ${log.dim("·")} ${slug}`);
+    lines.push(`           ${log.dim(t.appDir)}`);
+  } else {
+    lines.push(`  ${log.dim("Context:")} ${log.dim(`no gorilator repo · ${process.cwd()}`)}`);
   }
-  await runSystemMenu(ctx, opts);
-}
 
-async function runProjectMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
-  for (;;) {
-    const choice = await selectMenu("Gorilator project", [
-      { label: "Status" },
-      { label: "Start" },
-      { label: "Stop" },
-      { label: "Restart" },
-      { label: "Logs" },
-      { label: "Settings" },
-      { label: "Update" },
-      { label: "Remote" },
-      { label: "Help" },
-      { label: "Exit" },
-    ]);
+  lines.push(
+    `  ${log.dim("Global: ")} ${cfg ? `${log.blue("installed")} ${log.dim(`· ${cfg.appDir}`)}` : log.yellow("not installed")}`,
+  );
 
-    if (choice === 0) {
-      await statusCmd(ctx, opts);
-      pause();
-    } else if (choice === 1) {
-      await startCmd(ctx, opts);
-      pause();
-    } else if (choice === 2) {
-      await stopCmd(ctx);
-      pause();
-    } else if (choice === 3) {
-      await restartCmd(ctx, opts);
-      pause();
-    } else if (choice === 4) {
-      logsCmd(ctx);
-    } else if (choice === 5) {
-      await runSetup(opts, ctx);
-    } else if (choice === 6) {
-      await update(ctx, opts);
-      pause();
-    } else if (choice === 7) {
-      await remoteCmd(ctx, opts);
-      pause();
-    } else if (choice === 8) {
-      usage();
-      pause();
-    } else return;
+  if (ctx.kind === "project") {
+    const ps = await projectStatus(ctx);
+    const info = readEnvInfo(ctx.appDir, ps.state?.serverPort ?? 2567, ps.state?.clientPort);
+    const localPort = info.clientPort ?? info.port;
+    lines.push(
+      `  ${log.dim("Dev:")}     ${statusDot(ps.active)}${ps.active ? log.dim(` · http://localhost:${localPort}`) : ""}`,
+    );
+    if (devTunnelRunning(ctx)) {
+      const st = readDevTunnelState(ctx);
+      if (st?.clientUrl) lines.push(`  ${log.dim("Share:")}   ${log.green(st.clientUrl)}`);
+    }
+  } else {
+    const running = statusService().active;
+    const info = readEnvInfo(cfg?.appDir ?? ctx.appDir, cfg?.port ?? 2567, cfg?.clientPort);
+    lines.push(
+      `  ${log.dim("Server:")}  ${statusDot(running)}${running ? log.dim(` · http://localhost:${info.port}`) : ""}`,
+    );
+    const pub = systemPublicUrl(info.serverHost);
+    if (pub) lines.push(`  ${log.dim("Public:")}  ${log.green(pub)}`);
   }
-}
 
-async function runSystemMenu(ctx: RuntimeContext, opts: ReturnType<typeof resolveOptions>): Promise<void> {
-  for (;;) {
-    const choice = await selectMenu("Gorilator system install", [
-      { label: "Status" },
-      { label: "Start" },
-      { label: "Stop" },
-      { label: "Restart" },
-      { label: "Logs" },
-      { label: "Setup" },
-      { label: "Install" },
-      { label: "Update" },
-      { label: "Remote" },
-      { label: "Tunnel" },
-      { label: "Uninstall" },
-      { label: "Help" },
-      { label: "Exit" },
-    ]);
-
-    if (choice === 0) {
-      await statusCmd(ctx, opts);
-      pause();
-    } else if (choice === 1) {
-      await startCmd(ctx, opts);
-      pause();
-    } else if (choice === 2) {
-      await stopCmd(ctx);
-      pause();
-    } else if (choice === 3) {
-      await restartCmd(ctx, opts);
-      pause();
-    } else if (choice === 4) {
-      logsCmd(ctx);
-    } else if (choice === 5) {
-      await runSetup(opts, ctx);
-    } else if (choice === 6) {
-      await install(opts, VERSION);
-      pause();
-    } else if (choice === 7) {
-      await update(ctx, opts);
-      pause();
-    } else if (choice === 8) {
-      await remoteCmd(ctx, opts);
-      pause();
-    } else if (choice === 9) {
-      await runTunnelMenu();
-    } else if (choice === 10) {
-      uninstall(opts);
-      pause();
-    } else if (choice === 11) {
-      usage();
-      pause();
-    } else return;
-  }
-}
-
-async function runTunnelMenu(): Promise<void> {
-  for (;;) {
-    const choice = await selectMenu("Gorilator tunnel", [
-      { label: "Status" },
-      { label: "Login" },
-      { label: "Restart" },
-      { label: "Back" },
-    ]);
-    if (choice === 0) {
-      tunnelCmd("status");
-      pause();
-    } else if (choice === 1) {
-      tunnelCmd("login");
-      pause();
-    } else if (choice === 2) {
-      tunnelCmd("restart");
-      pause();
-    } else return;
-  }
+  return lines.join("\n");
 }
 
 function pause(): void {

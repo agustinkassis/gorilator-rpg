@@ -2,7 +2,7 @@
 // `gorilator serve`, restarts on exit (KeepAlive), and logs to a file the
 // `logs` command tails. Uses the classic load/unload/start/stop verbs, which
 // remain functional across macOS releases.
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import * as log from "./log.js";
 import { LAUNCHD_LABEL, launchdPlistPath, logFile } from "./paths.js";
@@ -73,6 +73,10 @@ export function stop(): void {
 export function restart(): void {
   stop();
   start();
+}
+
+export function installed(): boolean {
+  return existsSync(launchdPlistPath());
 }
 
 export function status(): ServiceStatus {
