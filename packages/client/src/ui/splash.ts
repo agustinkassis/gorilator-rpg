@@ -35,6 +35,10 @@ export interface SplashCredentials {
   nostr?: NostrCredentials;
 }
 
+export interface SplashScreenOptions {
+  onBootProgress?: (pct: number) => void;
+}
+
 /** Passed to CharacterFactory.spawn; ignored by the textured glb (and dummy). */
 const HERO_ACCENT = new Color3(0.98, 0.78, 0.28);
 /** The splash hero is shown bigger than its in-game (1×) size for a bolder pose. */
@@ -58,6 +62,8 @@ const IMPACT_FX_MS = 520;
 export class SplashScreen {
   /** The splash's own scene. The main render loop draws it while `active`. */
   readonly scene: Scene;
+  /** Resolves once the splash-only scene/hero assets are ready to reveal. */
+  readonly ready: Promise<void>;
   /** True until the launch flash has masked the swap to the live game scene. */
   active = true;
 
@@ -116,7 +122,10 @@ export class SplashScreen {
   private drainResolvers: Array<() => void> = [];
   private relayTicker?: number;
 
-  constructor(engine: Engine) {
+  constructor(engine: Engine, opts: SplashScreenOptions = {}) {
+    const setBootProgress = (pct: number) => opts.onBootProgress?.(Math.max(0, Math.min(100, pct)));
+    setBootProgress(8);
+
     const scene = new Scene(engine);
     scene.clearColor = new Color4(0.03, 0.03, 0.05, 1);
     scene.ambientColor = new Color3(0.26, 0.22, 0.28);
@@ -165,14 +174,22 @@ export class SplashScreen {
     this.shadow.darkness = 0.35;
 
     this.buildStage();
+    setBootProgress(32);
     try {
       this.embers = this.buildEmbers();
     } catch {
       /* particles are non-essential eye-candy — ignore any failure */
     }
+    setBootProgress(44);
     // Load the in-game rigged gorilla glb onto the pedestal; the stage + embers
-    // show immediately and the hero pops in when it's ready.
-    void this.loadHero();
+    // are kept behind the bootstrap loader until the hero is ready.
+    this.ready = this.loadHero()
+      .catch((err) => {
+        console.warn("[splash] hero load failed", err);
+      })
+      .finally(() => {
+        setBootProgress(100);
+      });
 
     // This is a *secondary* scene on a shared engine. The engine delivers its
     // parallel-shader-compile "ready" callbacks to the primary/active scene, so
@@ -549,15 +566,11 @@ export class SplashScreen {
    * back the straw-dummy fallback, which still poses fine.
    */
   private async loadHero() {
-    try {
-      const factory = new CharacterFactory(this.scene);
-      await factory.preload({ playerOnly: true, includeAttack: true });
-      if (!this.active) return; // already launched / disposed
-      // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
-      this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
-    } catch (err) {
-      console.warn("[splash] hero load failed", err);
-    }
+    const factory = new CharacterFactory(this.scene);
+    await factory.preload({ playerOnly: true, includeAttack: true });
+    if (!this.active) return; // already launched / disposed
+    // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
+    this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
   }
 
   // ---- launch animation ----------------------------------------------------

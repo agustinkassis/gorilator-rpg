@@ -616,6 +616,47 @@
       body.devMode #playerBadge,
       body.devMode #respawnOverlay { display: none !important; }
 
+      #splashBoot {
+        position: fixed;
+        inset: 0;
+        z-index: 20000;
+        display: grid;
+        place-items: center;
+        background: #000;
+        opacity: 1;
+        visibility: visible;
+        transition:
+          opacity 0.22s ease,
+          visibility 0s linear 0s;
+      }
+      #splashBootTrack {
+        width: min(148px, 34vw);
+        height: 3px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #031006;
+        box-shadow: 0 0 0 1px rgba(57, 231, 100, 0.16);
+      }
+      #splashBootBar {
+        width: 4%;
+        height: 100%;
+        border-radius: inherit;
+        background: #39e764;
+        box-shadow: 0 0 12px rgba(57, 231, 100, 0.72);
+        transition: width 0.24s cubic-bezier(0.22, 0.9, 0.22, 1);
+      }
+      body:not(.splashBooting) #splashBoot {
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          opacity 0.22s ease,
+          visibility 0s linear 0.24s;
+      }
+      body.splashBooting #splash {
+        opacity: 0;
+        visibility: hidden;
+      }
+
       /* "Update available" banner — a small pill near the top of the splash,
          revealed only when the daemon's /api/update check finds a new release. */
       #updateBanner {
@@ -2333,7 +2374,10 @@
       }
     </style>
   </head>
-  <body class="preGame">
+  <body class="preGame splashBooting">
+    <div id="splashBoot" aria-hidden="true">
+      <div id="splashBootTrack"><div id="splashBootBar"></div></div>
+    </div>
     <canvas id="renderCanvas"></canvas>
     <!-- Intro splash. The gorilla itself is rendered by WebGL
          on the canvas behind this overlay (see ui/splash.ts); this layer holds the

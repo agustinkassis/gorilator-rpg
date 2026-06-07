@@ -1241,10 +1241,30 @@ setupClickToMove({
 // Hold SPACE to sprint (server drains stamina + applies the speed boost).
 setupSprint(net);
 
+function setSplashBootProgress(pct: number): void {
+  const bar = document.getElementById("splashBootBar") as HTMLElement | null;
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+}
+
+async function revealSplashWhenReady(splash: SplashScreen): Promise<void> {
+  const minimumDisplay = new Promise((resolve) => window.setTimeout(resolve, 420));
+  try {
+    await splash.ready;
+  } finally {
+    setSplashBootProgress(92);
+    await minimumDisplay;
+    setSplashBootProgress(100);
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    document.body.classList.remove("splashBooting");
+    window.setTimeout(() => document.getElementById("splashBoot")?.remove(), 320);
+  }
+}
+
 // The intro / character-select splash. It renders its own hero scene on this
 // same engine while the player picks a name; the main render loop below draws it
 // instead of the game world until `splash.active` flips during the launch.
-const splash = new SplashScreen(engine);
+const splash = new SplashScreen(engine, { onBootProgress: setSplashBootProgress });
+const splashReady = revealSplashWhenReady(splash);
 // Surface a daemon "update available" banner on the splash (best-effort, silent
 // when offline / up to date). Fed by the server's /api/update auto-check.
 void splash.showUpdateBanner(net.httpBase());
@@ -1345,9 +1365,10 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
 }
 
 async function start() {
-  // Kick the asset loads off immediately, in the background, so the splash time
-  // is useful. The launch waits for this, so gameplay starts with all known
-  // world assets already available instead of popping in after the cut.
+  // First reveal the splash only after its own scene/hero assets are ready. After
+  // that, the full game asset preload can run in the background while the player
+  // chooses how to enter.
+  await splashReady;
   const preload = buildAssetPreload();
 
   const handlers: NetHandlers = {
