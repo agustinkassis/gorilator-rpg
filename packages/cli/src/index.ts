@@ -485,25 +485,34 @@ interface MenuAction {
 
 /** The interactive Main Menu shown for a bare `gorilator` invocation. Unified
  *  and context-adaptive: Start/Stop/Restart drive the local dev server inside a
- *  checkout, or the global system service otherwise — enabled only when that
- *  target is installed/available. */
+ *  checkout, or the global system service otherwise — shown only when that
+ *  target is installed/available, and according to whether it's running
+ *  (Start when stopped; Stop/Restart when running). */
 async function runMainMenu(ctx: RuntimeContext, opts: MenuOpts): Promise<void> {
   for (;;) {
     const isProject = ctx.kind === "project";
     const available = isProject || serviceInstalled();
     const gate = available ? undefined : "service not installed";
-    const title = await renderMainStatus(ctx);
+    const { title, running } = await renderMainStatus(ctx);
 
     const actions: MenuAction[] = [
       { key: "status", label: "Status", run: async () => { await statusCmd(ctx, opts); pause(); } },
       { key: "setup", label: "Setup", hint: gate, disabled: !available, run: () => runSetup(opts, ctx) },
-      { key: "start", label: "Start", hint: gate, disabled: !available, run: async () => { await startCmd(ctx, opts); pause(); } },
-      { key: "stop", label: "Stop", hint: gate, disabled: !available, run: async () => { await stopCmd(ctx); pause(); } },
-      { key: "restart", label: "Restart", hint: gate, disabled: !available, run: async () => { await restartCmd(ctx, opts); pause(); } },
+    ];
+    // Lifecycle actions reflect the running state: Start only when stopped,
+    // Stop/Restart only when running. Hidden entirely when not installed.
+    if (available && !running) {
+      actions.push({ key: "start", label: "Start", run: async () => { await startCmd(ctx, opts); pause(); } });
+    }
+    if (available && running) {
+      actions.push({ key: "stop", label: "Stop", run: async () => { await stopCmd(ctx); pause(); } });
+      actions.push({ key: "restart", label: "Restart", run: async () => { await restartCmd(ctx, opts); pause(); } });
+    }
+    actions.push(
       { key: "logs", label: "Logs", hint: gate, disabled: !available, run: () => logsCmd(ctx) },
       { key: "update", label: "Update", hint: gate, disabled: !available, run: async () => { await update(ctx, opts); pause(); } },
       { key: "install", label: "Install ▸", hint: "globally or current directory", run: () => runInstallMenu(opts) },
-    ];
+    );
     if (!isProject && serviceInstalled()) {
       actions.push({ key: "uninstall", label: "Uninstall", run: async () => { await uninstall(opts); pause(); } });
     }
@@ -556,8 +565,10 @@ function systemPublicUrl(serverHost?: string): string | null {
 }
 
 /** Multi-line header for the Main Menu: working context, global install, the
- *  adaptive server status, and the current tunnel/local URLs. */
-async function renderMainStatus(ctx: RuntimeContext): Promise<string> {
+ *  adaptive server status, and the current tunnel/local URLs. Also returns the
+ *  running flag so the menu can show Start/Stop/Restart by state (one status
+ *  probe per render). */
+async function renderMainStatus(ctx: RuntimeContext): Promise<{ title: string; running: boolean }> {
   const t = describeTarget(ctx);
   const cfg = loadConfig();
   const lines: string[] = [log.dim(`🦍 gorilator ${VERSION}`)];
@@ -576,19 +587,21 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<string> {
     `  ${log.dim("Global: ")} ${cfg ? `${log.blue("installed")} ${log.dim(`· ${cfg.appDir}`)}` : log.yellow("not installed")}`,
   );
 
+  let running = false;
   if (ctx.kind === "project") {
     const ps = await projectStatus(ctx);
+    running = ps.active;
     const info = readEnvInfo(ctx.appDir, ps.state?.serverPort ?? 2567, ps.state?.clientPort);
     const localPort = info.clientPort ?? info.port;
     lines.push(
-      `  ${log.dim("Dev:")}     ${statusDot(ps.active)}${ps.active ? log.dim(` · http://localhost:${localPort}`) : ""}`,
+      `  ${log.dim("Dev:")}     ${statusDot(running)}${running ? log.dim(` · http://localhost:${localPort}`) : ""}`,
     );
-    if (devTunnelRunning(ctx)) {
+    if (running && devTunnelRunning(ctx)) {
       const st = readDevTunnelState(ctx);
       if (st?.clientUrl) lines.push(`  ${log.dim("Share:")}   ${log.green(st.clientUrl)}`);
     }
   } else {
-    const running = statusService().active;
+    running = statusService().active;
     const info = readEnvInfo(cfg?.appDir ?? ctx.appDir, cfg?.port ?? 2567, cfg?.clientPort);
     lines.push(
       `  ${log.dim("Server:")}  ${statusDot(running)}${running ? log.dim(` · http://localhost:${info.port}`) : ""}`,
@@ -597,7 +610,7 @@ async function renderMainStatus(ctx: RuntimeContext): Promise<string> {
     if (pub) lines.push(`  ${log.dim("Public:")}  ${log.green(pub)}`);
   }
 
-  return lines.join("\n");
+  return { title: lines.join("\n"), running };
 }
 
 function pause(): void {
