@@ -31,32 +31,47 @@ export async function runProjectSetup(opts: Options, ctx: RuntimeContext): Promi
     const cfg = loadProjectConfig(ctx, opts);
     const env = readProjectEnv(ctx);
     const choice = await selectMenu(`Gorilator project setup\n${ctx.appDir}`, [
+      { label: "General settings", hint: "display name, NSEC, admins" },
       {
         label: "Server and client ports",
         hint: `server ${env.GAME_SERVER_PORT || cfg.port}, client ${
           env.CLIENT_PORT || cfg.clientPort || DEFAULT_CLIENT_PORT
         }`,
       },
-      { label: "Server NSEC", hint: maskSecret(env.NOSTR_NSEC) },
-      {
-        label: "Colyseus and environment",
-        hint: env.SERVER_NAME || DEFAULT_SERVER_NAME,
-      },
+      { label: "Colyseus and environment", hint: "monitor auth, stats files" },
       { label: "Auto-update check interval", hint: updateCheckHint(env.UPDATE_CHECK_HOURS) },
-      { label: "Manage admins (NIP-98)", hint: adminsHint(env.ADMIN_NPUBS) },
       { label: "Show current settings" },
       { label: "Exit" },
     ]);
 
-    if (choice === 0) await portsMenu(opts, ctx);
-    else if (choice === 1) await nsecMenu(opts, ctx);
+    if (choice === 0) await generalSettingsMenu(opts, ctx);
+    else if (choice === 1) await portsMenu(opts, ctx);
     else if (choice === 2) await environmentMenu(opts, ctx);
     else if (choice === 3) await updateAutoUpdateInterval(settingsCtx(opts, ctx));
-    else if (choice === 4) await adminsMenu(() => settingsCtx(opts, ctx));
-    else if (choice === 5) {
+    else if (choice === 4) {
       showCurrentSettings(opts, ctx);
       pause();
     } else return;
+  }
+}
+
+/** General settings: the server's public identity — display name, Nostr key, and
+ *  the admin npubs allowed to call /api/admin/* (NIP-98). Mirrors the system
+ *  setup menu (commands/setup.ts). */
+async function generalSettingsMenu(opts: Options, ctx: RuntimeContext): Promise<void> {
+  for (;;) {
+    const env = readProjectEnv(ctx);
+    const choice = await selectMenu("General settings", [
+      { label: "Server display name", hint: env.SERVER_NAME || DEFAULT_SERVER_NAME },
+      { label: "Server NSEC", hint: maskSecret(env.NOSTR_NSEC) },
+      { label: "Manage admins (NIP-98)", hint: adminsHint(env.ADMIN_NPUBS) },
+      { label: "Back" },
+    ]);
+
+    if (choice === 0) await updateServerName(opts, ctx);
+    else if (choice === 1) await nsecMenu(opts, ctx);
+    else if (choice === 2) await adminsMenu(() => settingsCtx(opts, ctx));
+    else return;
   }
 }
 
@@ -153,7 +168,6 @@ async function environmentMenu(opts: Options, ctx: RuntimeContext): Promise<void
   for (;;) {
     const env = readProjectEnv(ctx);
     const choice = await selectMenu("Colyseus and environment", [
-      { label: "Update server display name", hint: env.SERVER_NAME || DEFAULT_SERVER_NAME },
       { label: "Update Colyseus monitor credentials", hint: env.MONITOR_USER || "disabled" },
       { label: "Update server stats file", hint: env.SERVER_STATS_FILE || "default .server-realms.json" },
       { label: "Set custom supported server env var" },
@@ -161,11 +175,10 @@ async function environmentMenu(opts: Options, ctx: RuntimeContext): Promise<void
       { label: "Back" },
     ]);
 
-    if (choice === 0) await updateServerName(opts, ctx);
-    else if (choice === 1) await updateMonitorCredentials(opts, ctx);
-    else if (choice === 2) await updateOptionalEnv(opts, ctx, "SERVER_STATS_FILE", "Server stats file");
-    else if (choice === 3) await updateCustomEnv(opts, ctx);
-    else if (choice === 4) {
+    if (choice === 0) await updateMonitorCredentials(opts, ctx);
+    else if (choice === 1) await updateOptionalEnv(opts, ctx, "SERVER_STATS_FILE", "Server stats file");
+    else if (choice === 2) await updateCustomEnv(opts, ctx);
+    else if (choice === 3) {
       showCurrentSettings(opts, ctx);
       pause();
     } else return;
