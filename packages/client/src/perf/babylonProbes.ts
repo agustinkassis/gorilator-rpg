@@ -23,6 +23,8 @@ export interface BabylonProbes {
 
 const GEO_RECOMPUTE_MS = 250; // re-scan meshes for per-kind geometry tags this often
 
+type GpuTimingEngine = Engine & { getGPUFrameTimeCounter?: unknown };
+
 /**
  * Wire Babylon's engine + scene instrumentation into a {@link PerfTracker}. Every
  * rendered frame it reads FPS, draw calls, active meshes and triangles (cheap), and
@@ -46,7 +48,9 @@ export function attachBabylonProbes(
   const engineInstr = new EngineInstrumentation(engine);
   const sceneInstr = new SceneInstrumentation(scene);
 
-  const gpuSupported = !!engine.getCaps().timerQuery;
+  const gpuSupported =
+    !!engine.getCaps().timerQuery &&
+    typeof (engine as GpuTimingEngine).getGPUFrameTimeCounter === "function";
   let heavy = false;
   let lastGeoAt = 0;
   let geoCache: { kind: string; triangles: number }[] = [];
@@ -97,8 +101,15 @@ export function attachBabylonProbes(
   };
 
   const obs = scene.onAfterRenderObservable.add(() => {
-    const gpuCounter = engineInstr.gpuFrameTimeCounter; // Nullable<PerfCounter>
-    const gpuNs = heavy && gpuSupported && gpuCounter ? gpuCounter.current : 0;
+    let gpuNs = 0;
+    if (heavy && gpuSupported) {
+      try {
+        const gpuCounter = engineInstr.gpuFrameTimeCounter; // Nullable<PerfCounter>
+        gpuNs = gpuCounter ? gpuCounter.current : 0;
+      } catch {
+        gpuNs = 0;
+      }
+    }
 
     if (heavy) {
       // scene.render → its sub-phases (ms), as reasons/tags the log + benchmark keep.

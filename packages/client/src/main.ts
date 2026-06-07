@@ -48,7 +48,7 @@ const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
 const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
 
 // Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
-// time by Vite with the package.json version (see vite.config.ts).
+// time by Vite with the root app package version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
 if (versionEl) {
   versionEl.textContent = `v${__APP_VERSION__}`;

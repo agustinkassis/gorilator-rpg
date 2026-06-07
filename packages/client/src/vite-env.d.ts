@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
-/** The app version (package.json `version`), injected at build time by Vite's
- *  `define` (see vite.config.ts). Used in bundled perf metadata. */
+/** The app version (root package.json version), injected at build time by Vite's
+ *  define config (see vite.config.ts). Used in bundled perf metadata. */
 declare const __APP_VERSION__: string;
 
 /** Versions of every workspace package (label → version), injected at build time

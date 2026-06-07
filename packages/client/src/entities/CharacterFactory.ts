@@ -8,6 +8,7 @@ import {
   PBRMaterial,
   Color3,
 } from "@babylonjs/core";
+import "@babylonjs/core/Animations/animatable.core";
 import "@babylonjs/loaders/glTF";
 import { AnimState } from "@rpg/shared";
 import { AnimGroups, AnimSpeeds } from "./AnimationController";
