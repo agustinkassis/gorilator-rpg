@@ -1267,17 +1267,57 @@ setupClickToMove({
 // Hold SPACE to sprint (server drains stamina + applies the speed boost).
 setupSprint(net);
 
-const SPLASH_BOOT_TASKS = [
-  { pct: 0, label: "loading the cold open" },
-  { pct: 12, label: "waking the black screen" },
-  { pct: 24, label: "arming buttons, no mercy" },
-  { pct: 36, label: "polishing the boss entrance" },
-  { pct: 50, label: "loading the gorilla model" },
-  { pct: 64, label: "teaching the model to look dangerous" },
-  { pct: 76, label: "warming the bass for impact" },
-  { pct: 88, label: "making the splash behave" },
-  { pct: 98, label: "opening the arena gates" },
+// A pool of loading quips (funny, gaming, faintly self-aware). Six distinct ones
+// are picked at random on each load and spread across the boot bar, so the splash
+// reads differently every time.
+const SPLASH_BOOT_QUIPS = [
+  "loading the cold open",
+  "polishing the boss entrance",
+  "arming buttons, no mercy",
+  "teaching the gorilla to flex",
+  "negotiating with the physics engine",
+  "bribing the frame rate",
+  "convincing bananas they're weapons",
+  "warming the bass for impact",
+  "untangling the spaghetti code (don't look)",
+  "asking the gorilla to look dangerous",
+  "feeding the goblins their morning rage",
+  "calibrating maximum primate",
+  "rendering muscles nobody asked for",
+  "summoning the arena from the void",
+  "double-checking gravity still works",
+  "stretching before the grind",
+  "loading 400 polygons of pure attitude",
+  "pretending the lag is intentional",
+  "sharpening the difficulty curve",
+  "waking the boss, gently",
+  "counting the bananas, twice",
+  "training goblins to miss dramatically",
+  "applying war paint to the UI",
+  "tuning the roar to eleven",
+  "hiding the loading bar's anxiety",
+  "rolling for initiative",
+  "buffering pure chaos",
+  "compiling questionable life choices",
+  "opening the arena gates",
+  "last second vanity check",
 ] as const;
+
+// The six boot-bar thresholds the picked quips snap to as it fills 0 → 100.
+const SPLASH_BOOT_STOPS = [0, 16, 34, 52, 70, 88] as const;
+
+/** Shuffle the quip pool and pin the first six to the boot-bar stops, so each
+ *  load shows six different lines from the pool. */
+function pickSplashBootTasks(): { pct: number; label: string }[] {
+  const pool = [...SPLASH_BOOT_QUIPS];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return SPLASH_BOOT_STOPS.map((pct, i) => ({ pct, label: pool[i] }));
+}
+
+const SPLASH_BOOT_TASKS = pickSplashBootTasks();
 
 let splashBootShown = 4;
 let splashBootTarget = 4;
@@ -1334,17 +1374,17 @@ async function revealSplashWhenReady(splash: SplashScreen, audioReady: Promise<v
   const minimumDisplay = new Promise((resolve) => window.setTimeout(resolve, 760));
   try {
     const heroReady = splash.ready.then(() => {
-      setSplashBootProgress(72, "model signed the release waiver");
+      setSplashBootProgress(72);
     });
     const soundReady = audioReady.then(() => {
-      setSplashBootProgress(84, "warming the bass for impact");
+      setSplashBootProgress(84);
     });
     await Promise.all([heroReady, soundReady]);
   } finally {
     splashBootOverrideLabel = "";
-    setSplashBootProgress(94, "last second vanity check");
+    setSplashBootProgress(94);
     await minimumDisplay;
-    setSplashBootProgress(100, "opening the arena gates");
+    setSplashBootProgress(100);
     await new Promise((resolve) => window.setTimeout(resolve, 180));
     document.body.classList.remove("splashBooting");
     window.setTimeout(() => document.getElementById("splashBoot")?.remove(), 320);
@@ -1355,7 +1395,7 @@ async function revealSplashWhenReady(splash: SplashScreen, audioReady: Promise<v
 // same engine while the player picks a name; the main render loop below draws it
 // instead of the game world until `splash.active` flips during the launch.
 const splash = new SplashScreen(engine, { onBootProgress: setSplashBootProgress });
-setSplashBootProgress(24, "arming buttons, no mercy");
+setSplashBootProgress(24);
 const splashReady = revealSplashWhenReady(splash, audio.ready);
 // Surface a daemon "update available" banner on the splash (best-effort, silent
 // when offline / up to date). Fed by the server's /api/update auto-check.

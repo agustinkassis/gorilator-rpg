@@ -582,14 +582,14 @@ export class SplashScreen {
    * back the straw-dummy fallback, which still poses fine.
    */
   private async loadHero(progress?: (pct: number, label?: string) => void) {
-    progress?.(52, "loading the gorilla model");
+    progress?.(52);
     const factory = new CharacterFactory(this.scene);
     await factory.preload({ playerOnly: true, includeAttack: true });
-    progress?.(64, "teaching the model to look dangerous");
+    progress?.(64);
     if (!this.active) return; // already launched / disposed
     // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
     this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
-    progress?.(70, "hero standing by, naturally");
+    progress?.(70);
   }
 
   // ---- launch animation ----------------------------------------------------
