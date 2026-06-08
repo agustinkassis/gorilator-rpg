@@ -2,11 +2,30 @@
 // manager was used, and (once `setup` runs) the public Cloudflare hostnames.
 // Written to a fixed, platform-specific path during install so a later global
 // `gorilator status|start|…` can locate the install.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { configPath } from "./paths.js";
 import { writeFileMaybeSudo } from "./proc.js";
+
+/** What an install created for its Cloudflare tunnel, so update/uninstall touch
+ *  ONLY this install's resources (and never another install's). */
+export interface TunnelRecord {
+  mode: "temporary" | "permanent";
+  /** The per-install quick-tunnel service unit/label (temporary). */
+  service?: string;
+  /** The quick-tunnel log path (temporary). */
+  logPath?: string;
+  /** The cloudflared tunnel name (permanent, e.g. `gorilator-rpg`). */
+  name?: string;
+  /** Routed public hostnames (permanent). */
+  hosts?: string[];
+  /** True when the permanent tunnel uses the shared system `cloudflared` service. */
+  sharedService?: boolean;
+  /** Last-known public URL (temporary's …trycloudflare.com, or https://host). */
+  url?: string;
+}
 
 export interface InstallConfig {
   appDir: string;
@@ -24,6 +43,15 @@ export interface InstallConfig {
   clientHost?: string;
   /** Public game hostname set by `gorilator setup` (default `game.*`). */
   serverHost?: string;
+  /** What this install created for its Cloudflare tunnel (set by `setup`). */
+  tunnel?: TunnelRecord;
+}
+
+/** A stable per-install id, derived from the install dir so it needs no
+ *  migration and is identical across runs. Keys every per-install tunnel
+ *  resource (service name, log) so multiple installs never collide. */
+export function installId(cfg: Pick<InstallConfig, "appDir">): string {
+  return createHash("sha1").update(cfg.appDir).digest("hex").slice(0, 8);
 }
 
 export function loadConfig(path?: string): InstallConfig | null {

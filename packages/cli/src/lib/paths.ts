@@ -35,15 +35,26 @@ export function cloudflaredDir(): string {
 
 // Quick (temporary) tunnel — a dedicated boot service that runs
 // `cloudflared tunnel --url http://localhost:PORT` (ephemeral *.trycloudflare.com,
-// no Cloudflare account). Kept separate from the named-tunnel `cloudflared`
-// service so the two never collide.
-export const QUICK_TUNNEL_SYSTEMD_UNIT = "gorilator-tunnel.service";
-export const QUICK_TUNNEL_SYSTEMD_UNIT_PATH = `/etc/systemd/system/${QUICK_TUNNEL_SYSTEMD_UNIT}`;
-export const QUICK_TUNNEL_LAUNCHD_LABEL = "com.gorilator.tunnel";
-export const quickTunnelPlistPath = (): string =>
-  join(homedir(), "Library", "LaunchAgents", `${QUICK_TUNNEL_LAUNCHD_LABEL}.plist`);
+// no Cloudflare account). PER-INSTALL: every identifier carries the install id so
+// multiple installs each run their own without colliding.
+export const quickTunnelUnit = (id: string): string => `gorilator-tunnel-${id}.service`;
+export const quickTunnelUnitPath = (id: string): string =>
+  `/etc/systemd/system/${quickTunnelUnit(id)}`;
+export const quickTunnelLabel = (id: string): string => `com.gorilator.tunnel.${id}`;
+export const quickTunnelPlistPath = (id: string): string =>
+  join(homedir(), "Library", "LaunchAgents", `${quickTunnelLabel(id)}.plist`);
 /** Where the quick tunnel's stdout/stderr (incl. the trycloudflare URL) lands. */
-export const quickTunnelLog = (): string => join(cloudflaredDir(), "quick-tunnel.log");
+export const quickTunnelLog = (id: string): string =>
+  join(cloudflaredDir(), `quick-tunnel-${id}.log`);
+
+// Legacy (pre-per-install) fixed quick-tunnel identifiers — kept so teardown can
+// still clean up a tunnel created before installs became id-scoped.
+export const LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT = "gorilator-tunnel.service";
+export const LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT_PATH = `/etc/systemd/system/${LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT}`;
+export const LEGACY_QUICK_TUNNEL_LAUNCHD_LABEL = "com.gorilator.tunnel";
+export const legacyQuickTunnelPlistPath = (): string =>
+  join(homedir(), "Library", "LaunchAgents", `${LEGACY_QUICK_TUNNEL_LAUNCHD_LABEL}.plist`);
+export const legacyQuickTunnelLog = (): string => join(cloudflaredDir(), "quick-tunnel.log");
 
 /** Fixed, platform-specific location for the install record (so the global
  *  `gorilator` command can find the install on later invocations). */
