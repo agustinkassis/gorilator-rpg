@@ -48,6 +48,12 @@ const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDi
 const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
 const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
 
+/** Re-render the footer version popup, optionally flagging packages whose remote
+ *  (latest release) version is newer than the local build. Reassigned by
+ *  wireVersionPanel; called again once /api/update reports remote versions.
+ *  Declared BEFORE wireVersionPanel runs so its assignment isn't a TDZ access. */
+let renderVersionPanel: (remote?: Record<string, string>) => void = () => {};
+
 // Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
 // time by Vite with the root app package version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
@@ -63,11 +69,6 @@ if (versionEl) {
   }
   wireVersionPanel(versionEl);
 }
-
-/** Re-render the footer version popup, optionally flagging packages whose remote
- *  (latest release) version is newer than the local build. Reassigned by
- *  wireVersionPanel; called again once /api/update reports remote versions. */
-let renderVersionPanel: (remote?: Record<string, string>) => void = () => {};
 
 /** Click the footer version tag to toggle a small popup listing every workspace
  *  package version (injected at build time as __PKG_VERSIONS__). An ⬆ appears
