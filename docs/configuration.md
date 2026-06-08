@@ -55,6 +55,13 @@ the section comments in the file:
 | `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → General settings → Manage admins`. See [admin.md](admin.md). |
 | `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer` (enabling it runs a full `pnpm install` first, so a prebuilt/slim install gains the build-only deps the dev server needs). Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
 
+> **Multiple installs on one machine.** Each install owns its **temporary** (quick) tunnel: the
+> boot service, launchd label, and log are keyed by a stable per-install id (derived from the install
+> dir), and what each install created is tracked in its `config.json` (`tunnel` record). So two installs
+> can run their own `…trycloudflare.com` tunnels at once, and `gorilator update`/`uninstall` only ever
+> touch *that* install's tunnel. The **permanent** (named) tunnel still uses the single shared
+> `cloudflared` system service — one permanent tunnel per machine — but is tracked the same way.
+
 ## 3. Runtime content files (live-reloaded JSON)
 
 These let you edit the world without recompiling — most are written by **Dev Mode** /

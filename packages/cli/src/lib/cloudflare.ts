@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { loadConfig } from "./config.js";
+import { installId, loadConfig } from "./config.js";
 import { parseEnv } from "./env.js";
 import * as log from "./log.js";
 import {
@@ -13,11 +13,15 @@ import {
   envFile,
   isLinux,
   isMac,
-  QUICK_TUNNEL_LAUNCHD_LABEL,
-  QUICK_TUNNEL_SYSTEMD_UNIT,
-  QUICK_TUNNEL_SYSTEMD_UNIT_PATH,
+  LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT,
+  LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT_PATH,
+  legacyQuickTunnelLog,
+  legacyQuickTunnelPlistPath,
+  quickTunnelLabel,
   quickTunnelLog,
   quickTunnelPlistPath,
+  quickTunnelUnit,
+  quickTunnelUnitPath,
   TUNNEL_NAME,
 } from "./paths.js";
 import {
@@ -47,6 +51,13 @@ export function activeTunnelMode(): TunnelMode | null {
     /* no .env yet */
   }
   return null;
+}
+
+/** The current install's id (keys its per-install quick-tunnel resources), or
+ *  null when there's no install record. */
+export function currentInstallId(): string | null {
+  const cfg = loadConfig();
+  return cfg ? installId(cfg) : null;
 }
 
 /** Map the host architecture to cloudflared's Debian package suffix. */
@@ -221,7 +232,10 @@ export function installTunnelService(): void {
 /** Stop the active tunnel boot service (quick or named). Returns false when the
  *  platform has no known service manager or the service is not installed. */
 export function stopTunnelService(): boolean {
-  if (activeTunnelMode() === "temporary") return stopQuickTunnelService();
+  if (activeTunnelMode() === "temporary") {
+    const id = currentInstallId();
+    return id ? stopQuickTunnelService(id) : false;
+  }
   if (isLinux) return tryPrivileged("systemctl", ["stop", "cloudflared"]);
   if (which("brew")) return tryRun("brew", ["services", "stop", "cloudflared"]);
   return false;
@@ -229,7 +243,10 @@ export function stopTunnelService(): boolean {
 
 /** Start the active tunnel boot service (quick or named). */
 export function startTunnelService(): boolean {
-  if (activeTunnelMode() === "temporary") return startQuickTunnelService();
+  if (activeTunnelMode() === "temporary") {
+    const id = currentInstallId();
+    return id ? startQuickTunnelService(id) : false;
+  }
   if (isLinux) return tryPrivileged("systemctl", ["start", "cloudflared"]);
   if (which("brew")) return tryRun("brew", ["services", "start", "cloudflared"]);
   return false;
@@ -288,10 +305,13 @@ export function tunnelLogin(): void {
 
 export function tunnelStatus(): void {
   if (activeTunnelMode() === "temporary") {
-    if (isLinux) tryPrivileged("systemctl", ["status", QUICK_TUNNEL_SYSTEMD_UNIT, "--no-pager"]);
-    else tryRun("launchctl", ["list", QUICK_TUNNEL_LAUNCHD_LABEL]);
-    const url = quickTunnelUrl();
-    log.info(url ? `Temporary tunnel URL: ${url}` : "Temporary tunnel URL not captured yet.");
+    const id = currentInstallId();
+    if (id) {
+      if (isLinux) tryPrivileged("systemctl", ["status", quickTunnelUnit(id), "--no-pager"]);
+      else tryRun("launchctl", ["list", quickTunnelLabel(id)]);
+      const url = quickTunnelUrl(id);
+      log.info(url ? `Temporary tunnel URL: ${url}` : "Temporary tunnel URL not captured yet.");
+    }
     return;
   }
   if (isLinux) {
@@ -306,7 +326,8 @@ export function tunnelStatus(): void {
 
 export function tunnelRestart(): void {
   if (activeTunnelMode() === "temporary") {
-    if (restartQuickTunnelService()) log.ok("Temporary tunnel restarted (URL may change).");
+    const id = currentInstallId();
+    if (id && restartQuickTunnelService(id)) log.ok("Temporary tunnel restarted (URL may change).");
     else log.warn("Could not restart the temporary tunnel service.");
     return;
   }
@@ -320,6 +341,8 @@ export function tunnelRestart(): void {
 }
 
 // --- Temporary (quick) tunnel: ephemeral *.trycloudflare.com, no account ---
+// PER-INSTALL: every resource is keyed by the install id so multiple installs
+// each run their own quick tunnel without colliding.
 
 /** Extract the most recent quick-tunnel URL from cloudflared's log output. */
 export function extractQuickTunnelUrl(logText: string): string | null {
@@ -327,8 +350,8 @@ export function extractQuickTunnelUrl(logText: string): string | null {
   return m && m.length ? m[m.length - 1] : null;
 }
 
-function readQuickLog(): string {
-  const p = quickTunnelLog();
+function readQuickLog(id: string): string {
+  const p = quickTunnelLog(id);
   try {
     return readFileSync(p, "utf8");
   } catch {
@@ -338,9 +361,9 @@ function readQuickLog(): string {
   }
 }
 
-/** The current temporary tunnel URL (https://…trycloudflare.com), or null. */
-export function quickTunnelUrl(): string | null {
-  return extractQuickTunnelUrl(readQuickLog());
+/** This install's temporary tunnel URL (https://…trycloudflare.com), or null. */
+export function quickTunnelUrl(id: string): string | null {
+  return extractQuickTunnelUrl(readQuickLog(id));
 }
 
 function renderQuickUnit(cf: string, port: number, logPath: string): string {
@@ -363,13 +386,13 @@ WantedBy=multi-user.target
 `;
 }
 
-function renderQuickPlist(cf: string, port: number, logPath: string): string {
+function renderQuickPlist(cf: string, port: number, logPath: string, label: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${QUICK_TUNNEL_LAUNCHD_LABEL}</string>
+  <string>${label}</string>
   <key>ProgramArguments</key>
   <array>
     <string>${cf}</string>
@@ -394,22 +417,23 @@ function renderQuickPlist(cf: string, port: number, logPath: string): string {
 `;
 }
 
-/** Install + start the quick-tunnel boot service for the given local port. The
- *  log is truncated first so {@link quickTunnelUrl} reads the fresh URL. */
-export function installQuickTunnelService(port: number): void {
+/** Install + start the per-install quick-tunnel boot service for the given local
+ *  port. The log is truncated first so {@link quickTunnelUrl} reads the fresh URL. */
+export function installQuickTunnelService(port: number, id: string): void {
   ensureCloudflared();
   const cf = which("cloudflared") ?? "cloudflared";
-  const logPath = quickTunnelLog();
+  const logPath = quickTunnelLog(id);
   const dir = cloudflaredDir();
 
   if (isLinux) {
+    const unit = quickTunnelUnit(id);
     runPrivileged("mkdir", ["-p", dir]);
     tryPrivileged("rm", ["-f", logPath]);
-    log.info(`Writing ${QUICK_TUNNEL_SYSTEMD_UNIT_PATH}…`);
-    writeFileMaybeSudo(QUICK_TUNNEL_SYSTEMD_UNIT_PATH, renderQuickUnit(cf, port, logPath), 0o644);
+    log.info(`Writing ${quickTunnelUnitPath(id)}…`);
+    writeFileMaybeSudo(quickTunnelUnitPath(id), renderQuickUnit(cf, port, logPath), 0o644);
     runPrivileged("systemctl", ["daemon-reload"]);
-    runPrivileged("systemctl", ["enable", QUICK_TUNNEL_SYSTEMD_UNIT]);
-    runPrivileged("systemctl", ["restart", QUICK_TUNNEL_SYSTEMD_UNIT]);
+    runPrivileged("systemctl", ["enable", unit]);
+    runPrivileged("systemctl", ["restart", unit]);
     log.ok("Temporary tunnel service running and enabled on boot.");
     return;
   }
@@ -420,58 +444,70 @@ export function installQuickTunnelService(port: number): void {
   } catch {
     /* ignore */
   }
-  const plist = quickTunnelPlistPath();
+  const plist = quickTunnelPlistPath(id);
   mkdirSync(dirname(plist), { recursive: true });
   log.info(`Writing ${plist}…`);
-  writeFileMaybeSudo(plist, renderQuickPlist(cf, port, logPath), 0o644);
+  writeFileMaybeSudo(plist, renderQuickPlist(cf, port, logPath, quickTunnelLabel(id)), 0o644);
   tryRun("launchctl", ["unload", "-w", plist]);
   tryRun("launchctl", ["load", "-w", plist]);
   log.ok("Temporary tunnel agent running and enabled at login.");
 }
 
-export function startQuickTunnelService(): boolean {
-  if (isLinux) return tryPrivileged("systemctl", ["start", QUICK_TUNNEL_SYSTEMD_UNIT]);
-  return tryRun("launchctl", ["start", QUICK_TUNNEL_LAUNCHD_LABEL]);
+export function startQuickTunnelService(id: string): boolean {
+  if (isLinux) return tryPrivileged("systemctl", ["start", quickTunnelUnit(id)]);
+  return tryRun("launchctl", ["start", quickTunnelLabel(id)]);
 }
 
-export function stopQuickTunnelService(): boolean {
-  if (isLinux) return tryPrivileged("systemctl", ["stop", QUICK_TUNNEL_SYSTEMD_UNIT]);
-  return tryRun("launchctl", ["stop", QUICK_TUNNEL_LAUNCHD_LABEL]);
+export function stopQuickTunnelService(id: string): boolean {
+  if (isLinux) return tryPrivileged("systemctl", ["stop", quickTunnelUnit(id)]);
+  return tryRun("launchctl", ["stop", quickTunnelLabel(id)]);
 }
 
-export function restartQuickTunnelService(): boolean {
-  if (isLinux) return tryPrivileged("systemctl", ["restart", QUICK_TUNNEL_SYSTEMD_UNIT]);
-  stopQuickTunnelService();
-  return startQuickTunnelService();
+export function restartQuickTunnelService(id: string): boolean {
+  if (isLinux) return tryPrivileged("systemctl", ["restart", quickTunnelUnit(id)]);
+  stopQuickTunnelService(id);
+  return startQuickTunnelService(id);
 }
 
-/** Stop, disable, and remove the quick-tunnel boot service + its log. */
-export function removeQuickTunnelService(): boolean {
+/** Stop, disable, and remove THIS install's quick-tunnel boot service + its log
+ *  (and, best-effort, a legacy pre-per-install fixed service). Never touches
+ *  another install's quick tunnel. */
+export function removeQuickTunnelService(id: string): boolean {
   let changed = false;
   if (isLinux) {
-    changed = tryPrivileged("systemctl", ["stop", QUICK_TUNNEL_SYSTEMD_UNIT]) || changed;
-    changed = tryPrivileged("systemctl", ["disable", QUICK_TUNNEL_SYSTEMD_UNIT]) || changed;
-    changed = tryPrivileged("rm", ["-f", QUICK_TUNNEL_SYSTEMD_UNIT_PATH]) || changed;
-    tryPrivileged("rm", ["-f", quickTunnelLog()]);
+    for (const unit of [quickTunnelUnit(id), LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT]) {
+      changed = tryPrivileged("systemctl", ["stop", unit]) || changed;
+      tryPrivileged("systemctl", ["disable", unit]);
+    }
+    changed = tryPrivileged("rm", ["-f", quickTunnelUnitPath(id)]) || changed;
+    tryPrivileged("rm", ["-f", LEGACY_QUICK_TUNNEL_SYSTEMD_UNIT_PATH]);
+    tryPrivileged("rm", ["-f", quickTunnelLog(id), legacyQuickTunnelLog()]);
     tryPrivileged("systemctl", ["daemon-reload"]);
     return changed;
   }
-  changed = tryRun("launchctl", ["unload", "-w", quickTunnelPlistPath()]) || changed;
-  try {
-    rmSync(quickTunnelPlistPath(), { force: true });
-    rmSync(quickTunnelLog(), { force: true });
-    changed = true;
-  } catch {
-    /* ignore */
+  changed = tryRun("launchctl", ["unload", "-w", quickTunnelPlistPath(id)]) || changed;
+  tryRun("launchctl", ["unload", "-w", legacyQuickTunnelPlistPath()]);
+  for (const p of [
+    quickTunnelPlistPath(id),
+    legacyQuickTunnelPlistPath(),
+    quickTunnelLog(id),
+    legacyQuickTunnelLog(),
+  ]) {
+    try {
+      rmSync(p, { force: true });
+      changed = true;
+    } catch {
+      /* ignore */
+    }
   }
   return changed;
 }
 
-/** Poll the quick-tunnel log until cloudflared prints its URL (or time out). */
-export async function awaitQuickTunnelUrl(timeoutMs = 20_000): Promise<string | null> {
+/** Poll this install's quick-tunnel log until cloudflared prints its URL. */
+export async function awaitQuickTunnelUrl(id: string, timeoutMs = 20_000): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const url = quickTunnelUrl();
+    const url = quickTunnelUrl(id);
     if (url) return url;
     if (Date.now() >= deadline) return null;
     await new Promise((r) => setTimeout(r, 500));

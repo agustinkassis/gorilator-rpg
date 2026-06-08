@@ -21,7 +21,7 @@ import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/se
 import { runSetup, toggleDevMode, tunnelCmd } from "./commands/setup.js";
 import { uninstall } from "./commands/uninstall.js";
 import { update } from "./commands/update.js";
-import { activeTunnelMode, quickTunnelUrl } from "./lib/cloudflare.js";
+import { activeTunnelMode, currentInstallId, quickTunnelUrl } from "./lib/cloudflare.js";
 import { loadConfig } from "./lib/config.js";
 import { describeTarget, resolveRuntimeContext, type RuntimeContext } from "./lib/context.js";
 import { devTunnelRunning, readDevTunnelState } from "./lib/devTunnel.js";
@@ -569,7 +569,9 @@ function statusDot(running: boolean): string {
 /** The public/tunnel URL for a system install, if any (live for temporary). */
 function systemPublicUrl(serverHost?: string): string | null {
   if (activeTunnelMode() === "temporary") {
-    return quickTunnelUrl() ?? (serverHost ? `https://${serverHost}` : null);
+    const id = currentInstallId();
+    const url = id ? quickTunnelUrl(id) : null;
+    return url ?? (serverHost ? `https://${serverHost}` : null);
   }
   return serverHost ? `https://${serverHost}` : null;
 }

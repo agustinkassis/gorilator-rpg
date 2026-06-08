@@ -4,7 +4,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { buildClient, pnpmInstall } from "../lib/build.js";
 import { logsCmd } from "./service.js";
-import { loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
+import { installId, loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
 import type { RuntimeContext } from "../lib/context.js";
 import {
   awaitQuickTunnelUrl,
@@ -38,7 +38,13 @@ import {
   type ServerSettingsCtx,
 } from "../lib/serverSettings.js";
 import type { Options } from "../lib/options.js";
-import { envFile } from "../lib/paths.js";
+import {
+  envFile,
+  isMac,
+  quickTunnelLabel,
+  quickTunnelLog,
+  quickTunnelUnit,
+} from "../lib/paths.js";
 import { waitForHealth } from "../lib/health.js";
 import { ask, canPrompt, confirm, isRoot, promptDefault, run, targetUser } from "../lib/proc.js";
 import { restartService, startService, statusService } from "../lib/service.js";
@@ -383,7 +389,7 @@ async function cloudflareMenu(opts: Options): Promise<void> {
     const running = serverRunning();
     const gate = running ? undefined : "start the server first";
     const choice = await selectMenu(
-      `Tunnel (Cloudflare)\n  ${serverStatusText(Number(ctx.env.GAME_SERVER_PORT) || ctx.cfg.port)}\n  ${tunnelStatusLine(ctx.env)}`,
+      `Tunnel (Cloudflare)\n  ${serverStatusText(Number(ctx.env.GAME_SERVER_PORT) || ctx.cfg.port)}\n  ${tunnelStatusLine(ctx.env, installId(ctx.cfg))}`,
       [
         { label: "Set up temporary tunnel", hint: gate ?? "quick, no login — …trycloudflare.com URL", disabled: !running },
         { label: "Set up permanent tunnel", hint: gate ?? "your domain — requires a Cloudflare login", disabled: !running },
@@ -428,11 +434,11 @@ function serverStatusText(port: number): string {
 }
 
 /** A one-line description of the active tunnel + its live URL for the menu. */
-function tunnelStatusLine(env: EnvMap): string {
+function tunnelStatusLine(env: EnvMap, id: string): string {
   if (env.TUNNEL_MODE === "temporary") {
     // Prefer the live URL from the running quick tunnel (it changes on restart);
     // fall back to the last-saved host.
-    const live = quickTunnelUrl();
+    const live = quickTunnelUrl(id);
     const url = live || (env.SERVER_HOSTNAME ? `https://${env.SERVER_HOSTNAME}` : "");
     return `temporary${url ? ` · ${url}` : " · starting…"}`;
   }
@@ -445,11 +451,21 @@ function tunnelStatusLine(env: EnvMap): string {
 function removeCloudflare(opts: Options): void {
   if (!confirm("Remove local Cloudflare tunnel service/config and clear public host env?")) return;
   const ctx = requireInstall(opts);
-  let removed = uninstallTunnelService();
-  removed = removeQuickTunnelService() || removed;
+  const id = installId(ctx.cfg);
+  const record = ctx.cfg.tunnel;
+  let removed = false;
+  // Only tear down what THIS install owns. Temporary → its per-install quick
+  // service (by id); permanent → the shared `cloudflared` service + local config.
+  // With no record (legacy install), fall back to cleaning both.
+  if (!record || record.mode === "temporary") {
+    removed = removeQuickTunnelService(id) || removed;
+  }
+  if (!record || record.mode === "permanent") {
+    removed = uninstallTunnelService() || removed;
+    removeTunnelLocalConfig();
+  }
   if (removed) log.ok("Cloudflare tunnel service stopped/removed.");
   else log.warn("No local Cloudflare tunnel service was removed.");
-  removeTunnelLocalConfig();
   writeEnvPatch(
     ctx,
     {
@@ -462,7 +478,7 @@ function removeCloudflare(opts: Options): void {
     },
     "Cleared Cloudflare environment settings.",
   );
-  updateConfig({ clientHost: undefined, serverHost: undefined });
+  updateConfig({ clientHost: undefined, serverHost: undefined, tunnel: undefined });
   restartDaemon();
   pause();
 }
@@ -628,10 +644,12 @@ async function setupTemporaryTunnel(cf: CloudflareCtx): Promise<void> {
     log.warn(`The server isn't answering on :${port} yet — the tunnel may 502 until it is. Check 'gorilator logs'.`);
   }
 
-  // Now expose the running server.
-  installQuickTunnelService(port);
+  // Now expose the running server. Every quick-tunnel resource is keyed by this
+  // install's id so multiple installs each run their own without colliding.
+  const id = installId({ appDir: cf.appDir });
+  installQuickTunnelService(port, id);
   log.info("Waiting for the tunnel URL…");
-  const url = await awaitQuickTunnelUrl();
+  const url = await awaitQuickTunnelUrl(id);
   const host = url ? url.replace(/^https?:\/\//, "") : "";
   mergeEnv(
     cf.appDir,
@@ -639,7 +657,16 @@ async function setupTemporaryTunnel(cf: CloudflareCtx): Promise<void> {
     { SERVER_HOSTNAME: host, PLAY_URL: url ?? "" },
     url ? "Saved the temporary tunnel URL." : "Temporary tunnel configured.",
   );
-  updateConfig({ serverHost: host || undefined });
+  // Track exactly what this install created so update/uninstall scope to it.
+  updateConfig({
+    serverHost: host || undefined,
+    tunnel: {
+      mode: "temporary",
+      service: isMac ? quickTunnelLabel(id) : quickTunnelUnit(id),
+      logPath: quickTunnelLog(id),
+      url: url ?? undefined,
+    },
+  });
 
   process.stdout.write("\n");
   if (url) {
@@ -675,7 +702,8 @@ async function setupPermanentTunnel(cf: CloudflareCtx): Promise<void> {
   log.ok(`Tunneling: ${publicHost} -> :${cf.port} (client + WebSocket + monitor + API)`);
 
   if (cf.env.TUNNEL_MODE === "temporary") {
-    if (removeQuickTunnelService()) log.ok("Stopped the previous temporary tunnel.");
+    const instId = installId({ appDir: cf.appDir });
+    if (removeQuickTunnelService(instId)) log.ok("Stopped the previous temporary tunnel.");
   }
 
   ensureCloudflared();
@@ -715,7 +743,21 @@ async function setupPermanentTunnel(cf: CloudflareCtx): Promise<void> {
     },
     "Updated Cloudflare environment settings.",
   );
-  updateConfig({ clientPort: undefined, clientHost: undefined, serverHost: publicHost });
+  // Track the permanent tunnel. It uses the SHARED `cloudflared` system service
+  // (one permanent tunnel per machine), but recording it keeps update/uninstall
+  // scoped and explicit about what this install relies on.
+  updateConfig({
+    clientPort: undefined,
+    clientHost: undefined,
+    serverHost: publicHost,
+    tunnel: {
+      mode: "permanent",
+      name: TUNNEL_NAME,
+      hosts: [publicHost],
+      sharedService: true,
+      url: `https://${publicHost}`,
+    },
+  });
 
   rebuildSameOriginIfNeeded(cf);
   restartDaemonForTunnel();
