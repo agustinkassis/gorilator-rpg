@@ -899,6 +899,26 @@
       #versionTag:hover {
         opacity: 0.7;
       }
+      /* Developer build (Vite dev server / GORILATOR_DEV): the tag carries a small
+         DEV badge and sits a bit brighter so it's obvious this isn't a release. */
+      #versionTag.isDev {
+        opacity: 0.62;
+      }
+      #versionTag.isDev:hover {
+        opacity: 0.92;
+      }
+      #versionTag .devBadge {
+        display: inline-block;
+        margin-right: 5px;
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: #f5c542;
+        color: #1a1206;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        text-shadow: none;
+        vertical-align: baseline;
+      }
       /* Package-versions popup, anchored above the version tag (bottom-right). */
       #versionPanel {
         position: fixed;

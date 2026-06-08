@@ -52,7 +52,15 @@ const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivEle
 // time by Vite with the root app package version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
 if (versionEl) {
-  versionEl.textContent = `v${__APP_VERSION__}`;
+  // In a developer build (Vite dev server / `GORILATOR_DEV` `gorilator serve`)
+  // tag the version with a small DEV badge so it's obvious this isn't a release.
+  if (import.meta.env.DEV) {
+    versionEl.classList.add("isDev");
+    versionEl.innerHTML = `<span class="devBadge">DEV</span>v${__APP_VERSION__}`;
+    versionEl.title = "Developer build (live dev server)";
+  } else {
+    versionEl.textContent = `v${__APP_VERSION__}`;
+  }
   wireVersionPanel(versionEl);
 }
 
