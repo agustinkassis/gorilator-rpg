@@ -1,6 +1,6 @@
 {
   "name": "rpg-online",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "private": true,
   "description": "Multiplayer isometric low-poly RPG demo — Babylon.js + Colyseus",
   "scripts": {
