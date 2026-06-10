@@ -1,11 +1,11 @@
 import {
-  Scene,
+  type Scene,
   TransformNode,
-  Mesh,
+  type Mesh,
   MeshBuilder,
   StandardMaterial,
   Color3,
-  AbstractMesh,
+  type AbstractMesh,
 } from "@babylonjs/core";
 
 export interface PotionModel {

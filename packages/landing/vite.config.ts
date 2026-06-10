@@ -40,6 +40,7 @@ function installScript(): Plugin {
 }
 
 export default defineConfig({
+  cacheDir: ".vite-cache",
   plugins: [react(), installScript()],
   build: {
     rollupOptions: {

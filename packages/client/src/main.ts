@@ -40,6 +40,7 @@ import { PerfTracker } from "./perf/PerfTracker";
 import { attachBabylonProbes } from "./perf/babylonProbes";
 import { PerfOverlay } from "./perf/overlay";
 import { buildResourceBreakdown, buildRenderProfile } from "./perf/breakdown";
+import { clientPluginHost, loadClientPlugins } from "./plugins/host";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -1202,6 +1203,10 @@ perf.setRenderProfileProvider(() => buildRenderProfile(scene, perfProbes.renderP
 (window as Window & { __perf?: unknown }).__perf = perf;
 if (new URLSearchParams(location.search).has("perf")) perfOverlay.toggle();
 
+// Client plugins: item models, per-frame systems, dev panels. Discovered via
+// /plugins/manifest.json (pluginBundler); quietly a no-op when none exist.
+void loadClientPlugins();
+
 const inventory = new InventoryUI(
   (from, to) => net.sendInventoryMove(from, to),
   (slot) => net.sendUseItem(slot),
@@ -1710,6 +1715,17 @@ engine.runRenderLoop(() => {
   perf.span("game.update", () => game.update(dt * timeScale)); // the world stays frozen at pause…
   if (paused) game.updateGhost(dt); // …but the ghost free-roams + camera follows at real dt
   perf.span("minimap", () => minimap.update()); // redraws only while TAB is held
+  // Plugin frame systems — each in its own span (F3 shows plugin:<name>) and
+  // try/caught so a plugin can't kill the render loop.
+  for (const s of clientPluginHost.frameSystems) {
+    perf.span(`plugin:${s.name}`, () => {
+      try {
+        s.fn(dt);
+      } catch (err) {
+        console.error(`[plugins] frame system "${s.name}" failed:`, err);
+      }
+    });
+  }
 
   const hp = game.localHp();
   if (hp) globe.set(hp.hp, hp.maxHp);
@@ -1804,3 +1820,20 @@ window.addEventListener("resize", () => {
   engine.resize();
   applyOrthoSize(camera);
 });
+
+// HMR guard: main.ts builds singletons (engine + render loop, the Colyseus room,
+// DOM UI, audio) that can't hot-swap. Without this, an edit that bubbles up to
+// main.ts re-executes the module ON TOP of the live instance — stacked render
+// loops, duplicate UI, ghost websockets (the "HMR stacks main.ts" gotcha).
+// dispose() tears the old world down before Vite re-runs the entry / full-reloads.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    try {
+      engine.stopRenderLoop();
+      void net.room?.leave();
+      engine.dispose();
+    } catch {
+      /* tearing down a half-built world is best-effort */
+    }
+  });
+}

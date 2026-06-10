@@ -5,8 +5,8 @@
 
 import { AnimState } from "@rpg/shared";
 import type { ArcRotateCamera } from "@babylonjs/core";
-import { AudioEngine, Category } from "./engine";
-import { SYNTHS, SfxKey } from "./synth";
+import { AudioEngine, type Category } from "./engine";
+import { SYNTHS, type SfxKey } from "./synth";
 
 interface Vec2 {
   x: number;

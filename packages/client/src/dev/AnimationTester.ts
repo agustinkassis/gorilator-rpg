@@ -1,4 +1,4 @@
-import { AnimState } from "@rpg/shared";
+import type { AnimState } from "@rpg/shared";
 import type { AnimationDebugClip } from "../entities/Entity";
 
 interface AnimationTesterDeps {

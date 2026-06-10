@@ -1,4 +1,4 @@
-import { InventorySlot, ItemType } from "@rpg/shared";
+import type { InventorySlot, ItemType } from "@rpg/shared";
 import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
 const KEYS = ["Q", "W", "E", "R"];
@@ -177,7 +177,8 @@ export class HotkeyBar {
    *  click-to-move input holds+throws it. */
   throwItemForKey(key: string): "banana" | "stone" | "" {
     const t = this.itemForKey(key);
-    return (t === "banana" || t === "stone") && this.hasStock(t) ? t : "";
+    if ((t === "banana" || t === "stone") && this.hasStock(t)) return t === "banana" ? "banana" : "stone";
+    return "";
   }
 
   private count(type: string): number {

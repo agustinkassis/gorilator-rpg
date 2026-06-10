@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, watchFile } from "fs";
-import { resolve } from "path";
-import { BrainId, CharacterStatsConfig, Enemy, GameState } from "@rpg/shared";
+import { existsSync, readFileSync, watchFile } from "node:fs";
+import { resolve } from "node:path";
+import { type BrainId, type CharacterStatsConfig, Enemy, type GameState } from "@rpg/shared";
 import { configureEnemy } from "./enemyConfig";
 
 interface CharacterDef {

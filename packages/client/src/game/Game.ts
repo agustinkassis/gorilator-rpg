@@ -1,65 +1,64 @@
 import {
-  ArcRotateCamera,
+  type ArcRotateCamera,
   Color3,
   TransformNode,
-  AbstractMesh,
+  type AbstractMesh,
   Vector3,
   Matrix,
-  ParticleSystem,
+  type ParticleSystem,
   MeshBuilder,
   StandardMaterial,
 } from "@babylonjs/core";
 import {
-  Player,
-  Enemy,
-  Potion,
-  Tree,
-  Log,
-  Rock,
-  Stone,
-  Banana,
-  Item,
-  House,
-  Structure,
+  type Player,
+  type Enemy,
+  type Potion,
+  type Tree,
+  type Log,
+  type Rock,
+  type Stone,
+  type Banana,
+  type Item,
+  type House,
+  type Structure,
   AnimState,
-  DamageEvent,
-  KillEvent,
-  HealEvent,
-  XpEvent,
-  BananaThrowEvent,
+  type DamageEvent,
+  type KillEvent,
+  type HealEvent,
+  type XpEvent,
+  type BananaThrowEvent,
   PLAYER_RESPAWN_MS,
   SACRED_CIRCLE_RADIUS,
 } from "@rpg/shared";
-import { CharacterFactory } from "../entities/CharacterFactory";
+import type { CharacterFactory } from "../entities/CharacterFactory";
 import { Entity } from "../entities/Entity";
-import { buildPotion, PotionModel } from "../entities/models/potion";
+import { buildPotion, type PotionModel } from "../entities/models/potion";
 import {
   buildBerserkerPotion,
-  preloadBerserkerPotion,
-  BerserkerPotionModel,
+  type BerserkerPotionModel,
 } from "../entities/models/berserkerPotion";
-import { buildTree, TreeModel } from "../entities/models/tree";
-import { buildLog, LogModel } from "../entities/models/log";
-import { buildRock, RockModel } from "../entities/models/rock";
-import { buildStone, StoneModel } from "../entities/models/stone";
-import { buildBanana, BananaModel } from "../entities/models/banana";
+import { buildTree, type TreeModel } from "../entities/models/tree";
+import { buildLog, type LogModel } from "../entities/models/log";
+import { buildRock, type RockModel } from "../entities/models/rock";
+import { buildStone, type StoneModel } from "../entities/models/stone";
+import { buildBanana, type BananaModel } from "../entities/models/banana";
 import { buildStoneShot } from "../entities/models/stoneShot";
-import { HouseModel } from "../entities/models/house";
-import { buildLightning, Lightning } from "../fx/lightning";
+import type { HouseModel } from "../entities/models/house";
+import { buildLightning, type Lightning } from "../fx/lightning";
 import { makeBananaTrail, makeBananaBurst } from "../fx/bananaFx";
 import { makeLevelUpExplosion } from "../fx/explosion";
 import { makeBloodBurst } from "../fx/bloodFx";
-import { makeSacredCircleFx, SacredCircleFx } from "../fx/sacredCircleFx";
+import { makeSacredCircleFx, type SacredCircleFx } from "../fx/sacredCircleFx";
 import { DamageFx } from "../fx/damageFx";
-import { DropAnim, startDrop, updateDrop } from "../fx/dropAnim";
-import { HUD } from "../ui/hud";
+import { type DropAnim, startDrop, updateDrop } from "../fx/dropAnim";
+import type { HUD } from "../ui/hud";
 import type { GameDebugStats } from "../ui/debugStats";
 import type { AudioManager } from "../audio/AudioManager";
 import type { AnimationDebugClip } from "../entities/Entity";
 import {
   FootprintPicker,
-  PickResult,
-  StructureMask,
+  type PickResult,
+  type StructureMask,
   cloneStructureMask,
   defaultStructureMask,
   normalizeStructureMask,
@@ -628,7 +627,10 @@ export class Game {
 
   addStructure(s: Structure, id: string): void {
     this.setPropVisible(id, true); // (re)show in case it was a destroyed instance coming back
-    if (this.structures.has(id)) return this.changeStructure(s, id);
+    if (this.structures.has(id)) {
+      this.changeStructure(s, id);
+      return;
+    }
     const scene = this.camera.getScene();
     const anchor = new TransformNode(`structBar-${id}`, scene);
     anchor.position.set(s.x, Math.max(3, s.radius * (s.scale || 1) * 1.6), s.z);
@@ -640,7 +642,10 @@ export class Game {
 
   changeStructure(s: Structure, id: string): void {
     const sm = this.structures.get(id);
-    if (!sm) return this.addStructure(s, id);
+    if (!sm) {
+      this.addStructure(s, id);
+      return;
+    }
     sm.hp = s.hp;
     sm.maxHp = s.maxHp;
     sm.anchor.position.set(s.x, Math.max(3, s.radius * (s.scale || 1) * 1.6), s.z);
@@ -1598,7 +1603,7 @@ export class Game {
         b.model.root.rotation.y += dt * 7;
         if (p >= 1) {
           // ground contact: kick up a dust + spark puff (smaller each bounce)
-          const strength = b.impact * Math.pow(THROW_RESTITUTION, b.hopIndex);
+          const strength = b.impact * THROW_RESTITUTION ** b.hopIndex;
           this.particleFx.push({
             ps: makeBananaBurst(throwScene, hop.toX, THROW_GROUND_Y, hop.toZ, strength),
             ttl: 0.5,
@@ -1626,7 +1631,6 @@ export class Game {
               b.shadow.dispose();
               b.model.dispose();
               this.thrown.splice(i, 1);
-              continue;
             }
           }
         }

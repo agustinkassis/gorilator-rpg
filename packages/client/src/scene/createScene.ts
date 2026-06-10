@@ -1,5 +1,5 @@
 import {
-  Engine,
+  type Engine,
   Scene,
   Color3,
   Color4,
@@ -7,8 +7,8 @@ import {
   HemisphericLight,
   DirectionalLight,
   AnimationPropertiesOverride,
-  Mesh,
-  ArcRotateCamera,
+  type Mesh,
+  type ArcRotateCamera,
 } from "@babylonjs/core";
 import { createIsoCamera } from "./camera";
 import { createEnvironment } from "./environment";

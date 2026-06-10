@@ -1,14 +1,14 @@
 import {
-  Scene,
+  type Scene,
   TransformNode,
-  Mesh,
+  type Mesh,
   MeshBuilder,
   StandardMaterial,
   Color3,
-  AbstractMesh,
+  type AbstractMesh,
 } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
-import { SpawnedCharacter, HIT_FLASH } from "../types";
+import { type SpawnedCharacter, HIT_FLASH } from "../types";
 
 /**
  * A classic straw training dummy: a wooden post + crossbar, a burlap sack body

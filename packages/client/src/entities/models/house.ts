@@ -1,8 +1,8 @@
 import {
-  Scene,
+  type Scene,
   SceneLoader,
   PBRMaterial,
-  AbstractMesh,
+  type AbstractMesh,
   Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";

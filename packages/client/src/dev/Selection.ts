@@ -1,13 +1,13 @@
 import {
-  Scene,
+  type Scene,
   HighlightLayer,
   Color3,
-  AbstractMesh,
+  type AbstractMesh,
   Mesh,
-  TransformNode,
-  Nullable,
+  type TransformNode,
+  type Nullable,
 } from "@babylonjs/core";
-import { PropManager } from "./PropManager";
+import type { PropManager } from "./PropManager";
 
 /** A world object the editor can act on, resolved from a picked mesh. `root` is
  *  the transform that positions it; `meshes` are highlighted on selection. The

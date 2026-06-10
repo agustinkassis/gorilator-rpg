@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { TOWER_PROP_NAME } from "@rpg/shared";
 
 const PROPS_CANDIDATES = [

@@ -1,5 +1,5 @@
-import { Scene } from "@babylonjs/core";
-import { importModel, applyTransform, LoadedProp, bounds } from "../scene/props";
+import type { Scene } from "@babylonjs/core";
+import { importModel, applyTransform, type LoadedProp, bounds } from "../scene/props";
 import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 /**

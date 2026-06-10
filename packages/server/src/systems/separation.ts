@@ -1,4 +1,4 @@
-import { GameState, Player, Enemy, AnimState } from "@rpg/shared";
+import { type GameState, type Player, type Enemy, AnimState } from "@rpg/shared";
 import { depenetrate } from "./pathfinding";
 import { brainOf } from "./enemyConfig";
 
@@ -38,7 +38,7 @@ export function separationSystem(state: GameState) {
       const b = bodies[j];
       let dx = b.ref.x - a.ref.x;
       let dz = b.ref.z - a.ref.z;
-      let d2 = dx * dx + dz * dz;
+      const d2 = dx * dx + dz * dz;
       if (d2 >= SEP2) continue;
       let d = Math.sqrt(d2);
       if (d < 1e-4) {

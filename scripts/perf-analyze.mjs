@@ -10,47 +10,43 @@
  *
  * Usage:
  *   node scripts/perf-analyze.mjs <file.jsonl|bench.json>            # summarize one run
- *   node scripts/perf-analyze.mjs <baseline> <candidate>            # compare two runs
- *   node scripts/perf-analyze.mjs <file> --csv                      # emit CSV instead
+ *   node scripts/perf-analyze.mjs <baseline> <candidate>             # compare two runs
+ *   node scripts/perf-analyze.mjs <baseline> <candidate> --gate      # + exit 1 past thresholds
+ *   node scripts/perf-analyze.mjs <a> <b> --thresholds='{"fps":-10}' # custom gate limits
+ *   node scripts/perf-analyze.mjs <file> --csv                       # emit CSV instead
  *
- * No dependencies — runs on a bare Node ≥ 18.
+ * Stats come from the compiled @rpg/shared (percentile/summarize) so the analyzer
+ * can never drift from what perfTracker computed at capture time — run
+ * `pnpm build:shared` once after a fresh clone.
+ *
+ * load/compareRuns/checkThresholds are exported for scripts/bench.mjs.
  */
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-// ---- stats (kept in sync with packages/shared/src/perf.ts) ----
+// ---- stats: the ONE implementation, from the compiled shared package ----
 
-function percentile(sortedAsc, p) {
-  const n = sortedAsc.length;
-  if (n === 0) return 0;
-  if (n === 1) return sortedAsc[0];
-  const rank = (Math.max(0, Math.min(100, p)) / 100) * (n - 1);
-  const lo = Math.floor(rank);
-  const hi = Math.ceil(rank);
-  if (lo === hi) return sortedAsc[lo];
-  return sortedAsc[lo] * (hi - rank) + sortedAsc[hi] * (rank - lo);
-}
-
-function summarize(values) {
-  const n = values.length;
-  if (n === 0) return { count: 0, min: 0, max: 0, avg: 0, p50: 0, p95: 0, p99: 0 };
-  const sorted = [...values].sort((a, b) => a - b);
-  const sum = values.reduce((a, b) => a + b, 0);
-  return {
-    count: n,
-    min: sorted[0],
-    max: sorted[n - 1],
-    avg: sum / n,
-    p50: percentile(sorted, 50),
-    p95: percentile(sorted, 95),
-    p99: percentile(sorted, 99),
-  };
+// dist/perf.js is a leaf module (no imports), so bare Node can load it directly —
+// the package's index.js can't be used here because tsc emits extensionless
+// relative imports that only bundler-style resolvers (Vite/tsx) understand.
+let summarize;
+try {
+  ({ summarize } = await import(
+    new URL("../packages/shared/dist/perf.js", import.meta.url).href
+  ));
+} catch {
+  console.error(
+    "perf-analyze: @rpg/shared isn't built yet (stats live there).\n" +
+      "  Run:  pnpm build:shared\n",
+  );
+  process.exit(1);
 }
 
 // ---- loading ----
 
 /** Load a file into { metrics, sampleCount, meta, src }. Accepts a JSONL sample log
  *  or a benchmark .json (which already carries a `metrics` map). */
-function load(path) {
+export function load(path) {
   const raw = readFileSync(path, "utf8").trim();
   if (!raw) return { metrics: {}, sampleCount: 0, meta: {}, src: "?" };
 
@@ -99,6 +95,49 @@ function load(path) {
   return { metrics, sampleCount: count, meta: {}, src };
 }
 
+// ---- comparison + threshold gate ----
+
+/** Diff two runs metric-by-metric (avg-based). Rows are in display order.
+ *  `better` follows the direction rule: fps higher-is-better, all else lower. */
+export function compareRuns(a, b) {
+  const keys = new Set([...Object.keys(a.metrics), ...Object.keys(b.metrics)]);
+  const rows = [];
+  for (const [k] of orderedMetrics(Object.fromEntries([...keys].map((x) => [x, {}])))) {
+    const base = a.metrics[k]?.avg;
+    const cand = b.metrics[k]?.avg;
+    if (base === undefined || cand === undefined) continue;
+    const delta = cand - base;
+    const pct = base !== 0 ? (delta / Math.abs(base)) * 100 : 0;
+    const better = k === "fps" ? delta > 0 : delta < 0;
+    rows.push({ metric: k, base, cand, delta, pct, better });
+  }
+  return rows;
+}
+
+/** Default gate: fail when fps drops >10% or any cost metric grows >25%
+ *  (server tick / client frame / event-loop lag). Tags are not gated by default —
+ *  add `"tag:<name>": <pct>` entries to gate a specific system. */
+export const DEFAULT_THRESHOLDS = {
+  fps: -10,
+  tickMs: 25,
+  frameMs: 25,
+  loopLagMs: 50,
+};
+
+/** Check compare rows against a thresholds map (metric → max allowed % change;
+ *  negative limits guard a drop — fps — positive limits guard a rise — costs).
+ *  Returns the violations. */
+export function checkThresholds(rows, thresholds = DEFAULT_THRESHOLDS) {
+  const violations = [];
+  for (const row of rows) {
+    const limit = thresholds[row.metric];
+    if (limit === undefined) continue;
+    const breached = limit < 0 ? row.pct <= limit : row.pct >= limit;
+    if (breached) violations.push({ ...row, limit });
+  }
+  return violations;
+}
+
 // ---- formatting ----
 
 const f = (n) => (Math.abs(n) >= 100 ? n.toFixed(0) : Math.abs(n) >= 10 ? n.toFixed(1) : n.toFixed(2));
@@ -127,23 +166,15 @@ function printCsv(data) {
   }
 }
 
-function printCompare(a, b, aPath, bPath) {
+function printCompare(rows, a, b, aPath, bPath) {
   console.log(`\n# compare  ${aPath}  →  ${bPath}`);
   console.log(`  baseline: ${a.sampleCount} samples · candidate: ${b.sampleCount} samples`);
   console.log(`  ${pad("metric", 22)}${padL("baseline", 12)}${padL("candidate", 12)}${padL("Δ avg", 11)}${padL("%", 9)}`);
   console.log(`  ${"-".repeat(22 + 12 + 12 + 11 + 9)}`);
-  const keys = new Set([...Object.keys(a.metrics), ...Object.keys(b.metrics)]);
-  for (const [k] of orderedMetrics(Object.fromEntries([...keys].map((x) => [x, {}])))) {
-    const av = a.metrics[k]?.avg;
-    const bv = b.metrics[k]?.avg;
-    if (av === undefined || bv === undefined) continue;
-    const d = bv - av;
-    const pct = av !== 0 ? (d / Math.abs(av)) * 100 : 0;
-    // Lower is better for everything EXCEPT fps; mark the helpful direction.
-    const better = k === "fps" ? d > 0 : d < 0;
+  for (const { metric, base, cand, delta, pct, better } of rows) {
     const mark = Math.abs(pct) < 1 ? "  " : better ? "✓ " : "✗ ";
     console.log(
-      `  ${pad(k, 22)}${padL(f(av), 12)}${padL(f(bv), 12)}${padL((d >= 0 ? "+" : "") + f(d), 11)}${padL(mark + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%", 9)}`,
+      `  ${pad(metric, 22)}${padL(f(base), 12)}${padL(f(cand), 12)}${padL((delta >= 0 ? "+" : "") + f(delta), 11)}${padL(mark + (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%", 9)}`,
     );
   }
   console.log("\n  ✓ = improvement · ✗ = regression (fps higher-is-better; all else lower-is-better)");
@@ -167,19 +198,47 @@ function orderedMetrics(metrics) {
 
 // ---- main ----
 
-const args = process.argv.slice(2);
-const csv = args.includes("--csv");
-const files = args.filter((a) => !a.startsWith("--"));
+const invokedDirectly =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-if (files.length === 0) {
-  console.error("usage: node scripts/perf-analyze.mjs <file.jsonl> [candidate.jsonl] [--csv]");
-  process.exit(1);
-}
+if (invokedDirectly) {
+  const args = process.argv.slice(2);
+  const csv = args.includes("--csv");
+  const gate = args.includes("--gate");
+  const thresholdsArg = args.find((a) => a.startsWith("--thresholds="));
+  const files = args.filter((a) => !a.startsWith("--"));
 
-if (files.length >= 2) {
-  printCompare(load(files[0]), load(files[1]), files[0], files[1]);
-} else {
-  const data = load(files[0]);
-  if (csv) printCsv(data);
-  else printTable(files[0], data);
+  if (files.length === 0) {
+    console.error(
+      "usage: node scripts/perf-analyze.mjs <file.jsonl> [candidate.jsonl] [--csv] [--gate] [--thresholds='{...}']",
+    );
+    process.exit(1);
+  }
+
+  if (files.length >= 2) {
+    const a = load(files[0]);
+    const b = load(files[1]);
+    const rows = compareRuns(a, b);
+    printCompare(rows, a, b, files[0], files[1]);
+    if (gate || thresholdsArg) {
+      const thresholds = thresholdsArg
+        ? JSON.parse(thresholdsArg.slice("--thresholds=".length))
+        : DEFAULT_THRESHOLDS;
+      const violations = checkThresholds(rows, thresholds);
+      if (violations.length) {
+        console.error("\n  GATE FAILED:");
+        for (const v of violations) {
+          console.error(
+            `    ${v.metric}: ${v.pct >= 0 ? "+" : ""}${v.pct.toFixed(1)}% (limit ${v.limit >= 0 ? "+" : ""}${v.limit}%)`,
+          );
+        }
+        process.exit(1);
+      }
+      console.log("\n  GATE PASSED (all metrics within thresholds)");
+    }
+  } else {
+    const data = load(files[0]);
+    if (csv) printCsv(data);
+    else printTable(files[0], data);
+  }
 }

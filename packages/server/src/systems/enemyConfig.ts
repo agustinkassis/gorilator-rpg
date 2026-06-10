@@ -1,8 +1,8 @@
 import {
   AnimState,
-  BrainId,
-  CharacterStatsConfig,
-  Enemy,
+  type BrainId,
+  type CharacterStatsConfig,
+  type Enemy,
   DUMMY_ATTACK,
   DUMMY_ARMOR,
   DUMMY_CRIT_CHANCE,

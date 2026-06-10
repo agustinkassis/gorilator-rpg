@@ -1,9 +1,9 @@
 import {
-  Scene,
+  type Scene,
   SceneLoader,
-  AssetContainer,
+  type AssetContainer,
   TransformNode,
-  AbstractMesh,
+  type AbstractMesh,
   PBRMaterial,
   MeshBuilder,
   StandardMaterial,
@@ -103,7 +103,7 @@ function buildProceduralBanana(scene: Scene, root: TransformNode): BananaModel {
       path,
       // Thin tips, fat belly → the classic banana taper.
       radiusFunction: (i) =>
-        0.045 + 0.16 * Math.pow(Math.sin((i / N) * Math.PI), 0.7),
+        0.045 + 0.16 * Math.sin((i / N) * Math.PI) ** 0.7,
       tessellation: 14,
       cap: Mesh.CAP_ALL,
     },

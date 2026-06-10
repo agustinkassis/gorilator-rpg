@@ -149,7 +149,10 @@ export function streamCommandOutput(
 
 /** Run a privileged command — directly when root, else via sudo. */
 export function runPrivileged(cmd: string, args: string[], opts: RunOpts = {}): void {
-  if (isRoot()) return run(cmd, args, opts);
+  if (isRoot()) {
+    run(cmd, args, opts);
+    return;
+  }
   run("sudo", [cmd, ...args], opts);
 }
 

@@ -1,5 +1,5 @@
 import {
-  Scene,
+  type Scene,
   ParticleSystem,
   DynamicTexture,
   Color4,

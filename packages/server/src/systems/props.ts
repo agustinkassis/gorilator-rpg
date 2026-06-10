@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, watchFile } from "fs";
-import { resolve, dirname, join } from "path";
+import { readFileSync, existsSync, watchFile } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { setPropObstacles } from "./pathfinding";
 
 /** The importer writes the manifest into the client's public dir (so the browser

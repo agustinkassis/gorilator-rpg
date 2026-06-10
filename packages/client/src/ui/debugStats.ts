@@ -1,4 +1,4 @@
-import { Engine, Scene, AbstractMesh, BaseTexture } from "@babylonjs/core";
+import type { Engine, Scene, AbstractMesh, BaseTexture } from "@babylonjs/core";
 import { EngineInstrumentation, SceneInstrumentation } from "@babylonjs/core/Instrumentation";
 
 export interface GameDebugStats {

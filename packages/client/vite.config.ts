@@ -1,5 +1,5 @@
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
-import type { IncomingMessage, ServerResponse } from "http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   writeFileSync,
   readFileSync,
@@ -11,10 +11,11 @@ import {
   unlinkSync,
   statSync,
   createReadStream,
-} from "fs";
-import { basename, dirname, extname, relative, resolve } from "path";
-import { execFileSync } from "child_process";
-import { fileURLToPath } from "url";
+} from "node:fs";
+import { basename, dirname, extname, relative, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { pluginBundler } from "./config/pluginBundler";
 
 const configDir = dirname(fileURLToPath(import.meta.url));
 
@@ -1289,7 +1290,7 @@ function modelImporter(): Plugin {
           try {
             const meta = JSON.parse(buf.toString("utf8") || "{}");
             const model = String(meta.model || "");
-            if (!/^\/models\/[\w.\-]+\.glb$/i.test(model)) return fail(res, 400, "bad model");
+            if (!/^\/models\/[\w.-]+\.glb$/i.test(model)) return fail(res, 400, "bad model");
             const id = `${slug(String(meta.name || model.split("/").pop()))}_${Date.now()}`;
             const props = readProps(root);
             const entry = entryFromMeta(meta, model, id);
@@ -1465,7 +1466,7 @@ function modelImporter(): Plugin {
               z: Number(b.z) || 0,
               rotationY: Number(b.rotationY) || 0,
               scale: Math.max(0.05, Number(b.scale) || 1),
-              ...(b.brain ? { brain: String(b.brain) } : {}),
+              ...(b.brain ? { brain: String(b.brain) as BrainId } : {}),
               ...(b.stats && typeof b.stats === "object" ? { stats: b.stats } : {}),
             };
             const npcs = readJsonArray<Placement>(npcsPathFor(root));
@@ -1567,8 +1568,8 @@ function modelImporter(): Plugin {
             if (!p) return fail(res, 404, "no such placement");
             for (const f of ["x", "z", "rotationY", "scale"] as const)
               if (patch[f] !== undefined) p[f] = Number(patch[f]);
-            if (patch.brain !== undefined) (p as Record<string, unknown>).brain = String(patch.brain);
-            if (patch.stats && typeof patch.stats === "object") (p as Record<string, unknown>).stats = patch.stats;
+            if (patch.brain !== undefined) p.brain = String(patch.brain) as BrainId;
+            if (patch.stats && typeof patch.stats === "object") p.stats = patch.stats;
             writeJsonArray(npcsPathFor(root), npcs);
             sendJson(res, { ok: true });
           } catch (e) {
@@ -1986,8 +1987,8 @@ function worktreeTagger(): Plugin {
         void collectBody(req).then((buf) => {
           try {
             const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown; targetBranch?: unknown };
-            const hasName = Object.prototype.hasOwnProperty.call(body, "name");
-            const hasTarget = Object.prototype.hasOwnProperty.call(body, "targetBranch");
+            const hasName = Object.hasOwn(body, "name");
+            const hasTarget = Object.hasOwn(body, "targetBranch");
             const name = hasName ? writeWorktreeName(info.root, body.name) : readWorktreeName(info.root);
             if (hasTarget) writeTargetBranch(info.root, body.targetBranch);
             sendJson(res, { ok: true, ...formatWorktreeInfo(info.root, name) });
@@ -2006,6 +2007,18 @@ function worktreeTagger(): Plugin {
 export default defineConfig(({ command }) => {
   const worktree = command === "serve" ? worktreeInfo() : emptyWorktreeInfo();
   return {
+    // Explicit cache dir (predictable invalidation, survives worktree switches).
+    cacheDir: ".vite-cache",
+    // Pre-bundle the heavy Babylon entrypoints once instead of re-discovering
+    // them on every cold dev start.
+    optimizeDeps: {
+      include: ["@babylonjs/core", "@babylonjs/gui", "@babylonjs/loaders"],
+    },
+    build: {
+      // External source maps so deployed-realm stack traces and F3 slowdown
+      // snapshots map back to source.
+      sourcemap: true,
+    },
     // Inject local build metadata for the always-visible footer tags.
     define: {
       __APP_VERSION__: JSON.stringify(appVersion()),
@@ -2013,7 +2026,7 @@ export default defineConfig(({ command }) => {
       __WORKTREE_LABEL__: JSON.stringify(worktree.label),
       __WORKTREE_FULL_LABEL__: JSON.stringify(worktree.fullLabel),
     },
-    plugins: [modelImporter(), perfLogs(), worktreeTagger()],
+    plugins: [modelImporter(), perfLogs(), worktreeTagger(), pluginBundler(resolve(configDir, "..", ".."))],
     server: {
       port: Number(process.env.CLIENT_PORT) || 5173,
       strictPort: true,

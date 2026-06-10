@@ -1,7 +1,6 @@
 import {
-  Scene,
+  type Scene,
   TransformNode,
-  Mesh,
   MeshBuilder,
   StandardMaterial,
   Color3,

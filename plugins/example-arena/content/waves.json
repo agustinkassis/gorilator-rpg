@@ -1,0 +1,9 @@
+[
+  {
+    "number": 2,
+    "entries": [
+      { "kind": "goblin", "count": 4, "brain": "kamikaze", "level": 1 },
+      { "kind": "goblin", "count": 2, "brain": "attacks_home", "level": 2 }
+    ]
+  }
+]

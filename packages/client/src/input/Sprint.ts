@@ -1,4 +1,4 @@
-import { NetworkClient } from "../net/NetworkClient";
+import type { NetworkClient } from "../net/NetworkClient";
 
 /**
  * Hold SPACE to sprint. We only send the edges (press → on, release → off); the

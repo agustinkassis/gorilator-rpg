@@ -1,18 +1,17 @@
 import {
-  Scene,
+  type Scene,
   SceneLoader,
-  AssetContainer,
+  type AssetContainer,
   TransformNode,
-  AbstractMesh,
-  AnimationGroup,
+  type AnimationGroup,
   PBRMaterial,
-  Color3,
+  type Color3,
 } from "@babylonjs/core";
 import "@babylonjs/core/Animations/animatable.core";
 import "@babylonjs/loaders/glTF";
 import { AnimState } from "@rpg/shared";
-import { AnimGroups, AnimSpeeds } from "./AnimationController";
-import { SpawnedCharacter, HIT_FLASH } from "./types";
+import type { AnimGroups, AnimSpeeds } from "./AnimationController";
+import { type SpawnedCharacter, HIT_FLASH } from "./types";
 import { buildDummy } from "./models/dummy";
 import { assembleCharacter, type CharacterDef } from "./characterDef";
 

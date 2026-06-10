@@ -1,15 +1,15 @@
 import {
-  GameState,
+  type GameState,
   Banana,
-  Player,
-  Enemy,
-  Tree,
-  Rock,
-  House,
+  type Player,
+  type Enemy,
+  type Tree,
+  type Rock,
+  type House,
   AnimState,
-  DamageEvent,
-  HealEvent,
-  BananaThrowEvent,
+  type DamageEvent,
+  type HealEvent,
+  type BananaThrowEvent,
   BANANA_MAX,
   BANANA_RESPAWN_MS,
   BANANA_SPAWN_RANGE,
@@ -35,7 +35,7 @@ import {
   ROCK_COLLISION_SCALE,
 } from "@rpg/shared";
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
-import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
+import { grantXp, killXp, applyDeathXpPenalty, type EmitXp } from "./leveling";
 import {
   applyDamageDrops,
   dropEntityLoot,

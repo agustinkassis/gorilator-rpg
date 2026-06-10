@@ -1,7 +1,7 @@
 import {
-  GameState,
-  Player,
-  XpEvent,
+  type GameState,
+  type Player,
+  type XpEvent,
   xpForLevel,
   CRIT_CHANCE_MAX,
   PLAYER_HP_PER_LEVEL,

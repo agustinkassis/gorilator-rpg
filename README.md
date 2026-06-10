@@ -136,11 +136,13 @@ packages/
 ## 💻 Develop locally
 
 ```bash
-pnpm install
-pnpm dev          # starts server + client together
+pnpm bootstrap    # one-time: install + .env + dev ports + warm build cache
+pnpm dev          # starts server + client together (~3s to interactive)
 ```
 
 Then open the client URL printed by `pnpm dev` (default <http://localhost:5173>). The live room-state inspector is at the monitor URL (default <http://localhost:2567/colyseus>).
+
+Verification: `pnpm exec turbo run lint typecheck build test` (cached DAG), `pnpm e2e` (Playwright), `pnpm bench` (server perf gate). Parallel worktrees with collision-free ports: `pnpm wt <name>`. Full workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - **Left-click the ground** → your warrior walks there.
 - **Left-click an enemy** → approach and attack; target takes damage, dies, respawns.
@@ -153,18 +155,21 @@ Then open the client URL printed by `pnpm dev` (default <http://localhost:5173>)
 
 Gorilator is under active development and built to be easy to jump into:
 
-- **Content** (models, props, items, entities) → use the **in-game dev SDK** above. No engine knowledge needed.
+- **Content** (models, props, items, entities) → use the **in-game dev SDK** above, or edit the JSON manifests directly. No engine knowledge needed.
+- **Plugins** (new AI brains, item effects, integrations) → drop a folder in [`plugins/`](docs/plugins.md) — **no core code changes**, fork-safe by design. Start from `plugins/_template/`; `plugins/example-arena/` shows every hook.
 - **Game logic** → it's all TypeScript in `packages/`, with shared schema imported by both client and server.
-- **Docs** → live in [`docs/`](docs/README.md): [getting started](docs/getting-started.md), [architecture](docs/architecture.md), [gameplay](docs/gameplay.md), [entities](docs/entities.md), [configuration](docs/configuration.md), [Nostr events](docs/nostr.md).
+- **Docs** → live in [`docs/`](docs/README.md): [getting started](docs/getting-started.md), [architecture](docs/architecture.md), [plugins](docs/plugins.md), [testing](docs/TESTING.md), [debugging](docs/DEBUGGING.md), [gameplay](docs/gameplay.md), [entities](docs/entities.md), [configuration](docs/configuration.md), [Nostr events](docs/nostr.md).
 
-Fork it, run `pnpm dev`, make a change, and open a PR. Server/realm discovery for external apps is documented in [REALMS.md](REALMS.md).
+The complete dev workflow (setup → verify → PR, fork rules, AI-assisted development) is in [CONTRIBUTING.md](CONTRIBUTING.md). Forks: customize `plugins/` + content + `realm.json`, never `packages/*/src` — then upstream merges stay conflict-free (`node scripts/check-fork.mjs` verifies). Server/realm discovery for external apps is documented in [REALMS.md](REALMS.md).
 
 ---
 
 ## 📚 Documentation
 
-- [Getting started](docs/getting-started.md)
+- [Getting started](docs/getting-started.md) · [Contributing](CONTRIBUTING.md)
 - [Architecture & structure](docs/architecture.md)
+- [Plugins & extensibility](docs/plugins.md)
+- [Testing](docs/TESTING.md) · [Debugging](docs/DEBUGGING.md)
 - [Game dynamics](docs/gameplay.md)
 - [Entities & objects](docs/entities.md)
 - [Configuration & tuning](docs/configuration.md)
