@@ -1,5 +1,5 @@
 import {
-  GameState,
+  type GameState,
   AnimState,
   STAMINA_DRAIN_PER_SEC,
   STAMINA_REGEN_PER_SEC,

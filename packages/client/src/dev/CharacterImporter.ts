@@ -10,12 +10,12 @@ import {
   MeshBuilder,
   StandardMaterial,
 } from "@babylonjs/core";
-import { AnimState } from "@rpg/shared";
+import type { AnimState } from "@rpg/shared";
 import {
   assembleCharacter,
-  CharacterDef,
-  CharAction,
-  AssembledCharacter,
+  type CharacterDef,
+  type CharAction,
+  type AssembledCharacter,
 } from "../entities/characterDef";
 
 interface ImportedFile {

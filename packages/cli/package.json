@@ -18,6 +18,8 @@
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "start": "tsx src/index.ts",
     "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

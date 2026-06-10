@@ -1,4 +1,8 @@
-export type BrainId = "idle" | "passive_patrol" | "war_seeker" | "attacks_home";
+export type BuiltinBrainId = "idle" | "passive_patrol" | "war_seeker" | "attacks_home";
+/** Open union: the builtin brains plus any plugin-registered brain id
+ *  (ServerPluginContext.registerBrain). `(string & {})` keeps literal
+ *  autocomplete for the builtins while admitting custom ids. */
+export type BrainId = BuiltinBrainId | (string & {});
 
 export interface CharacterStatsConfig {
   maxHp?: number;

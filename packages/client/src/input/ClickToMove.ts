@@ -1,8 +1,8 @@
 import {
-  Scene,
-  Mesh,
+  type Scene,
+  type Mesh,
   PointerEventTypes,
-  Vector3,
+  type Vector3,
   Matrix,
 } from "@babylonjs/core";
 import {
@@ -10,8 +10,8 @@ import {
   THROW_CHARGE_FALL_MS,
   THROW_CHARGE_FLOOR,
 } from "@rpg/shared";
-import { NetworkClient } from "../net/NetworkClient";
-import { PickResult } from "./FootprintPicker";
+import type { NetworkClient } from "../net/NetworkClient";
+import type { PickResult } from "./FootprintPicker";
 
 export interface ClickToMoveDeps {
   scene: Scene;
@@ -261,7 +261,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
 
     // ---- left button released → stop following the cursor ----
     if (pi.type === PointerEventTypes.POINTERUP) {
-      if (deps.dev?.isActive()) deps.dev.pointerUp(pi.event);
+      if (deps.dev?.isActive()) deps.dev.pointerUp(pi.event as unknown as PointerEvent);
       if (pi.event.button === 0) dragging = false;
       return;
     }
@@ -271,7 +271,7 @@ export function setupClickToMove(deps: ClickToMoveDeps) {
     if (pi.event.button !== 0) return;
 
     const point = groundPoint(scene);
-    if (deps.dev?.isActive() && deps.dev.pointerDown(point, pi.event)) return; // Dev Mode owns the click
+    if (deps.dev?.isActive() && deps.dev.pointerDown(point, pi.event as unknown as PointerEvent)) return; // Dev Mode owns the click
     if (!point) return;
 
     const hit = pickTargetAt(point);

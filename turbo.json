@@ -1,0 +1,31 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  // Cached task DAG. `^build` = workspace dependencies build first, so
+  // @rpg/shared (tsc, decorators) always lands in dist/ before client/server
+  // consume it; client + server + landing then build in parallel.
+  //
+  // Caveat: @rpg/client's vite build embeds git metadata (version panel) that
+  // turbo cannot hash — a locally cache-replayed client build may carry a stale
+  // commit hash in the footer. Release builds run on clean CI machines, so this
+  // only affects local `pnpm build`; use `turbo run build --force` if it matters.
+  "globalDependencies": ["tsconfig.base.json", "biome.json", ".env"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "tsconfig.tsbuildinfo"],
+      // Env vars that change build output (client embeds them) — part of the hash.
+      "env": ["VITE_SAME_ORIGIN", "VITE_SERVER_PORT", "VITE_ALLOWED_HOSTS"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "lint": {},
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

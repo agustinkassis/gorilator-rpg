@@ -1,12 +1,12 @@
-import { Scene, Mesh, ArcRotateCamera, Vector3, MeshBuilder, StandardMaterial, Color3 } from "@babylonjs/core";
+import { type Scene, type Mesh, type ArcRotateCamera, Vector3, MeshBuilder, StandardMaterial, Color3 } from "@babylonjs/core";
 import { setCameraZoom, getCameraZoom, tweenCameraZoom } from "../scene/camera";
-import { NetworkClient } from "../net/NetworkClient";
-import { PropManager } from "./PropManager";
-import { SelectionManager, Selectable } from "./Selection";
-import { Inspector, Field, Action } from "./Inspector";
+import type { NetworkClient } from "../net/NetworkClient";
+import type { PropManager } from "./PropManager";
+import { SelectionManager, type Selectable } from "./Selection";
+import { Inspector, type Field, type Action } from "./Inspector";
 import { LibraryExplorer } from "./LibraryExplorer";
 import { ItemLibrary } from "./ItemLibrary";
-import { PropDef } from "../scene/props";
+import type { PropDef } from "../scene/props";
 import { itemName, allItemDefs, loadItemDefs } from "../items/itemRegistry";
 import type { CharacterManager } from "./CharacterManager";
 import type { CharacterDef } from "../entities/characterDef";
@@ -55,8 +55,8 @@ import {
   type BrainId,
 } from "@rpg/shared";
 import {
-  StructureMask,
-  MaskPoint,
+  type StructureMask,
+  type MaskPoint,
   cloneStructureMask,
   defaultStructureMask,
   normalizeStructureMask,
@@ -1572,7 +1572,7 @@ export class DevMode {
         });
         if (!res.ok) throw new Error(await res.text());
         const out = await res.json();
-        await this.spawnAndSelect({ id: out.id, name: out.name, model: out.model, ...meta });
+        await this.spawnAndSelect({ ...meta, id: out.id });
         this.explorer.setStatus(`placed "${label}" - Shift held, drag the next copy`);
         return;
       }
@@ -2115,13 +2115,13 @@ export class DevMode {
     return {
       ...(d[kind] ?? {}),
       ...(modelId ? d[modelId] ?? {} : {}),
-      ...(i[id] ?? {}),
+      ...(id ? i[id] ?? {} : {}),
       stats: {
         ...((d[kind]?.stats ?? {}) as CharacterStatsCfg),
         ...((modelId ? d[modelId]?.stats ?? {} : {}) as CharacterStatsCfg),
-        ...((i[id]?.stats ?? {}) as CharacterStatsCfg),
+        ...((id ? i[id]?.stats ?? {} : {}) as CharacterStatsCfg),
       },
-      drops: i[id]?.drops ?? (modelId ? d[modelId]?.drops : undefined) ?? d[kind]?.drops,
+      drops: (id ? i[id]?.drops : undefined) ?? (modelId ? d[modelId]?.drops : undefined) ?? d[kind]?.drops,
     };
   }
 

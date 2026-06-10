@@ -199,6 +199,7 @@ export class PerfOverlay {
     lines.push("\x1b");
     lines.push(this.renderServer());
 
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: \x1b is the deliberate separator sentinel pushed above
     this.body.textContent = lines.join("\n").replace(/\x1b/g, "─".repeat(34));
 
     if (this.perf.isBenchmarking()) {

@@ -1,4 +1,4 @@
-import { GameState, Structure, STRUCTURE_HP } from "@rpg/shared";
+import { type GameState, Structure, STRUCTURE_HP } from "@rpg/shared";
 import { concreteProps } from "./props";
 import { entityHp } from "./entityFeatures";
 

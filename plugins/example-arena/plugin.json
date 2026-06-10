@@ -1,0 +1,12 @@
+{
+  "name": "example-arena",
+  "version": "0.1.0",
+  "apiVersion": "^1.0.0",
+  "description": "The worked example plugin: a kamikaze brain, an arena horn item, a kill-feed listener, custom waves, and a client dev panel. Every plugin seam in ~100 lines.",
+  "author": "gorilator",
+  "server": "./dist/server.js",
+  "client": "./dist/client.js",
+  "content": ["./content/waves.json"],
+  "capabilities": ["brain", "item", "system", "event", "content", "model", "panel"],
+  "enabled": true
+}

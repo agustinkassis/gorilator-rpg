@@ -1,10 +1,10 @@
 import {
-  Scene,
+  type Scene,
   TransformNode,
   MeshBuilder,
   StandardMaterial,
   Color3,
-  AbstractMesh,
+  type AbstractMesh,
 } from "@babylonjs/core";
 
 export interface TreeModel {

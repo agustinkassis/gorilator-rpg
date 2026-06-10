@@ -9,7 +9,7 @@ import {
   SceneLoader,
   PBRMaterial,
   TransformNode,
-  AnimationGroup,
+  type AnimationGroup,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import {

@@ -263,6 +263,7 @@ export function useServerHealth(servers: ServerStatus[]): Record<string, ServerH
     [servers],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: urlKey is a deliberate re-run trigger — the effect re-subscribes when the set of server URLs changes
   useEffect(() => {
     let cancelled = false;
 

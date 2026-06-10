@@ -1,8 +1,8 @@
 import {
-  Scene,
+  type Scene,
   SceneLoader,
   PBRMaterial,
-  AbstractMesh,
+  type AbstractMesh,
   TransformNode,
   Vector3,
 } from "@babylonjs/core";

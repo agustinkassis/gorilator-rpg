@@ -1,6 +1,6 @@
-import { readFileSync, existsSync, watchFile } from "fs";
-import { resolve } from "path";
-import { GameState, AnimState, Enemy, SpawnRuleConfig } from "@rpg/shared";
+import { readFileSync, existsSync, watchFile } from "node:fs";
+import { resolve } from "node:path";
+import { type GameState, AnimState, Enemy, type SpawnRuleConfig } from "@rpg/shared";
 import { makeGoblin } from "./goblins";
 import { configureEnemy } from "./enemyConfig";
 import { devSpawn } from "./devEdit";

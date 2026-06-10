@@ -1,6 +1,6 @@
 import {
-  GameState,
-  Player,
+  type GameState,
+  type Player,
   AnimState,
   MOVE_SPEED,
   ARRIVE_THRESHOLD,

@@ -1,15 +1,11 @@
 import {
-  GameState,
+  type GameState,
   Enemy,
-  Player,
-  House,
+  type Player,
+  type House,
   AnimState,
-  DamageEvent,
-  GOBLIN_MAX_HP,
+  type DamageEvent,
   GOBLIN_LEVEL,
-  GOBLIN_ATTACK,
-  GOBLIN_ARMOR,
-  GOBLIN_CRIT_CHANCE,
   GOBLIN_CHASE_SPEED,
   GOBLIN_PATROL_SPEED,
   GOBLIN_LEASH,
@@ -19,8 +15,8 @@ import {
   WAVE_SPAWN_ARC,
   ATTACK_VARIANCE,
   ARMOR_K,
-  statsForLevel,
   type BrainId,
+  type BrainWorld,
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
 import { applyDeathXpPenalty } from "./leveling";
@@ -29,6 +25,7 @@ import type { EmitKill } from "./combat";
 import { brainOf, configureEnemy } from "./enemyConfig";
 import { devTuning } from "./devTuning";
 import { customWave, type WaveEntry } from "./waves";
+import { serverPluginHost } from "./plugins/host";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -218,8 +215,13 @@ function liveWaveGoblins(state: GameState, waveNumber: number): number {
 function syncWaveState(state: GameState, clock: WaveClock) {
   state.waveNumber = clock.number;
   state.waveTimerMs = Math.max(0, clock.timer);
-  state.waveActive =
+  const active =
     clock.number > 0 && (clock.pending.length > 0 || liveWaveGoblins(state, clock.number) > 0);
+  // Plugin lifecycle events on the activity edge — the one chokepoint every wave
+  // path (waveSystem, forceNextWave) flows through.
+  if (active && !state.waveActive) serverPluginHost.fire("wave:start", { wave: clock.number }, state);
+  else if (!active && state.waveActive) serverPluginHost.fire("wave:end", { wave: clock.number }, state);
+  state.waveActive = active;
 }
 
 /** The rest after wave N — it grows so there's more time to rebuild as the siege
@@ -367,6 +369,17 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
   const remove: string[] = [];
   const home = homeOf(state);
 
+  // World helpers handed to plugin-registered brains (registerBrain) so custom
+  // AI reuses the same targeting/steering primitives as the builtins.
+  const world: BrainWorld = {
+    nearestPlayer: (g) => nearestPlayer(state, g),
+    home: () => {
+      const h = homeOf(state);
+      return h ? { id: h.id, x: h.x, z: h.z, radius: h.radius, scale: h.scale || 1 } : null;
+    },
+    stepToward: (g, x, z, speed, stepDt) => stepToward(g, x, z, speed, stepDt),
+  };
+
   state.enemies.forEach((g) => {
     const brain = brainOf(g);
     if (g.attackCooldown > 0) g.attackCooldown -= dtMs;
@@ -394,6 +407,20 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
       g.stateTimer -= dtMs;
       if (g.stateTimer <= 0) {
         connectEnemyAttack(state, g, emitDamage, emitKill);
+        g.state = AnimState.IDLE;
+      }
+      return;
+    }
+
+    // Plugin-registered brains dispatch first (a plugin may also deliberately
+    // override a builtin id). The timed states above (DEAD/HIT/ATTACK) already
+    // ran, so a custom brain only steers — combat resolution stays host-owned.
+    const pluginBrain = serverPluginHost.brains.get(brain);
+    if (pluginBrain) {
+      try {
+        pluginBrain(g, dt, state, world);
+      } catch (err) {
+        console.error(`[plugins] brain "${brain}" failed:`, err);
         g.state = AnimState.IDLE;
       }
       return;

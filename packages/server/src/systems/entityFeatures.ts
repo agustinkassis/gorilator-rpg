@@ -1,11 +1,11 @@
-import { existsSync, readFileSync, watchFile } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync, watchFile } from "node:fs";
+import { resolve } from "node:path";
 import {
-  BrainId,
-  CharacterStatsConfig,
-  DropRuleConfig,
-  EntityFeatureConfig,
-  EntityFeatureManifest,
+  type BrainId,
+  type CharacterStatsConfig,
+  type DropRuleConfig,
+  type EntityFeatureConfig,
+  type EntityFeatureManifest,
   DUMMY_MAX_HP,
   DUMMY_ATTACK,
   DUMMY_ARMOR,

@@ -1,6 +1,6 @@
 import {
-  GameState,
-  HealEvent,
+  type GameState,
+  type HealEvent,
   House,
   HOUSE_HP,
   HOUSE_COLLISION_RADIUS,

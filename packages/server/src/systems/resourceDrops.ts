@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, watchFile } from "fs";
-import { resolve } from "path";
+import { readFileSync, existsSync, watchFile } from "node:fs";
+import { resolve } from "node:path";
 import { TREE_HP, ROCK_HP } from "@rpg/shared";
 
 /**

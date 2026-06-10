@@ -1,16 +1,16 @@
 import {
-  AbstractMesh,
+  type AbstractMesh,
   Color3,
   Constants,
-  DirectionalLight,
+  type DirectionalLight,
   Material,
   Mesh,
   MeshBuilder,
   RenderTargetTexture,
-  Scene,
+  type Scene,
   ShadowGenerator,
   StandardMaterial,
-  TransformNode,
+  type TransformNode,
   Vector3,
   VertexBuffer,
   VertexData,
@@ -130,8 +130,8 @@ function shapePoint(shape: ContactShadowShape, angle: number, radius: number): {
   // while staying one cheap projected mesh.
   const power = 0.62;
   return {
-    x: Math.sign(c) * Math.pow(Math.abs(c), power) * radius * 0.5,
-    z: Math.sign(s) * Math.pow(Math.abs(s), power) * radius * 0.5,
+    x: Math.sign(c) * Math.abs(c) ** power * radius * 0.5,
+    z: Math.sign(s) * Math.abs(s) ** power * radius * 0.5,
   };
 }
 

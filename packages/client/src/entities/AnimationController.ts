@@ -1,4 +1,4 @@
-import { AnimationGroup } from "@babylonjs/core";
+import type { AnimationGroup } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
 
 const LOOPING = new Set<AnimState>([AnimState.IDLE, AnimState.WALK]);

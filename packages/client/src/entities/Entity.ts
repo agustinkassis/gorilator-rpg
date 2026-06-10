@@ -1,7 +1,7 @@
-import { TransformNode, Scalar, AbstractMesh, Color3, ParticleSystem } from "@babylonjs/core";
+import { type TransformNode, Scalar, type AbstractMesh, Color3, type ParticleSystem } from "@babylonjs/core";
 import { AnimState, SPRINT_SPEED_MULT, BERSERKER_SCALE } from "@rpg/shared";
 import { AnimationController } from "./AnimationController";
-import { SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH, BERSERK_FLASH } from "./types";
+import { type SpawnedCharacter, HIT_FLASH, DAMAGE_FLASH, BERSERK_FLASH } from "./types";
 import { makeBerserkerAura } from "../fx/berserkerFx";
 import { getCameraZoom } from "../scene/camera";
 import { lerpAngle, smooth } from "../util/math";

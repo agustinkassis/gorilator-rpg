@@ -1,16 +1,35 @@
 #!/usr/bin/env bash
-# SessionStart hook: when no dev server is running for this project, nudge the agent
-# to offer to start one - the GAME (`pnpm dev` = client + Colyseus server) or the
-# LANDING site (`pnpm landing`). Stays silent if a server is already up, so it
-# never nags on resume.
+# SessionStart hook: front-load the two facts every session otherwise looks up —
+# the PR/merge target branch (codex-workflow.json) and this worktree's
+# deterministic dev ports (.claude/launch.json) — and nudge the agent to offer
+# starting a dev server when none is running.
 listening() { lsof -i ":$1" -sTCP:LISTEN -n -P >/dev/null 2>&1; }
 
-# Common dev ports: 5173 (game client / landing default), 5860 + 5861 (launch.json
-# landing/game), 2567 (Colyseus game server).
-for port in 5173 5860 5861 2567; do
-  listening "$port" && exit 0 # already running -> say nothing
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+launch="$root/.claude/launch.json"
+
+target=""
+[ -f "$root/codex-workflow.json" ] &&
+  target=$(sed -n 's/.*"targetBranch"[^"]*"\([^"]*\)".*/\1/p' "$root/codex-workflow.json" | head -1)
+[ -z "$target" ] && target="main"
+
+landing="" client="" server=""
+if [ -f "$launch" ]; then
+  landing=$(sed -n 's/.*--port \([0-9]*\).*/\1/p' "$launch" | head -1)
+  client=$(sed -n 's/.*CLIENT_PORT=\([0-9]*\).*/\1/p' "$launch" | head -1)
+  server=$(sed -n 's/.*GAME_SERVER_PORT=\([0-9]*\).*/\1/p' "$launch" | head -1)
+fi
+ports="landing :${landing:-?}, game client :${client:-5173}, game server :${server:-2567}"
+
+ctx="Target branch (codex-workflow.json): ${target}. Worktree dev ports (.claude/launch.json; regen with pnpm wt:launch): ${ports}."
+
+up=0
+for port in 5173 2567 $landing $client $server; do
+  [ -n "$port" ] && listening "$port" && up=1 && break
 done
 
-cat <<'JSON'
-{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "No dev server is running for this worktree. Before starting work, ask the user (via the question UI) whether to start the GAME (run `pnpm dev` = Babylon client on port 5173 + Colyseus server) or the LANDING site (run `pnpm landing`), then launch the chosen one in the background. If the user's request clearly does not need a running app, you may skip this."}}
-JSON
+if [ "$up" = "1" ]; then
+  printf '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "%s A dev server is already listening."}}\n' "$ctx"
+else
+  printf '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "%s No dev server is running for this worktree. Before starting work, ask the user (via the question UI) whether to start the GAME (run pnpm dev = Babylon client + Colyseus server) or the LANDING site (run pnpm landing), then launch the chosen one in the background. If the request clearly does not need a running app, you may skip this."}}\n' "$ctx"
+fi

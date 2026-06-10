@@ -10,7 +10,7 @@ import {
   type AbstractMesh,
   type TransformNode,
 } from "@babylonjs/core";
-import { NetworkClient } from "../net/NetworkClient";
+import type { NetworkClient } from "../net/NetworkClient";
 import { buildBanana } from "../entities/models/banana";
 import { buildBerserkerPotion } from "../entities/models/berserkerPotion";
 import { buildDummy } from "../entities/models/dummy";
@@ -20,7 +20,7 @@ import { buildRock } from "../entities/models/rock";
 import { buildStone } from "../entities/models/stone";
 import { buildTree } from "../entities/models/tree";
 import { bounds, importModel } from "../scene/props";
-import { PropManager } from "./PropManager";
+import type { PropManager } from "./PropManager";
 import { loadItemDefs } from "../items/itemRegistry";
 import type { CharacterDef } from "../entities/characterDef";
 

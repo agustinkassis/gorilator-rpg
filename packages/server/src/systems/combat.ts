@@ -1,15 +1,15 @@
 import {
-  GameState,
-  Player,
-  Enemy,
-  Tree,
-  Rock,
+  type GameState,
+  type Player,
+  type Enemy,
+  type Tree,
+  type Rock,
   House,
   Structure,
   AnimState,
-  DamageEvent,
-  KillEvent,
-  HealEvent,
+  type DamageEvent,
+  type KillEvent,
+  type HealEvent,
   ATTACK_RANGE,
   ATTACK_VARIANCE,
   ARMOR_K,
@@ -35,10 +35,11 @@ import {
   dropEntityLoot,
   applyDamageDrops,
 } from "./resources";
-import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
+import { grantXp, killXp, applyDeathXpPenalty, type EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 import { devTuning } from "./devTuning";
 import { destroyPropObstacle } from "./props";
+import { serverPluginHost } from "./plugins/host";
 
 /** Anything that can be attacked or repaired by a player. */
 type Target = Player | Enemy | Tree | Rock | House | Structure;
@@ -285,6 +286,11 @@ function connectHit(
       dropEntityLoot(state, "structure", targetId, structure.modelId, structure.x, structure.z, 1.5); // kill-drop loot
       grantXp(attacker, killXp(state, targetId), emitXp);
       destroyPropObstacle(targetId); // rubble is walkable
+      serverPluginHost.fire(
+        "structure:destroyed",
+        { structureId: targetId, modelId: structure.modelId, x: structure.x, z: structure.z, byId: attacker.id },
+        state,
+      );
       state.structures.delete(targetId);
     }
     return;

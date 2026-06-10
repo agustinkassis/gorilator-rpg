@@ -6,27 +6,31 @@
 //   node scripts/wt-launch.mjs <dir> ...  # configure specific worktree dirs
 //   node scripts/wt-launch.mjs --all      # configure every git worktree
 //
-// .claude/ is gitignored, so each worktree gets its own ports with no git noise.
-// Two worktrees never share ports because the port block is hashed from the
-// absolute worktree path.
+// launch.json is per-worktree state (each worktree has its own .claude/), so
+// each worktree gets its own ports with no git noise. Two worktrees never share
+// ports because the port block is hashed from the absolute worktree path.
+//
+// portsFor/configFor/write are exported for scripts/wt.mjs (one-command
+// worktree creation) and scripts/setup.mjs.
 
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // 300 ten-port blocks: 4100..7090. landing=base, client=base+1, server=base+2.
 const PORT_FLOOR = 4100;
 const BLOCKS = 300;
 const BLOCK_SIZE = 10;
 
-function portsFor(dir) {
+export function portsFor(dir) {
   const h = parseInt(createHash("sha1").update(dir).digest("hex").slice(0, 8), 16);
   const base = PORT_FLOOR + (h % BLOCKS) * BLOCK_SIZE;
   return { landing: base, client: base + 1, server: base + 2 };
 }
 
-function configFor(dir) {
+export function configFor(dir) {
   const { landing, client, server } = portsFor(dir);
   return {
     dir,
@@ -54,7 +58,7 @@ function configFor(dir) {
   };
 }
 
-function write(dir) {
+export function write(dir) {
   const { ports, json } = configFor(dir);
   const claudeDir = join(dir, ".claude");
   if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true });
@@ -62,9 +66,10 @@ function write(dir) {
   console.log(
     `✓ ${dir}\n    landing :${ports.landing}   game/client :${ports.client}   server :${ports.server}`,
   );
+  return ports;
 }
 
-function gitWorktrees() {
+export function gitWorktrees() {
   return execSync("git worktree list --porcelain", { encoding: "utf8" })
     .split("\n")
     .filter((l) => l.startsWith("worktree "))
@@ -72,10 +77,15 @@ function gitWorktrees() {
     .filter(Boolean);
 }
 
-const args = process.argv.slice(2);
-let targets;
-if (args.includes("--all")) targets = gitWorktrees();
-else if (args.length) targets = args;
-else targets = [execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim()];
+const invokedDirectly =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-for (const dir of targets) write(dir);
+if (invokedDirectly) {
+  const args = process.argv.slice(2);
+  let targets;
+  if (args.includes("--all")) targets = gitWorktrees();
+  else if (args.length) targets = args;
+  else targets = [execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim()];
+
+  for (const dir of targets) write(dir);
+}

@@ -6,13 +6,13 @@ import {
   NOSTR_SAVE_KIND,
   playerRealmDTag,
   saveDTag,
-  PlayerSave,
-  PlayerSaveRealm,
-  Player,
-  InventorySlot,
+  type PlayerSave,
+  type PlayerSaveRealm,
+  type Player,
+  type InventorySlot,
 } from "@rpg/shared";
 import { getServerIdentity } from "./nostrIdentity";
-import { sanitizeSaveContent, NostrEvent } from "./nostr";
+import { sanitizeSaveContent, type NostrEvent } from "./nostr";
 
 // Node (≤20) has no global WebSocket, which SimplePool needs — inject `ws`.
 useWebSocketImplementation(WebSocket);

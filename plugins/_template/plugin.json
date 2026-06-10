@@ -1,0 +1,12 @@
+{
+  "name": "_template",
+  "version": "0.1.0",
+  "apiVersion": "^1.0.0",
+  "description": "Copy this directory to plugins/<your-name>/ and edit. Underscore-prefixed names are never loaded.",
+  "author": "",
+  "server": "./dist/server.js",
+  "client": "./dist/client.js",
+  "content": [],
+  "capabilities": ["brain", "item", "system", "event"],
+  "enabled": true
+}

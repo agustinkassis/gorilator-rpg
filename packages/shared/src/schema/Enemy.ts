@@ -50,6 +50,7 @@ export class Enemy extends Schema {
   wanderTimer = 0; // until the next patrol point is picked
   wanderRadius = 14; // how far it roams from home (small for the centre guardian)
   aggro = false; // chasing a player vs patrolling
+  prevDead = false; // DEAD-edge detector for the entity:killed plugin event
 
   // ---- dev-spawner overrides (0 / "" ⇒ use the global goblin defaults) ----
   spawnerId = ""; // which dev spawner produced this goblin ("" = wave / initial)

@@ -55,6 +55,19 @@ export function renderItemIcon(host: HTMLElement, id: string, size = 28) {
   }
 }
 
+/** Merge plugin-provided item defs into the registry (ClientPluginContext.
+ *  registerItemModel). Survives loadItemDefs reloads via the extras overlay. */
+const extraDefs = new Map<string, ItemDef>();
+export function registerExtraItemDefs(items: ItemDef[]): void {
+  for (const def of items) {
+    const id = safeItemId(def.id);
+    if (!id) continue;
+    extraDefs.set(id, { ...def, id });
+    defs.set(id, { ...def, id });
+  }
+  window.dispatchEvent(new Event("items:changed"));
+}
+
 export async function loadItemDefs(): Promise<void> {
   if (loading) return loading;
   loading = (async () => {
@@ -79,6 +92,7 @@ export async function loadItemDefs(): Promise<void> {
     } catch {
       /* keep built-ins */
     }
+    for (const [id, def] of extraDefs) next.set(id, def); // plugin defs survive reloads
     defs = next;
     window.dispatchEvent(new Event("items:changed"));
   })().finally(() => {

@@ -24,9 +24,9 @@ test("remote compares local package versions against the git remote", () => {
     assert.match(output, /Gorilator Remote/);
     assert.match(output, /Git Comparison/);
     assert.match(output, /Package Comparison/);
-    assert.match(output, /  app\s+: local v1\.0\.0 \/ remote v1\.1\.0\s+behind/);
-    assert.match(output, /  cli\s+: local v1\.0\.0 \/ remote v1\.2\.0\s+behind/);
-    assert.match(output, /  server\s+: local v1\.0\.0 \/ remote v1\.0\.0\s+current/);
+    assert.match(output, / {2}app\s+: local v1\.0\.0 \/ remote v1\.1\.0\s+behind/);
+    assert.match(output, / {2}cli\s+: local v1\.0\.0 \/ remote v1\.2\.0\s+behind/);
+    assert.match(output, / {2}server\s+: local v1\.0\.0 \/ remote v1\.0\.0\s+current/);
     assert.doesNotMatch(output, /Published CLI/);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });

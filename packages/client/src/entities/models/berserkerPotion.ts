@@ -1,14 +1,14 @@
 import {
-  Scene,
+  type Scene,
   SceneLoader,
-  AssetContainer,
+  type AssetContainer,
   TransformNode,
-  AbstractMesh,
+  type AbstractMesh,
   PBRMaterial,
   MeshBuilder,
   StandardMaterial,
   Color3,
-  Mesh,
+  type Mesh,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 

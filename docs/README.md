@@ -25,6 +25,9 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | Doc | What's inside |
 | --- | --- |
 | [getting-started.md](getting-started.md) | Prerequisites, install, the dev loop, build, the `@rpg/shared` rebuild gotcha, env, deploy pointers |
+| [plugins.md](plugins.md) | **The plugin system**: data vs code tiers, the `@rpg/shared` plugin API (brains, items, systems, events), plugin.json, the Vite bundler, Nostr realm packs, `realm.json`, fork rules |
+| [TESTING.md](TESTING.md) | The four test layers: Vitest unit/characterization tests, Playwright e2e (landing + headless game smoke), the bench gate, CI — and the "DOM not canvas" rule |
+| [DEBUGGING.md](DEBUGGING.md) | The debugging toolkit (F3, `__perf`, `/api/perf`, Colyseus monitor, auto-captured stutters) + the troubleshooting table |
 | [architecture.md](architecture.md) | Monorepo layout, the three packages, the authoritative-server networking model, the simulation tick, full directory tree |
 | [gameplay.md](gameplay.md) | The tower-defense loop in depth: waves, goblin AI, defenders, combat, leveling, sprint/stamina, items, resources, the wipe & realms |
 | [entities.md](entities.md) | Every world object + its synchronized fields + behaviour (player, goblin, dummy, La Crypta, tree, rock, stone, log, potion, banana) |
@@ -38,6 +41,8 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [admin.md](admin.md) | The admin list (`ADMIN_NPUBS`) + NIP-98-protected `/api/admin/*` API, and the admin "Update now" self-update button on the splash |
 
 Related top-level docs: [`../README.md`](../README.md) (quick start + stack),
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md) (the complete dev workflow: setup →
+verify → PR, fork rules, AI-assisted development),
 [`../REALMS.md`](../REALMS.md) (realm/discovery spec for external apps),
 [`../DEPLOY.md`](../DEPLOY.md) / [`../RAILWAY.md`](../RAILWAY.md) (hosting).
 
