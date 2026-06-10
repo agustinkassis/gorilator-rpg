@@ -260,7 +260,7 @@ function addLocalPlugin(root: string, path: string, flags: PluginFlags): void {
   }
   const manifest = readManifest(src);
   if (!manifest) {
-    return log.die(`${src} has no valid plugin.json ("name" + "apiVersion") — see docs/plugins.md.`);
+    log.die(`${src} has no valid plugin.json ("name" + "apiVersion") — see docs/plugins.md.`);
   }
 
   const pluginsDir = join(root, "plugins");
@@ -287,7 +287,7 @@ function addLocalPlugin(root: string, path: string, flags: PluginFlags): void {
  *  one line touched — so hand-written .env comments survive. */
 function addPackAuthor(root: string, npub: string): void {
   const hex = npubToHex(npub);
-  if (!hex) return log.die(`${npub} is not a valid npub.`);
+  if (!hex) log.die(`${npub} is not a valid npub.`);
 
   const envPath = join(root, ".env");
   const lines = (existsSync(envPath) ? readFileSync(envPath, "utf8") : "").split("\n");

@@ -29,6 +29,19 @@ pnpm dev                    # the server logs: [plugins] my-plugin@x.y.z loaded
 Plugin dev loop: `pnpm build:plugins --watch` rebuilds on change; restart the
 server to re-run `setup()` (content JSON live-reloads without a restart).
 
+## CLI
+
+The npm `gorilator` CLI manages all of this without hand-editing files
+(`gorilator help plugin` for details):
+
+```bash
+gorilator plugin list            # discovered plugins (plugins/ + npm) with enabled state
+gorilator plugin disable <name>  # add to realm.json plugins.disabled
+gorilator plugin enable <name>   # remove from realm.json plugins.disabled
+gorilator plugin add <path>      # copy a local plugin dir into plugins/ (--link symlinks)
+gorilator plugin add <npub>      # trust a realm-pack author → REALM_PACK_AUTHORS in .env
+```
+
 ## plugin.json
 
 ```json
