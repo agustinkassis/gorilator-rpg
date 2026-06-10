@@ -20,3 +20,54 @@
 - A PR check (`.github/workflows/version-guard.yml`) **fails** if a package version changed without the app bumping accordingly. Verify locally with `pnpm version:check` before opening/updating a PR.
 - To release the CLI: `pnpm bump cli <level>` → merge to `main` → create a GitHub Release tagged with the app version. CI publishes the CLI only when the CLI package version is not already on npm.
 - Full policy: `docs/versioning.md`.
+
+## Package map
+
+- `@rpg/shared` (`packages/shared/src`) — Colyseus `@type` schema in `schema/`, `types.ts`, `constants.ts`, `entityFeatures.ts`, `perf.ts`, plugin API in `plugin/`. **tsc-built to `dist/`** (decorators) — client/server consume the compiled output.
+- `@rpg/server` (`packages/server/src`) — Express + Colyseus. Game logic = pure `(state, dt)` systems in `systems/`; the 20Hz tick lives in `rooms/GameRoom.ts`.
+- `@rpg/client` (`packages/client/src`) — Babylon + Vite. In-game Dev Mode editor in `dev/`, perf overlay in `perf/`. `vite.config.ts` (~2000 lines) holds all `/__*/` dev endpoints.
+- `@gorilator/landing` (`packages/landing`) — React marketing site + live stats dashboard.
+- `gorilator` CLI (`packages/cli`) — npm-published installer/daemon. Its version is independent of the app release version (CI publishes only when the CLI version isn't already on npm).
+
+## Where things live (intent → file)
+
+| Change | Edit |
+| --- | --- |
+| Entity stats / HP / drops / brain | `packages/client/public/entity-features.json` (server: `systems/entityFeatures.ts`) |
+| Props / collision | `public/props.json` (`systems/props.ts`) |
+| Spawners | `public/spawners.json` (`systems/spawners.ts`) |
+| Wave composition | `public/waves.json` (`systems/waves.ts`) |
+| NPCs / character templates | `public/npcs.json` + `public/characters.json` (`systems/npcs.ts`) |
+| Items (defs + icons/models) | `public/items.json` (`systems/items.ts`, client `items/itemRegistry.ts`) |
+| Tree/rock drop tables | `public/resources.json` (`systems/resourceDrops.ts`) |
+| Damage formula / combat | `packages/server/src/systems/combat.ts` |
+| AI brains | `systems/goblins.ts` + plugin `registerBrain` (see `docs/plugins.md`) |
+| New synced field | `packages/shared/src/schema/*` → rebuild shared → client **hard reload** |
+| Game tuning constants | `packages/shared/src/constants.ts` (live knobs: Dev Mode tuning panel) |
+| Dev-editor HTTP endpoints | `packages/client/vite.config.ts` (`/__props/*`, `/__char/*`, `/__items/*`, …) |
+
+All `public/*.json` manifests live-reload on the server (watchFile) — no restart needed.
+
+## Rebuild gotchas
+
+1. Editing `@rpg/shared` → `pnpm build:shared` (or rely on the `pnpm dev` watcher) before server/client pick it up.
+2. Schema (`@type`) changes need a client **hard reload**, not HMR.
+3. Everything is tsc-gated via `pnpm typecheck`; builds + tasks are Turbo-cached (`turbo.json`).
+
+## Dev workflow commands
+
+- `pnpm bootstrap` — clone-to-running setup (install, .env, ports, warm cache). Then `pnpm dev`.
+- `pnpm dev` / `pnpm landing` — game stack / landing site. Per-worktree ports: `.claude/launch.json` (regen: `pnpm wt:launch`).
+- `pnpm wt <name>` / `pnpm wt rm <name>` / `pnpm wt list` — parallel worktrees with collision-free ports (manifest: `.claude/worktrees-manifest.json` in the main tree).
+- `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm e2e` · `pnpm bench` — the verification ladder; run typecheck+test before a PR, `pnpm version:check` too.
+- Verify in-browser via DOM/network/`window.__perf` evals — never canvas screenshots (see `docs/TESTING.md`).
+
+## Plugins & forks
+
+- Two tiers: **data plugins** (JSON content packs, no code) and **code plugins** (`plugins/<name>/` with `plugin.json`, server/client entries against `@rpg/shared` plugin API). Guide: `docs/plugins.md`.
+- **Fork rule:** forks customize `plugins/`, `packages/client/public/*.json`, and `realm.json` — never `packages/*/src` (keeps forks upstream-mergeable; check with `node scripts/check-fork.mjs`).
+
+## Agent helpers
+
+- Skills live in `.claude/skills/` (dev-up, add-entity, add-system, add-plugin, run-tests, bench, release, merge-target, perf-triage); subagents in `.claude/agents/`; cached deep references in `.claude/context/` — read those fragments lazily, only when the task touches that area.
+- Parallel worktree fan-out: only for independent, non-overlapping work (e.g. content JSON in one tree, a server system in another). Never edit the shared schema in two trees at once — every shared change forces a rebuild for all.

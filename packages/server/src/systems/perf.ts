@@ -7,9 +7,9 @@ import {
   type IntervalHistogram,
 } from "node:perf_hooks";
 import {
-  ServerPerfSample,
-  BenchmarkResult,
-  MetricSummary,
+  type ServerPerfSample,
+  type BenchmarkResult,
+  type MetricSummary,
   summarize,
 } from "@rpg/shared";
 

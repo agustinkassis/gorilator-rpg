@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: packages/cli/package-lock.json
 
       # Publish only when this exact version isn't already on npm.
       - name: Decide whether to publish

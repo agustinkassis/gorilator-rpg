@@ -92,7 +92,7 @@ export const XP_DEATH_PENALTY = 0.3; // on death you lose this fraction of TOTAL
 
 /** XP required to advance FROM `level` to the next one (escalating). */
 export function xpForLevel(level: number): number {
-  return Math.round(XP_BASE * Math.pow(Math.max(1, level), XP_GROWTH));
+  return Math.round(XP_BASE * Math.max(1, level) ** XP_GROWTH);
 }
 
 /** A character's level-1 base combat stats, scaled up per level by statsForLevel. */

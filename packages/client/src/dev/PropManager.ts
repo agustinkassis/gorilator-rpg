@@ -1,10 +1,10 @@
-import {
+import type {
   Scene,
   AbstractMesh,
   TransformNode,
   Nullable,
 } from "@babylonjs/core";
-import { PropDef, LoadedProp, importModel, applyTransform, bounds } from "../scene/props";
+import { type PropDef, type LoadedProp, importModel, applyTransform, bounds } from "../scene/props";
 import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 /** A prop that has been placed into the world and registered for editing. `def`

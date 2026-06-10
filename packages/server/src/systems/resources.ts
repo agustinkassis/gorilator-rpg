@@ -1,11 +1,11 @@
 import {
-  GameState,
+  type GameState,
   Tree,
   Log,
   Rock,
   Stone,
   Potion,
-  ItemType,
+  type ItemType,
   BOULDERS,
   TREE_COUNT,
   TREE_HP,

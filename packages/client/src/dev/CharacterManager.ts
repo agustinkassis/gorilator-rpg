@@ -1,6 +1,6 @@
-import { Scene, AbstractMesh, TransformNode, Nullable } from "@babylonjs/core";
+import type { Scene, AbstractMesh, TransformNode, Nullable } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
-import { assembleCharacter, CharacterDef, AssembledCharacter } from "../entities/characterDef";
+import { assembleCharacter, type CharacterDef, type AssembledCharacter } from "../entities/characterDef";
 import { bounds } from "../scene/props";
 import type { ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 

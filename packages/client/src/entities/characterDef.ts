@@ -1,15 +1,15 @@
 import {
-  Scene,
-  AssetContainer,
+  type Scene,
+  type AssetContainer,
   SceneLoader,
   TransformNode,
-  AbstractMesh,
-  AnimationGroup,
+  type AbstractMesh,
+  type AnimationGroup,
   PBRMaterial,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
-import { AnimState } from "@rpg/shared";
-import { AnimationController, AnimGroups, AnimSpeeds } from "./AnimationController";
+import type { AnimState } from "@rpg/shared";
+import { AnimationController, type AnimGroups, type AnimSpeeds } from "./AnimationController";
 import { bounds } from "../scene/props";
 
 /**

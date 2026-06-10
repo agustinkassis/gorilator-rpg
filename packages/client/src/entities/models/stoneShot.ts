@@ -1,5 +1,5 @@
-import { Scene, MeshBuilder, StandardMaterial, Color3, TransformNode } from "@babylonjs/core";
-import { BananaModel } from "./banana";
+import { type Scene, MeshBuilder, StandardMaterial, Color3, TransformNode } from "@babylonjs/core";
+import type { BananaModel } from "./banana";
 
 /**
  * A primitive thrown-stone projectile: a small faceted grey rock, slightly oblong

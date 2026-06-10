@@ -1,34 +1,34 @@
 import { performance } from "node:perf_hooks";
-import { Room, Client } from "@colyseus/core";
+import { Room, type Client } from "@colyseus/core";
 import {
   GameState,
   Player,
   AnimState,
-  MoveMessage,
-  AttackMessage,
-  PickupMessage,
-  InventoryMoveMessage,
-  UseItemMessage,
-  ThrowMessage,
-  ChatMessage,
-  SprintMessage,
-  DevGodMessage,
-  DevSpawnMessage,
-  DevMoveMessage,
-  DevDeleteMessage,
-  DevSetMessage,
-  DevGiveItemMessage,
-  DevSetSlotMessage,
-  DevTimeMessage,
-  DevActionMessage,
-  DevTuneMessage,
+  type MoveMessage,
+  type AttackMessage,
+  type PickupMessage,
+  type InventoryMoveMessage,
+  type UseItemMessage,
+  type ThrowMessage,
+  type ChatMessage,
+  type SprintMessage,
+  type DevGodMessage,
+  type DevSpawnMessage,
+  type DevMoveMessage,
+  type DevDeleteMessage,
+  type DevSetMessage,
+  type DevGiveItemMessage,
+  type DevSetSlotMessage,
+  type DevTimeMessage,
+  type DevActionMessage,
+  type DevTuneMessage,
   CHAT_MAX_LEN,
   INV_SLOTS,
-  InventorySlot,
-  ItemType,
-  DamageEvent,
-  KillEvent,
-  XpEvent,
+  type InventorySlot,
+  type ItemType,
+  type DamageEvent,
+  type KillEvent,
+  type XpEvent,
   ROCK_COLLISION_SCALE,
   POTION_HEAL,
   THROW_STATE_MS,
@@ -49,8 +49,8 @@ import {
   SACRED_CIRCLE_HEAL_PER_SEC_MAX,
   SACRED_CIRCLE_HEAL_PER_SEC_MIN,
   SACRED_CIRCLE_RADIUS,
-  HealEvent,
-  PlayerSave,
+  type HealEvent,
+  type PlayerSave,
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
 import { staminaSystem } from "../systems/stamina";
@@ -89,8 +89,12 @@ import { devSpawn, devMove, devDelete, devSet } from "../systems/devEdit";
 import { devTuning, setDevTuning } from "../systems/devTuning";
 import { perfTracker } from "../systems/perf";
 import { grantXp } from "../systems/leveling";
-import { verifyNostrLogin, NostrJoinPayload, VerifiedNostr } from "../systems/nostr";
+import { verifyNostrLogin, type NostrJoinPayload, type VerifiedNostr } from "../systems/nostr";
 import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrSave";
+import { serverPluginHost } from "../systems/plugins/host";
+import { loadServerPlugins } from "../systems/plugins/loader";
+import { initNostrContent } from "../systems/plugins/nostrContent";
+import { applyRealmConfig } from "../systems/realm";
 
 /** A kicked session's gameplay state, handed to the new login that takes it over. */
 interface TakeoverState {
@@ -152,7 +156,7 @@ export class GameRoom extends Room<GameState> {
   /** Throttles the realm-tracker snapshot (it doesn't need every 20Hz tick). */
   private realmTick = 0;
 
-  onCreate() {
+  async onCreate() {
     this.setState(new GameState());
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
     onPropsChange(() => applyStructures(this.state)); // re-sync destructible structures on props edit
@@ -175,6 +179,29 @@ export class GameRoom extends Room<GameState> {
     spawnInitialBananas(this.state);
     spawnHouse(this.state);
     loadAuthoredNpcs(this.state);
+
+    // Deterministic test mode (e2e smoke tests, `pnpm bench` scenarios): no goblin
+    // waves, so room state only changes when a test drives it. Uses the existing
+    // devTuning knobs — every other system runs exactly as in production.
+    // realm.json (per-realm/fork config): seed the live tuning knobs before any
+    // mode-specific overrides. Absent file = current defaults, untouched.
+    applyRealmConfig();
+
+    if (process.env.GORILATOR_TEST === "1") {
+      setDevTuning("waveSizeBase", 0);
+      setDevTuning("waveSizePerPlayer", 0);
+      setDevTuning("waveSizePerWave", 0);
+      // The pre-created bench/e2e room has no clients — without this, Colyseus
+      // auto-disposes it mid-benchmark and the capture never completes.
+      this.autoDispose = false;
+      console.log("[room] GORILATOR_TEST=1 — goblin waves disabled for a reproducible room");
+    }
+
+    // Discover + load server plugins (plugins/ + gorilator-plugin-* packages):
+    // brains, item behaviors, tick systems, event listeners, content packs.
+    // Idempotent across realm restarts; a failing plugin is skipped, never fatal.
+    await loadServerPlugins();
+    initNostrContent(); // kind-30333 realm packs (REALM_PACK_AUTHORS env) — no-op when unset
 
     this.onMessage("move", (client, msg: MoveMessage) => {
       const p = this.state.players.get(client.sessionId);
@@ -359,6 +386,38 @@ export class GameRoom extends Room<GameState> {
       const slot = inv[msg.slot];
       if (!slot || slot.count <= 0) return;
 
+      // Plugin-registered item behaviors dispatch first (a plugin may override a
+      // builtin id). The builtins (potion, berserker_potion) stay inline below.
+      const pluginBehavior = serverPluginHost.items.get(slot.type);
+      if (pluginBehavior) {
+        const sid = client.sessionId;
+        const itemId = slot.type;
+        try {
+          pluginBehavior.onUse(p, msg.slot, {
+            state: this.state,
+            consume: () => {
+              slot.count -= 1;
+              if (slot.count <= 0) {
+                slot.type = "";
+                slot.count = 0;
+              }
+              this.sendInventory(sid);
+            },
+            broadcast: (type, payload) => this.broadcast(type, payload),
+            heal: (target, amount) => {
+              const healed = Math.min(amount, target.maxHp - target.hp);
+              if (healed <= 0) return;
+              target.hp += healed;
+              this.broadcast("heal", { targetId: target.id, amount: healed });
+            },
+            log: (m) => console.log(`[plugin:item:${itemId}] ${m}`),
+          });
+        } catch (err) {
+          console.error(`[plugins] item "${itemId}" onUse failed:`, err);
+        }
+        return;
+      }
+
       if (slot.type === "potion") {
         if (p.hp >= p.maxHp) return; // don't waste a potion at full HP
         const heal = Math.min(POTION_HEAL, p.maxHp - p.hp);
@@ -449,6 +508,21 @@ export class GameRoom extends Room<GameState> {
           return true;
         },
       };
+      // Plugin tick systems run per phase, each inside its own perf span
+      // (`plugin:<name>` in /api/perf + F3) and a try/catch — a throwing plugin
+      // never takes down the 20Hz tick.
+      const runPluginSystems = (phase: "pre" | "main" | "post") => {
+        for (const s of serverPluginHost.systems[phase]) {
+          perfTracker.span(`plugin:${s.name}`, () => {
+            try {
+              s.fn(this.state, dt);
+            } catch (err) {
+              console.error(`[plugins] system "${s.name}" failed:`, err);
+            }
+          });
+        }
+      };
+      runPluginSystems("pre");
       // Each system runs inside a perf span so a tick-time spike traces to the exact
       // culprit (the `tag:*` rows in the server summary / analyzer).
       perfTracker.span("stamina", () => staminaSystem(this.state, dt)); // sets p.sprinting; movement reads it for the speed boost
@@ -465,6 +539,7 @@ export class GameRoom extends Room<GameState> {
       perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
       perfTracker.span("sacredCircleHeal", () => this.sacredCircleHealSystem(dt));
       perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
+      runPluginSystems("main");
       this.releasePendingThrows(scaledMs);
       perfTracker.span("resources", () => {
         treeRegrowSystem(this.state, dt);
@@ -477,6 +552,7 @@ export class GameRoom extends Room<GameState> {
         if (inv) {
           addItem(inv, type, 1);
           this.sendInventory(pid);
+          serverPluginHost.fire("item:pickup", { playerId: pid, item: type }, this.state);
         }
       };
       // Skip pickups while paused: the dev's ghost roams over items but must NOT
@@ -488,10 +564,30 @@ export class GameRoom extends Room<GameState> {
           autoGrabSystem(this.state, collect); // auto-collect anything nearby
         });
       // Tally each death the instant a player flips into the DEAD state (any cause).
-      this.state.players.forEach((p) => {
+      this.state.players.forEach((p, sid) => {
         const dead = p.state === AnimState.DEAD;
-        if (dead && !p.prevDead) p.deaths++;
+        if (dead && !p.prevDead) {
+          p.deaths++;
+          serverPluginHost.fire(
+            "entity:killed",
+            { victimId: sid, victimKind: "player", victimName: p.name },
+            this.state,
+          );
+        }
         p.prevDead = dead;
+      });
+      // Same edge detection for enemies — catches every death cause (melee,
+      // throws, plugin systems) at one chokepoint.
+      this.state.enemies.forEach((e) => {
+        const dead = e.state === AnimState.DEAD || e.hp <= 0;
+        if (dead && !e.prevDead) {
+          serverPluginHost.fire(
+            "entity:killed",
+            { victimId: e.id, victimKind: e.kind, modelId: e.modelId, x: e.x, z: e.z },
+            this.state,
+          );
+        }
+        e.prevDead = dead;
       });
       // Berserker potion tick: count down the timed buff and restore base stats on expiry.
       this.state.players.forEach((p, sid) => {
@@ -520,6 +616,7 @@ export class GameRoom extends Room<GameState> {
         this.realmTick = 0;
         this.reportRealm(); // ~1/s: feed the realm tracker (start/accumulate/abandon)
       }
+      runPluginSystems("post");
       recordTick();
     }, 1000 / TICK_RATE);
 
@@ -618,6 +715,7 @@ export class GameRoom extends Room<GameState> {
     this.state.restartTimerMs = REALM_RESTART_MS; // freezes the world + starts the countdown
     realmTracker.homeFell(); // this realm is over (a fresh one starts after the countdown)
 
+    serverPluginHost.fire("realm:end", { wave }, this.state);
     this.broadcast("wipe", { wave }); // defeat banner
     console.log(`[room] La Crypta fell on wave ${wave} — next realm in ${REALM_RESTART_MS / 1000}s`);
   }
@@ -811,6 +909,11 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.set(client.sessionId, p);
+    serverPluginHost.fire(
+      "player:spawn",
+      { playerId: client.sessionId, name: p.name, pubkey: p.pubkey },
+      this.state,
+    );
     this.reportRealm(); // ensure a live realm exists before any immediate save trigger
     realmTracker.noteNpub(p.pubkey); // track the npub in the live realm (no-op for anon / no realm)
 

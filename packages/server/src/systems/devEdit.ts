@@ -1,5 +1,5 @@
 import {
-  GameState,
+  type GameState,
   AnimState,
   WORLD_SIZE,
   Tree,
@@ -16,7 +16,7 @@ import {
   ROCK_ARMOR,
   HOUSE_HP,
   HOUSE_COLLISION_RADIUS,
-  BrainId,
+  type BrainId,
 } from "@rpg/shared";
 import { entityHp } from "./entityFeatures";
 import { configureEnemy } from "./enemyConfig";

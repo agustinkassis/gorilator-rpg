@@ -1,5 +1,5 @@
-import { NetworkClient } from "../net/NetworkClient";
-import { ItemDef, loadItemDefs, renderItemIcon, safeItemId } from "../items/itemRegistry";
+import type { NetworkClient } from "../net/NetworkClient";
+import { type ItemDef, loadItemDefs, renderItemIcon, safeItemId } from "../items/itemRegistry";
 
 export interface ItemLibraryDeps {
   net: NetworkClient;

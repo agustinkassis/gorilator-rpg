@@ -26,24 +26,22 @@ jobs:
         with:
           ref: ${{ env.TAG }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
 
+      - name: Setup Node.js (with pnpm store cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build (shared + client same-origin + cli)
-        run: |
-          pnpm --filter @rpg/shared build
-          pnpm --filter @rpg/client build
-          pnpm --filter gorilator build
+      - name: Build (shared + client same-origin + cli, parallel via Turbo)
+        run: pnpm exec turbo run build --filter @rpg/shared --filter @rpg/client --filter gorilator
         env:
           VITE_SAME_ORIGIN: "1"
 

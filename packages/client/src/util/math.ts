@@ -8,5 +8,5 @@ export function lerpAngle(from: number, to: number, t: number): number {
 
 /** Frame-rate independent smoothing factor for exponential lerps. */
 export function smooth(dt: number, halfLife = 0.06): number {
-  return 1 - Math.pow(2, -dt / halfLife);
+  return 1 - 2 ** (-dt / halfLife);
 }

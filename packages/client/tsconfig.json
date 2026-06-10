@@ -2,8 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"],
+    "incremental": true,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
     "experimentalDecorators": true,
     "useDefineForClassFields": false
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "config"],
+  "references": [{ "path": "../shared" }]
 }

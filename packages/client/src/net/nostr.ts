@@ -1,7 +1,7 @@
 import { SimplePool } from "nostr-tools/pool";
 import { npubEncode } from "nostr-tools/nip19";
 import { getToken } from "nostr-tools/nip98";
-import { SERVER_PORT, NOSTR_SAVE_KIND, saveDTag, PlayerSave } from "@rpg/shared";
+import { SERVER_PORT, NOSTR_SAVE_KIND, saveDTag, type PlayerSave } from "@rpg/shared";
 
 export type { PlayerSave };
 

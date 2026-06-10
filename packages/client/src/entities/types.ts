@@ -1,6 +1,6 @@
-import { TransformNode, AbstractMesh, Color3 } from "@babylonjs/core";
-import { AnimState } from "@rpg/shared";
-import { AnimGroups } from "./AnimationController";
+import { type TransformNode, type AbstractMesh, Color3 } from "@babylonjs/core";
+import type { AnimState } from "@rpg/shared";
+import type { AnimGroups } from "./AnimationController";
 
 /** Bright flash colour for the "taking damage" reaction (works on any base colour). */
 export const HIT_FLASH = new Color3(1, 1, 1);

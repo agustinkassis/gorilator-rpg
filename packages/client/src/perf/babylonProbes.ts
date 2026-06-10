@@ -1,6 +1,6 @@
 import {
-  Engine,
-  Scene,
+  type Engine,
+  type Scene,
   EngineInstrumentation,
   SceneInstrumentation,
 } from "@babylonjs/core";

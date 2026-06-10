@@ -1,4 +1,4 @@
-import { ArcRotateCamera, Camera, Scene, Vector3 } from "@babylonjs/core";
+import { ArcRotateCamera, Camera, type Scene, Vector3 } from "@babylonjs/core";
 
 /** Half-height of the orthographic view, in world units. Smaller = more zoomed in.
  *  7.56 = 6.3 × 1.2, so gameplay is 20% farther out than before. */
@@ -36,7 +36,7 @@ export function tweenCameraZoom(camera: ArcRotateCamera, factor: number, duratio
   const t0 = performance.now();
   const step = (now: number) => {
     const p = Math.min(1, (now - t0) / durationMs);
-    const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+    const e = 1 - (1 - p) ** 3; // easeOutCubic
     zoom = start + (target - start) * e;
     applyOrthoSize(camera);
     if (p < 1) {

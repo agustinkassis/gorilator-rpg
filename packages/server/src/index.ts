@@ -1,9 +1,9 @@
 import "./systems/webcrypto";
-import { createServer } from "http";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
-import { Server } from "@colyseus/core";
+import { matchMaker, Server } from "@colyseus/core";
 import { Encoder } from "@colyseus/schema";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { monitor } from "@colyseus/monitor";
@@ -86,6 +86,28 @@ app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
 // span times). The F3 perf overlay polls this; also handy with curl/jq. See
 // docs/performance.md.
 app.get("/api/perf", (_req, res) => res.json(perfTracker.snapshot()));
+
+// Run a labelled server benchmark and return the BenchmarkResult JSON (it is
+// also written to perf-logs/bench-<label>-<ts>.json). This is how `pnpm bench`
+// captures scenarios. Body: { label?: string, durationMs?: number }.
+// Open in dev / GORILATOR_TEST runs; behind the monitor Basic-auth when
+// MONITOR_USER/PASS are set (same trust level as /colyseus).
+const benchHandler = async (req: Request, res: Response) => {
+  const label = String(req.body?.label ?? "adhoc").replace(/[^a-zA-Z0-9_.-]/g, "_");
+  // Capped under Node's default 300s requestTimeout — the response waits for the run.
+  const durationMs = Math.max(1_000, Math.min(120_000, Number(req.body?.durationMs) || 15_000));
+  if (perfTracker.isBenchmarking()) {
+    res.status(409).json({ error: "a benchmark is already running" });
+    return;
+  }
+  const result = await perfTracker.startBenchmark(label, durationMs);
+  res.json(result);
+};
+if (monitorUser && monitorPass) {
+  app.post("/api/bench", monitorAuth, benchHandler);
+} else {
+  app.post("/api/bench", benchHandler);
+}
 
 // Auto-update status: the daemon's cached verdict on whether a newer GitHub
 // release exists. The game splash polls this to show an "update available"
@@ -170,6 +192,14 @@ gameServer
     realmTracker.init(); // realm/stats tracking + Nostr discovery event + /api/* (see REALMS.md)
     perfTracker.init(); // CPU/memory/tick sampling + /api/perf (+ JSONL when PERF_LOG=1)
     updateChecker.init(); // periodic GitHub release check → /api/update (UPDATE_CHECK_HOURS)
+    if (process.env.GORILATOR_TEST === "1") {
+      // Test/bench mode: pre-create the room so the 20Hz simulation ticks (and
+      // POST /api/bench can sample it) without needing a client to join first.
+      matchMaker
+        .createRoom(ROOM_NAME, {})
+        .then(() => console.log("[server] GORILATOR_TEST=1 — room pre-created for bench/e2e"))
+        .catch((err) => console.error("[server] test room pre-create failed", err));
+    }
   })
   .catch((err) => {
     console.error("[server] failed to start", err);

@@ -1,5 +1,5 @@
 import {
-  Engine,
+  type Engine,
   Scene,
   ArcRotateCamera,
   Vector3,
@@ -9,15 +9,15 @@ import {
   DirectionalLight,
   PointLight,
   MeshBuilder,
-  Mesh,
+  type Mesh,
   StandardMaterial,
   DynamicTexture,
   ParticleSystem,
   ShadowGenerator,
-  AnimationGroup,
+  type AnimationGroup,
 } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
-import { SpawnedCharacter } from "../entities/types";
+import type { SpawnedCharacter } from "../entities/types";
 import { CharacterFactory } from "../entities/CharacterFactory";
 import { AnimationController } from "../entities/AnimationController";
 import { anyPackageBehind, localPackageVersions } from "../util/version";
@@ -25,8 +25,8 @@ import {
   nostrLogin,
   hasNostrExtension,
   nip98AuthHeader,
-  NostrCredentials,
-  NostrPhase,
+  type NostrCredentials,
+  type NostrPhase,
 } from "../net/nostr";
 
 /** What the player commits at the splash: a name, optionally a verified Nostr id
@@ -621,7 +621,7 @@ export class SplashScreen {
     const impactAge = t - this.launchImpactAt;
     const tremble =
       impactAge > 0 && impactAge < 0.48
-        ? Math.pow(1 - impactAge / 0.48, 1.35)
+        ? (1 - impactAge / 0.48) ** 1.35
         : 0;
     const punchT = Math.min(1, t / Math.max(0.65, this.launchImpactAt + 0.2));
     let radius = this.baseRadius + (5.15 - this.baseRadius) * easeOut(punchT);
@@ -1029,7 +1029,7 @@ function wait(ms: number): Promise<void> {
 }
 
 function easeOut(x: number): number {
-  return 1 - Math.pow(1 - x, 3);
+  return 1 - (1 - x) ** 3;
 }
 
 function animationDurationSeconds(group: AnimationGroup | undefined, speed: number): number | undefined {

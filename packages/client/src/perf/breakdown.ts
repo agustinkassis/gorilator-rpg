@@ -1,4 +1,4 @@
-import { Scene, AbstractMesh } from "@babylonjs/core";
+import type { Scene, AbstractMesh } from "@babylonjs/core";
 import type {
   ClientPerfSample,
   ResourceItem,

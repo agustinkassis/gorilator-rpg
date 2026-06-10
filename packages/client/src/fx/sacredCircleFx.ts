@@ -4,7 +4,7 @@ import {
   Mesh,
   MeshBuilder,
   ParticleSystem,
-  Scene,
+  type Scene,
   StandardMaterial,
   TransformNode,
   Vector3,
@@ -96,7 +96,7 @@ export function makeSacredCircleFx(scene: Scene, radius: number): SacredCircleFx
 
   const ps = new ParticleSystem("sacredCircleParticles", 160, scene);
   ps.particleTexture = dotTexture(scene);
-  ps.emitter = root;
+  ps.emitter = root as unknown as Mesh; // TransformNode works as an emitter at runtime; Babylon types only admit AbstractMesh | Vector3
   ps.createCylinderEmitter(radius * 0.95, 0.04, 0.04, 0);
   ps.minEmitBox = new Vector3(-radius, 0.05, -radius);
   ps.maxEmitBox = new Vector3(radius, 0.05, radius);
@@ -126,7 +126,7 @@ export function makeSacredCircleFx(scene: Scene, radius: number): SacredCircleFx
     },
     dispose() {
       ps.dispose();
-      root.getChildMeshes().forEach((mesh: Mesh) => mesh.dispose());
+      root.getChildMeshes().forEach((mesh) => mesh.dispose());
       ringMat.dispose(false, false);
       root.dispose();
     },
