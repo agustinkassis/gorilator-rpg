@@ -31,7 +31,7 @@ Always prefer the lowest tier that can express your change. The
 both sides consume its `dist/`), `@rpg/server` (pure `(state, dt)` systems +
 the 20Hz `GameRoom` tick), `@rpg/client` (Babylon + Vite + the in-game Dev Mode
 editor), `@gorilator/landing` (React), `packages/cli` (the npm `gorilator`
-installer — its version must always equal the app version).
+installer — its version is independent of the app release version).
 
 ## Day-to-day workflow
 

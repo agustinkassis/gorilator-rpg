@@ -27,7 +27,7 @@
 - `@rpg/server` (`packages/server/src`) — Express + Colyseus. Game logic = pure `(state, dt)` systems in `systems/`; the 20Hz tick lives in `rooms/GameRoom.ts`.
 - `@rpg/client` (`packages/client/src`) — Babylon + Vite. In-game Dev Mode editor in `dev/`, perf overlay in `perf/`. `vite.config.ts` (~2000 lines) holds all `/__*/` dev endpoints.
 - `@gorilator/landing` (`packages/landing`) — React marketing site + live stats dashboard.
-- `gorilator` CLI (`packages/cli`) — npm-published installer/daemon. Its version must equal the app version.
+- `gorilator` CLI (`packages/cli`) — npm-published installer/daemon. Its version is independent of the app release version (CI publishes only when the CLI version isn't already on npm).
 
 ## Where things live (intent → file)
 
