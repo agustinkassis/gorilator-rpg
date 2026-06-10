@@ -112,7 +112,6 @@ export class LibraryExplorer {
   private open = false;
   private compact = false;
   private activeTab: LibraryTab = "character";
-  private previewDisposers: Array<() => void> = [];
 
   constructor(private deps: LibraryExplorerDeps) {
     this.panel = document.createElement("div");
@@ -230,7 +229,6 @@ export class LibraryExplorer {
   close() {
     this.open = false;
     this.panel.style.display = "none";
-    this.disposePreviews();
     this.deps.clearFocus();
   }
 
@@ -284,7 +282,6 @@ export class LibraryExplorer {
    *  card showing its thumbnail, name, live "N in map" count, and an Add action. */
   private async render() {
     if (!this.open) return;
-    this.disposePreviews();
     this.gridEl.textContent = "loading...";
     const [allModels, defs, placements] = await Promise.all([
       this.fetchJson<ModelEntry[]>("/__props/models"),
@@ -499,10 +496,6 @@ export class LibraryExplorer {
     };
     img.src = url;
     if (img.complete && img.naturalWidth > 0) fallback.style.display = "none";
-  }
-
-  private disposePreviews() {
-    for (const dispose of this.previewDisposers.splice(0)) dispose();
   }
 
   private async fetchJson<T>(url: string): Promise<T> {
