@@ -16,10 +16,12 @@
     "@babylonjs/loaders": "^7.0.0",
     "@rpg/shared": "workspace:*",
     "colyseus.js": "^0.16.0",
-    "nostr-tools": "^2.23.5"
+    "nostr-tools": "^2.23.5",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/qrcode": "^1.5.6",
     "typescript": "^5.7.3",
     "vite": "^6.0.7"
   }

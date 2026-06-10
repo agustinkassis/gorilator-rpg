@@ -42,6 +42,7 @@ packages/client/public/models/characters/
 .claude/**/*.local.json
 .claude/launch.json
 .claude/worktrees-manifest.json
+.claude/scheduled_tasks.lock
 .codex/worktrees/
 .codex/settings.local.json
 .codex/*.local.toml

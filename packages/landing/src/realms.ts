@@ -13,6 +13,11 @@ const DISCOVERY_KIND = 30078;
 const DISCOVERY_D = "gorilator-server";
 const PROFILE_KIND = 0;
 
+// Community entities — player-published game content. Mirrors @rpg/shared
+// GORILATOR_ENTITY_KIND / GORILATOR_ENTITY_T (landing has no @rpg/shared dep).
+const ENTITY_KIND = 30333;
+const ENTITY_T = "gorilator-entity";
+
 /** Selectable "active in the last…" windows for the stats page, widest last. */
 export const ACTIVITY_WINDOWS = [
   { label: "1h", ms: 1 * 60 * 60 * 1000 },
@@ -356,6 +361,78 @@ export function useProfiles(pubkeys: string[]): Record<string, Profile> {
   }, [key]);
 
   return profiles;
+}
+
+export type CommunityEntityType = "character" | "structure" | "item";
+
+/** A community entity as shown on a creator's profile page (kind-30333 content). */
+export interface CommunityEntityLite {
+  id: string;
+  type: CommunityEntityType;
+  name: string;
+  description?: string;
+  previewUrl?: string;
+  stats?: Record<string, number>;
+  createdAt: number;
+}
+
+/**
+ * Live-subscribe to the community entities authored by one pubkey (kind-30333,
+ * addressable). Dedupes by `d` keeping the newest, newest-first.
+ */
+export function useAuthorEntities(pubkey: string | null): {
+  entities: CommunityEntityLite[];
+  status: LiveStatus;
+} {
+  const [byAddr, setByAddr] = useState<Record<string, CommunityEntityLite>>({});
+  const [status, setStatus] = useState<LiveStatus>("connecting");
+
+  useEffect(() => {
+    if (!pubkey) return;
+    setByAddr({});
+    setStatus("connecting");
+    const pool = new SimplePool();
+    const sub = pool.subscribeMany(RELAYS, { kinds: [ENTITY_KIND], authors: [pubkey], "#t": [ENTITY_T] }, {
+      onevent(ev) {
+        const d = ev.tags.find((t) => t[0] === "d")?.[1] || "";
+        let c: Record<string, unknown>;
+        try {
+          c = JSON.parse(ev.content) as Record<string, unknown>;
+        } catch {
+          return;
+        }
+        const type = c.type as CommunityEntityType;
+        if (!type || (type !== "character" && type !== "structure" && type !== "item")) return;
+        const preview = c.preview as { url?: string } | undefined;
+        setByAddr((prev) => {
+          const existing = prev[d];
+          if (existing && existing.createdAt >= ev.created_at) return prev;
+          return {
+            ...prev,
+            [d]: {
+              id: typeof c.id === "string" ? c.id : d,
+              type,
+              name: typeof c.name === "string" ? c.name : "Untitled",
+              description: typeof c.description === "string" ? c.description : undefined,
+              previewUrl: typeof preview?.url === "string" ? preview.url : undefined,
+              stats: (c.stats as Record<string, number>) || undefined,
+              createdAt: ev.created_at,
+            },
+          };
+        });
+      },
+      oneose() {
+        setStatus("live");
+      },
+    });
+    return () => {
+      sub.close();
+      pool.close(RELAYS);
+    };
+  }, [pubkey]);
+
+  const entities = useMemo(() => Object.values(byAddr).sort((a, b) => b.createdAt - a.createdAt), [byAddr]);
+  return { entities, status };
 }
 
 /** The hostname of a play URL, or "" if it can't be parsed. */

@@ -30,6 +30,27 @@ export const saveDTag = (pubkey: string): string => `${NOSTR_SAVE_D}:${pubkey}`;
 export const playerRealmDTag = (playerPubkey: string, realmId: string): string =>
   `${NOSTR_PLAYER_REALM_D}:${realmId}:${playerPubkey}`;
 
+/**
+ * Community entities — player-published, addressable (parameterized-replaceable)
+ * game content (a custom character / structure / item). Unlike player saves and
+ * server discovery (which the SERVER signs with `NOSTR_NSEC`), these are signed by
+ * the AUTHOR's own Nostr key: anyone can publish, and re-publishing replaces the
+ * same address (`d` tag → one latest version per entity). Their .glb / icon assets
+ * are stored on Blossom and referenced by absolute URL + sha256 in the content.
+ *
+ * Full spec: `docs/community-entities.md`.
+ */
+export const GORILATOR_ENTITY_KIND = 30333; // our allocation in the addressable range
+export const GORILATOR_ENTITY_T = "gorilator-entity"; // discovery: {kinds:[30333], "#t":[GORILATOR_ENTITY_T]}
+export const GORILATOR_ENTITY_D = "gorilator-entity-v1";
+
+/** Community entity kinds, mirrored by the Library's Character/Structure/Item tabs. */
+export type CommunityEntityType = "character" | "structure" | "item";
+
+/** The `d` (identifier) tag for a community entity: one replaceable address per
+ *  entity id, scoped per author (the author is the event `pubkey`). */
+export const entityDTag = (entityId: string): string => `${GORILATOR_ENTITY_D}:${entityId}`;
+
 // Movement
 export const MOVE_SPEED = 4.5; // world units / second
 export const ARRIVE_THRESHOLD = 0.15; // stop when this close to target

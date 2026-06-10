@@ -1,8 +1,12 @@
 # Nostr authentication
 
-Gorilator authenticates people with **Nostr keys** — no passwords, no accounts, no
-sessions. The browser's NIP-07 signer (Alby, nos2x, …) signs a short challenge; the
-server verifies the signature and never sees a secret key.
+Gorilator authenticates people with **Nostr keys** — no passwords, no accounts. A
+signer signs a short challenge; the server verifies the signature and never sees a
+secret key. The signer can be a **NIP-07 browser extension** (Alby, nos2x, …) or a
+**NIP-46 remote signer** ("nsec bunker" — Amber, nsecbunker); both are reached
+through `window.nostr`, so everything downstream is identical (see
+[§1.1](#11-signers-nip-07-extension-or-nip-46-bunker)). The login is **persisted**
+locally and re-verified on the next visit.
 
 There are **two** authentication flows, for two different jobs:
 
@@ -62,6 +66,52 @@ old place, stats, and inventory.
 > Endpoint: `GET /nostr/challenge` → `{ challenge, serverPubkey }`. `serverPubkey`
 > also lets the client read its own **server-signed save** off the relays to preview
 > recovered progress on the splash (see [nostr.md](nostr.md#2-progress-saves--realm-player-updates--kind-30078-server-signed)).
+
+**Identity vs. auth are split** (`packages/client/src/net/nostr.ts`):
+`establishNostrIdentity()` reads the pubkey + kind-0 profile at connect time, but the
+kind-22242 **auth is signed fresh at JOIN** (`signNostrAuth()`), so a persisted or
+restored login never reuses a stale (>5 min) challenge. A signer that's offline or
+rejects at join surfaces a "couldn't sign in" message and returns to the splash.
+
+**In-game login upgrade.** An anonymous player can log in *mid-game* (e.g. to publish
+a community entity): they pick a signer (extension / bunker — the same flow), sign a
+fresh kind-22242, and the client sends a **`nostr_upgrade`** room message. The server
+re-runs `verifyNostrLogin` and attaches the npub to the **live** player in place —
+current progress is kept (it does not reload a different save); future saves persist
+under the npub. Any other live session on that npub is kicked (the takeover rule).
+
+### 1.1 Signers: NIP-07 extension or NIP-46 bunker
+
+Both signer types implement the same `window.nostr` interface (`getPublicKey`,
+`signEvent`), so login, NIP-98, Blossom uploads, and community-entity publishing all
+work unchanged regardless of which is connected.
+
+- **NIP-07 extension** — `window.nostr` is the extension (Alby / nos2x). Dev: the
+  `?mocknostr=` URL param installs a fake signer (`net/nostrMock.ts`).
+- **NIP-46 remote signer** ("nsec bunker", Amber / nsecbunker) — a custom client
+  (`net/nip46.ts`) speaks NIP-46 over **NIP-04**-encrypted kind-**24133** events on
+  the relays (nostr-tools' `BunkerSigner` is NIP-44-only; we need NIP-04 for Amber
+  compatibility, and decrypt tolerantly — NIP-04, then NIP-44). It's mounted as a
+  `window.nostr` shim via `installBunkerSigner()`. Three pairing flows:
+  - **QR** — a `nostrconnect://` URI shown as a QR to scan from a phone signer.
+  - **Open Amber** — the same URI as a deep link (same-device mobile).
+  - **Paste** — a `bunker://` connection string from the signer.
+
+  The user's nsec **never leaves the remote signer** — every signature is an RPC to
+  the bunker (which prompts/permission-gates in Amber).
+
+### 1.2 Session persistence
+
+After a successful login the session is saved to `localStorage`
+(`gorilator-nostr-session`, see `net/nostrSession.ts`) and restored on the next
+visit (`restoreSession()` in `main.ts`): the splash shows the logged-in user and the
+signer is re-verified in the background (NIP-07: `getPublicKey()` must equal the
+stored pubkey, else the saved session is discarded; bunker: rebuild the client from
+the stored **delegated client key** + relays and `ping()` it). The player still
+clicks JOIN, which signs the fresh auth. For a bunker we persist only the **app's
+delegated NIP-46 client key** — never the user's nsec (we never have it). **Logout**
+(from the bottom-left player badge) leaves the room, clears the session + signer, and
+returns to the splash.
 
 ---
 
@@ -147,6 +197,7 @@ See [admin.md](admin.md) for the admin list, the endpoints, and the splash
 | `22242` | the player | NIP-42 client-auth — login challenge |
 | `0` | the player | metadata (name/avatar/nip05), optional, vouched on login |
 | `27235` | an admin | NIP-98 HTTP auth for `/api/admin/*` |
+| `24133` | player ⇄ remote signer | NIP-46 transport (login via Amber / nsec bunker), NIP-04-encrypted |
 
 > For the full picture of Nostr in the project — saves, realm/player updates, and
 > server discovery — see [nostr.md](nostr.md).
