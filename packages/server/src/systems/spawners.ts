@@ -127,13 +127,22 @@ export function resetSpawners(): void {
   for (const s of spawners) timers.set(s.id, s.intervalMs);
 }
 
+/** True when a spawner with this id is currently loaded from spawners.json. */
+export function spawnerExists(id: string): boolean {
+  return spawners.some((s) => s.id === id);
+}
+
 /** Tick every spawner; spawn at each owner when due + under its cap. A spawner
  *  whose ownerId is a MODEL path acts as a per-model template: it spawns from
  *  EVERY concrete prop of that model, so a newly-placed structure inherits it. */
 export function spawnerSystem(state: GameState, dt: number): void {
   if (!spawners.length || dt <= 0) return; // paused (dt 0) freezes spawning
+  // Admin-disabled spawners skip entirely: their countdowns freeze (same as a
+  // pause) so re-enabling resumes mid-interval instead of resetting.
+  const disabled = state.disabledSpawnerIds.length ? new Set(state.disabledSpawnerIds) : null;
   const dtMs = dt * 1000;
   for (const s of spawners) {
+    if (disabled?.has(s.id)) continue;
     for (const tgt of spawnerTargets(state, s)) {
       const key = `${s.id}:${tgt.id}`; // per-owner timer/cap (one template → many props)
       let t = (timers.get(key) ?? s.intervalMs) - dtMs;

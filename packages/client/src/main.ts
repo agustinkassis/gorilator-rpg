@@ -1267,6 +1267,7 @@ new GameMenu({
   engine,
   shadows,
   isNostrVerified: () => !!(game.localId && net.room?.state.players.get(game.localId)?.nostrVerified),
+  isAdmin: () => !!(game.localId && net.room?.state.players.get(game.localId)?.isAdmin),
   developerLabels: developerLabels
     ? {
         isEnabled: () => developerLabels.isEnabled(),

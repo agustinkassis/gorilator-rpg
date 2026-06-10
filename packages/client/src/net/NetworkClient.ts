@@ -480,4 +480,15 @@ export class NetworkClient {
   sendDevTune(key: DevTuningKey, value: number) {
     this.room?.send("dev_tune", { key, value });
   }
+
+  // ---- Admin (Esc menu → Admin; the server enforces the ADMIN_NPUBS allowlist) ----
+  /** Stop/resume the tower-defense wave clock. */
+  sendAdminWaves(enabled: boolean) {
+    this.room?.send("admin_waves", { enabled });
+  }
+
+  /** Switch one spawners.json spawner on/off at runtime. */
+  sendAdminSpawner(id: string, enabled: boolean) {
+    this.room?.send("admin_spawner", { id, enabled });
+  }
 }

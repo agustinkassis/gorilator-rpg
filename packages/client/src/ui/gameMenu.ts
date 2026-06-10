@@ -3,7 +3,7 @@ import type { AudioManager } from "../audio/AudioManager";
 import type { NetworkClient } from "../net/NetworkClient";
 import type { ShadowMode, ShadowRuntime } from "../scene/contactShadows";
 
-type View = "main" | "hotkeys" | "sound" | "graphics" | "developer";
+type View = "main" | "hotkeys" | "sound" | "graphics" | "developer" | "admin";
 type Quality = "low" | "medium" | "high";
 
 interface Settings {
@@ -44,12 +44,22 @@ export function loadStoredShadowMode(): ShadowMode {
   return DEFAULTS.shadowMode;
 }
 
+// One row of the admin spawner list — a light client-side mirror of the entries
+// in spawners.json (the server normalizes the same fields in normalizeSpawner).
+interface SpawnerEntry {
+  id: string;
+  label: string;
+  type: string;
+}
+
 export interface GameMenuDeps {
   net: NetworkClient;
   audio: AudioManager;
   engine: Engine;
   shadows: ShadowRuntime;
   isNostrVerified: () => boolean;
+  /** True when the local player's server-vouched pubkey is an ADMIN_NPUBS admin. */
+  isAdmin: () => boolean;
   developerLabels?: {
     isEnabled: () => boolean;
     setEnabled: (on: boolean) => void;
@@ -171,6 +181,7 @@ export class GameMenu {
     else if (this.view === "sound") this.renderSound();
     else if (this.view === "graphics") this.renderGraphics();
     else if (this.view === "developer") this.renderDeveloper();
+    else if (this.view === "admin") this.renderAdmin();
     else this.renderMain();
   }
 
@@ -204,6 +215,7 @@ export class GameMenu {
       item("gmSound", "🔊", "Sound settings") +
       item("gmGraphics", "🖥️", "Graphics settings") +
       (this.deps.developerLabels ? item("gmDeveloper", "DEV", "Developer Settings") : "") +
+      (this.deps.isAdmin() ? item("gmAdmin", "🛡️", "Admin controls") : "") +
       (showNostr ? item("gmNostr", "⚡", "Login with Nostr") : "") +
       item("gmSuicide", "💀", "Kill yourself", "gmWarn") +
       item("gmExit", "🚪", "Exit game", "gmDanger") +
@@ -214,6 +226,7 @@ export class GameMenu {
     this.on("gmSound", () => this.openTo("sound"));
     this.on("gmGraphics", () => this.openTo("graphics"));
     this.on("gmDeveloper", () => this.openTo("developer"));
+    this.on("gmAdmin", () => this.openTo("admin"));
     // Nostr login + exit both return to the splash (the canonical entry); logging in
     // with Nostr there restores any saved character for that npub.
     this.on("gmNostr", () => window.location.reload());
@@ -327,6 +340,87 @@ export class GameMenu {
     });
   }
 
+  /** Admin controls (ADMIN_NPUBS only): stop/resume the wave clock and switch
+   *  individual spawners on/off. Reads live room state; the server re-checks
+   *  the admin allowlist on every message, so this UI is just a convenience. */
+  private renderAdmin() {
+    const state = this.deps.net.room?.state;
+    if (!this.deps.isAdmin() || !state) {
+      this.openTo("main");
+      return;
+    }
+    const wavesOn = state.wavesEnabled !== false;
+    this.panel.innerHTML =
+      this.head("Admin controls", true) +
+      `<div class="gmBody">` +
+      `<div class="gmAdminRow"><span class="gmAdminLabel">🌊 Goblin waves</span>${toggleHtml(`id="gmAdmWaves"`, wavesOn)}</div>` +
+      `<div class="gmNote">Off holds the wave clock in place (wave ${state.waveNumber}, next in ${Math.ceil(state.waveTimerMs / 1000)}s); On resumes the countdown where it stopped.</div>` +
+      `<div class="gmSection">Spawners</div>` +
+      `<div id="gmAdmSpawners"><div class="gmNote">Loading spawners…</div></div>` +
+      `</div>`;
+    this.wireHead();
+
+    let waves = wavesOn;
+    this.on("gmAdmWaves", () => {
+      waves = !waves;
+      this.deps.net.sendAdminWaves(waves);
+      setToggle(this.panel.querySelector("#gmAdmWaves"), waves);
+    });
+
+    void this.fetchSpawners().then((list) => {
+      if (this.view !== "admin") return; // navigated away while loading
+      const host = this.panel.querySelector<HTMLElement>("#gmAdmSpawners");
+      if (!host) return;
+      if (!list.length) {
+        host.innerHTML = `<div class="gmNote">No spawners configured (spawners.json).</div>`;
+        return;
+      }
+      const disabled = new Set<string>(this.deps.net.room?.state.disabledSpawnerIds ?? []);
+      host.innerHTML = list
+        .map(
+          (s) =>
+            `<div class="gmAdminRow"><span class="gmAdminLabel" title="${esc(s.id)}">${esc(s.label)}</span>` +
+            `<span class="gmTag">${esc(s.type)}</span>` +
+            toggleHtml(`data-spawner="${esc(s.id)}"`, !disabled.has(s.id)) +
+            `</div>`,
+        )
+        .join("");
+      host.querySelectorAll<HTMLElement>("button[data-spawner]").forEach((b) => {
+        b.onclick = () => {
+          const enable = b.classList.contains("gmToggleOff"); // currently off → enable
+          this.deps.net.sendAdminSpawner(b.dataset.spawner ?? "", enable);
+          setToggle(b, enable);
+        };
+      });
+    });
+  }
+
+  /** The spawner list for the admin view, read from the same manifest the
+   *  server watches (it lives in the client's public dir). Fetched fresh on
+   *  every open so dev-editor changes show up without a reload. */
+  private async fetchSpawners(): Promise<SpawnerEntry[]> {
+    try {
+      const res = await fetch("/spawners.json", { cache: "no-store" });
+      if (!res.ok) return [];
+      const arr: unknown = await res.json();
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === "object" && !!(s as Record<string, unknown>).id)
+        .map((s) => {
+          const behavior = (s.behavior ?? {}) as Record<string, unknown>;
+          const modelId = s.modelId || behavior.modelId;
+          return {
+            id: String(s.id),
+            label: String(s.label || behavior.label || s.id),
+            // same type fallback as the server's normalizeSpawner
+            type: String(s.type || s.spawnType || (modelId ? "npc" : "goblin")),
+          };
+        });
+    } catch {
+      return [];
+    }
+  }
+
   private renderDeveloper() {
     const labels = this.deps.developerLabels;
     if (!labels) {
@@ -354,6 +448,24 @@ export class GameMenu {
 function volumeOpacity(v: number): number {
   const n = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
   return 0.2 + n * 0.8;
+}
+
+function esc(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+  );
+}
+
+function toggleHtml(attrs: string, on: boolean): string {
+  return `<button ${attrs} class="gmToggle ${on ? "gmToggleOn" : "gmToggleOff"}">${on ? "On" : "Off"}</button>`;
+}
+
+function setToggle(el: HTMLElement | null, on: boolean) {
+  if (!el) return;
+  el.textContent = on ? "On" : "Off";
+  el.classList.toggle("gmToggleOn", on);
+  el.classList.toggle("gmToggleOff", !on);
 }
 
 let injected = false;
@@ -404,6 +516,12 @@ function injectStyles() {
     #gameMenu .gmSlider { flex:1; }
     #gameMenu .gmVal { width:40px; text-align:right; font-size:12px; color:#9fb0c0; }
     #gameMenu .gmToggle { cursor:pointer; padding:5px 16px; background:#2a3242; color:#e8edf6; border:1px solid #4a5568; border-radius:6px; font-weight:600; }
+    #gameMenu .gmToggleOn { border-color:#a8d65a88; color:#cfe9a8; }
+    #gameMenu .gmToggleOff { border-color:#e0563f66; color:#ff9a8a; }
+    #gameMenu .gmSection { margin-top:6px; padding:4px; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#8a94a6; border-bottom:1px solid #232b39; }
+    #gameMenu .gmAdminRow { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px solid #232b39; }
+    #gameMenu .gmAdminLabel { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:#cdd3e0; }
+    #gameMenu .gmTag { flex:none; font:600 10px monospace; color:#9fb0c0; background:#11151d; border:1px solid #3a4456; border-radius:5px; padding:2px 6px; }
     #gameMenu .gmQuals { display:flex; gap:6px; flex:1; }
     #gameMenu .gmQual { flex:1; cursor:pointer; padding:6px 0; background:#222a38; color:#cdd3e0; border:1px solid #3a4456; border-radius:6px; font-size:12px; font-weight:600; }
     #gameMenu .gmQualOn { background:#c9a24a; color:#1a1207; border-color:#c9a24a; }
