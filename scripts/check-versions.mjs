@@ -102,16 +102,4 @@ if (RANK[appLevel] < RANK[required]) {
   process.exit(1);
 }
 
-const appVersion = currentVersion(APP);
-const cliVersion = currentVersion(PACKAGES.cli);
-if (cliVersion !== appVersion) {
-  console.error(
-    `\n✗ The npm CLI package version must match the app release version.\n` +
-      `  app: ${appVersion}\n` +
-      `  cli: ${cliVersion}\n` +
-      `  Release tags and npm publishes should use the same SemVer version.`,
-  );
-  process.exit(1);
-}
-
 console.log("\n✓ App version is in sync with the package bumps.");

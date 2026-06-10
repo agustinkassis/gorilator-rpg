@@ -1,7 +1,7 @@
 // Bump a workspace package's version AND the umbrella "app" (root package.json)
 // version by the same semver level, in one step. The app version is the release
-// version. The published npm CLI package (`gorilator`) must use that same
-// version, so CLI release bumps keep the package and app versions aligned.
+// version. The CLI is one package in that umbrella: bumping it also advances the
+// app, but non-CLI app releases do not require the CLI package version to match.
 //
 // Usage:
 //   node scripts/bump.mjs <package> <major|minor|patch>

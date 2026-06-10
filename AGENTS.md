@@ -14,11 +14,11 @@
 ## Versioning (SemVer)
 
 - **Never hand-edit a `version` field** in any `package.json`. Always bump with the tool.
-- The root `package.json` is the **app release version**. GitHub Release tags use this version, and the npm `gorilator` CLI package must use the same version.
-- To change a version: `pnpm bump <cli|client|server|shared|landing> <major|minor|patch>` — this bumps the package **and** the app together. For CLI releases, keep `packages/cli/package.json` equal to the app version. Use `pnpm bump app <level>` for app release version bumps.
+- The root `package.json` is the **app release version**. GitHub Release tags use this version. Package versions, including the npm `gorilator` CLI package, are independent.
+- To change a version: `pnpm bump <cli|client|server|shared|landing> <major|minor|patch>` — this bumps the package **and** the app together. Use `pnpm bump app <level>` for app release version bumps.
 - Increments follow SemVer 2.0.0 (major resets minor+patch, minor resets patch; prereleases finalize, e.g. `1.4.0-rc.1` + patch → `1.4.0`).
 - A PR check (`.github/workflows/version-guard.yml`) **fails** if a package version changed without the app bumping accordingly. Verify locally with `pnpm version:check` before opening/updating a PR.
-- To release the CLI: `pnpm bump cli <level>` so the CLI and app versions match → merge to `main` → create a GitHub Release tagged with the app version (CI publishes the same version to npm).
+- To release the CLI: `pnpm bump cli <level>` → merge to `main` → create a GitHub Release tagged with the app version. CI publishes the CLI only when the CLI package version is not already on npm.
 - Full policy: `docs/versioning.md`.
 
 ## Package map
