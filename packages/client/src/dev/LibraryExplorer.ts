@@ -166,7 +166,6 @@ export class LibraryExplorer {
   private localBtn!: HTMLButtonElement;
   private communityBtn!: HTMLButtonElement;
   private renderToken = 0; // guards against overlapping async renders
-  private previewDisposers: Array<() => void> = [];
 
   constructor(private deps: LibraryExplorerDeps) {
     this.panel = document.createElement("div");
@@ -295,7 +294,6 @@ export class LibraryExplorer {
   close() {
     this.open = false;
     this.panel.style.display = "none";
-    this.disposePreviews();
     this.deps.clearFocus();
   }
 
@@ -377,10 +375,7 @@ export class LibraryExplorer {
     // SWR: paint the cached lists instantly, then always revalidate + repaint.
     const cached = readCache<LocalLists>(CACHE_LOCAL);
     if (cached) this.paintLocal(cached, token);
-    else {
-      this.disposePreviews();
-      this.gridEl.textContent = "loading...";
-    }
+    else this.gridEl.textContent = "loading...";
     const lists = await this.fetchLocalLists();
     if (token !== this.renderToken || !this.open) return;
     writeCache(CACHE_LOCAL, lists);
@@ -404,7 +399,6 @@ export class LibraryExplorer {
   /** Render the Local grid from already-fetched lists (live "in map" counts + search filter). */
   private paintLocal(lists: LocalLists, token: number) {
     if (token !== this.renderToken || !this.open) return;
-    this.disposePreviews();
     const { allModels, defs, placements, structDefs, itemDefs, pending } = lists;
     const pendingChars = new Set(pending.characters);
     const pendingStructs = new Set(pending.structures);
@@ -555,7 +549,6 @@ export class LibraryExplorer {
     if (cached) {
       this.paintCommunity(cached.cards, cached.profiles, token);
     } else {
-      this.disposePreviews();
       this.titleEl.textContent = "Community Library";
       this.summaryEl.textContent = "browsing community entities…";
       this.gridEl.innerHTML = "";
@@ -578,7 +571,6 @@ export class LibraryExplorer {
   /** Render the Community grid from already-fetched cards (filtered by active tab + search). */
   private paintCommunity(cards: CommunityCard[], profiles: Record<string, OwnerProfile>, token: number) {
     if (token !== this.renderToken || !this.open) return;
-    this.disposePreviews();
     this.titleEl.textContent = "Community Library";
     const q = normalized(this.searchEl.value);
     const matched = cards.filter(
@@ -884,10 +876,6 @@ export class LibraryExplorer {
     };
     img.src = url;
     if (img.complete && img.naturalWidth > 0) fallback.style.display = "none";
-  }
-
-  private disposePreviews() {
-    for (const dispose of this.previewDisposers.splice(0)) dispose();
   }
 
   private async fetchJson<T>(url: string): Promise<T> {
