@@ -14,7 +14,7 @@
     "node": ">=20.6"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "start": "tsx src/index.ts",
     "test": "npm run build && node --test test/*.test.mjs",
