@@ -77,6 +77,7 @@ gorilator update      # stop services, git pull, rebuild, start services
 gorilator remote      # compare local package versions against remote/latest
 gorilator setup       # interactive setup menu: ports, NSEC, Cloudflare, env
 gorilator tunnel <cmd># Cloudflare tunnel — login | status | restart
+gorilator plugin <cmd># plugins — list | enable | disable | add <path|npub> (--link)
 gorilator uninstall   # stop and remove services, config, command, and installed files
 gorilator help <cmd>  # show detailed help for any command
 ```
