@@ -168,8 +168,11 @@ export interface ChatMessage {
 }
 
 // ---- Dev Mode (in-game world editor) ----
-// These mutate authoritative state and are intended for the dev-only editor;
-// they are unguarded like the other dev tooling in this demo.
+// These mutate authoritative state and are intended for the dev-only editor.
+// Server-side they are open to every client ONLY on an explicit dev/test
+// server (NODE_ENV=development|test or GORILATOR_TEST=1); on any other server
+// — production builds AND the env-less `gorilator` CLI install — they require
+// a Nostr-verified admin (ADMIN_NPUBS). See server systems/devAuth.ts.
 
 /** Toggle the sender's immortality (no damage while on). */
 export interface DevGodMessage {

@@ -87,6 +87,7 @@ import { loadStructureLoot } from "../systems/structureDrops";
 import { loadEntityFeatures } from "../systems/entityFeatures";
 import { loadAuthoredNpcs, syncAuthoredNpcs } from "../systems/npcs";
 import { setRockObstacles } from "../systems/pathfinding";
+import { canUseDevCommands } from "../systems/devAuth";
 import { devSpawn, devMove, devDelete, devSet } from "../systems/devEdit";
 import { devTuning, setDevTuning } from "../systems/devTuning";
 import { perfTracker } from "../systems/perf";
@@ -158,6 +159,9 @@ export class GameRoom extends Room<GameState> {
 
   /** Throttles the realm-tracker snapshot (it doesn't need every 20Hz tick). */
   private realmTick = 0;
+
+  /** Sessions whose denied dev_* attempt was already logged (anti log-flood). */
+  private devDenied = new Set<string>();
 
   async onCreate() {
     this.setState(new GameState());
@@ -258,8 +262,10 @@ export class GameRoom extends Room<GameState> {
 
     // Dev Mode: toggle the sender's immortality. Turning it on while dead also
     // revives them, so entering Dev Mode never strands you on the respawn screen.
+    // The whole dev_* family below goes through devSender(): open on an explicit
+    // dev/test server, admin-only otherwise (see systems/devAuth.ts).
     this.onMessage("dev_god", (client, msg: DevGodMessage) => {
-      const p = this.state.players.get(client.sessionId);
+      const p = this.devSender(client);
       if (!p) return;
       p.godMode = !!msg?.on;
       if (p.godMode) {
@@ -274,27 +280,28 @@ export class GameRoom extends Room<GameState> {
     // Dev Mode world edits — relocate / delete / retune a synced entity. They
     // mutate authoritative state and sync to every client. Runtime-only (the
     // world regenerates each restart); authored props persist via props.json.
-    this.onMessage("dev_spawn", (_client, msg: DevSpawnMessage) => {
-      if (!msg) return;
+    this.onMessage("dev_spawn", (client, msg: DevSpawnMessage) => {
+      if (!msg || !this.devSender(client)) return;
       const spawned = devSpawn(this.state, msg.kind, msg.id, msg.x, msg.z);
       if (spawned?.kind === "rock") this.refreshRockObstacles();
     });
-    this.onMessage("dev_move", (_client, msg: DevMoveMessage) => {
-      if (!msg) return;
+    this.onMessage("dev_move", (client, msg: DevMoveMessage) => {
+      if (!msg || !this.devSender(client)) return;
       devMove(this.state, msg.kind, msg.id, msg.x, msg.z);
       if (msg.kind === "rock") this.refreshRockObstacles(); // collision follows the rock
     });
-    this.onMessage("dev_delete", (_client, msg: DevDeleteMessage) => {
-      if (!msg) return;
+    this.onMessage("dev_delete", (client, msg: DevDeleteMessage) => {
+      if (!msg || !this.devSender(client)) return;
       devDelete(this.state, msg.kind, msg.id);
       if (msg.kind === "rock") this.refreshRockObstacles(); // drop its collision too
     });
-    this.onMessage("dev_set", (_client, msg: DevSetMessage) => {
-      if (!msg) return;
+    this.onMessage("dev_set", (client, msg: DevSetMessage) => {
+      if (!msg || !this.devSender(client)) return;
       devSet(this.state, msg.kind, msg.id, msg.field, msg.value);
       if (msg.kind === "rock" && msg.field === "scale") this.refreshRockObstacles();
     });
     this.onMessage("dev_give_item", (client, msg: DevGiveItemMessage) => {
+      if (!this.devSender(client)) return;
       const inv = this.inventories.get(client.sessionId);
       const type = String(msg?.type || "").trim();
       if (!inv || !/^[a-z0-9_-]{1,48}$/.test(type)) return;
@@ -303,6 +310,7 @@ export class GameRoom extends Room<GameState> {
     });
     // Dev-only: directly overwrite one inventory slot (empty type clears it).
     this.onMessage("dev_set_slot", (client, msg: DevSetSlotMessage) => {
+      if (!this.devSender(client)) return;
       const inv = this.inventories.get(client.sessionId);
       const slot = Math.trunc(Number(msg?.slot));
       if (!inv || !Number.isInteger(slot) || slot < 0 || slot >= INV_SLOTS) return;
@@ -317,18 +325,19 @@ export class GameRoom extends Room<GameState> {
       this.sendInventory(client.sessionId);
     });
     // Pause / set game speed: scales the simulation for everyone (0 = paused).
-    this.onMessage("dev_time", (_client, msg: DevTimeMessage) => {
+    this.onMessage("dev_time", (client, msg: DevTimeMessage) => {
+      if (!this.devSender(client)) return;
       const s = Number(msg?.scale);
       this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(8, s)) : 1;
     });
-    this.onMessage("dev_tune", (_client, msg: DevTuneMessage) => {
-      if (!msg) return;
+    this.onMessage("dev_tune", (client, msg: DevTuneMessage) => {
+      if (!msg || !this.devSender(client)) return;
       const applied = setDevTuning(msg.key, msg.value);
       if (applied == null) return;
       if (msg.key === "waveFirstDelayMs" && this.state.waveNumber === 0) resetWaves(this.state);
     });
     this.onMessage("dev_action", (client, msg: DevActionMessage) => {
-      if (!msg) return;
+      if (!msg || !this.devSender(client)) return;
       this.handleDevAction(client, msg.action);
     });
 
@@ -861,10 +870,29 @@ export class GameRoom extends Room<GameState> {
   }
 
   /** The sender's Player, but only when their server-vouched pubkey is a
-   *  configured admin (silently drops the message otherwise). */
+   *  configured admin (silently drops the message otherwise). Stricter than
+   *  devSender: the admin_* family stays admin-only even on dev/test servers. */
   private adminSender(client: Client): Player | null {
     const p = this.state.players.get(client.sessionId);
     return p?.nostrVerified && isAdmin(p.pubkey) ? p : null;
+  }
+
+  /** Resolve the sender of a dev_* message — or undefined when they may not
+   *  use the Dev Mode family on this server. Open to everyone on an explicit
+   *  dev/test server; admin-only (ADMIN_NPUBS) everywhere else, including the
+   *  env-less `gorilator` CLI install (policy: systems/devAuth.ts). A denial
+   *  is logged once per session so a hostile client can't flood the log. */
+  private devSender(client: Client): Player | undefined {
+    const p = this.state.players.get(client.sessionId);
+    if (p && canUseDevCommands(p)) return p;
+    if (!this.devDenied.has(client.sessionId)) {
+      this.devDenied.add(client.sessionId);
+      console.warn(
+        `[room] dev_* denied for ${p?.name ?? "?"} (${client.sessionId}) — ` +
+          `not a verified admin on a non-dev server`,
+      );
+    }
+    return undefined;
   }
 
   private handleDevAction(client: Client, action: DevActionMessage["action"]) {
@@ -1063,6 +1091,7 @@ export class GameRoom extends Room<GameState> {
     this.pendingThrows.delete(client.sessionId);
     this.saveTrack.delete(client.sessionId);
     this.berserkerBase.delete(client.sessionId);
+    this.devDenied.delete(client.sessionId);
     console.log(`[room] ${client.sessionId} left`);
   }
 
