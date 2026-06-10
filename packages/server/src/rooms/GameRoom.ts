@@ -22,6 +22,8 @@ import {
   type DevTimeMessage,
   type DevActionMessage,
   type DevTuneMessage,
+  type AdminWavesMessage,
+  type AdminSpawnerMessage,
   CHAT_MAX_LEN,
   INV_SLOTS,
   type InventorySlot,
@@ -78,7 +80,7 @@ import { houseRegenSystem, noteHouseDamage, spawnHouse, type HouseRegenTimers } 
 import { healingTowerPosition } from "../systems/healingTower";
 import { loadPropObstacles, onPropsChange } from "../systems/props";
 import { applyStructures } from "../systems/structures";
-import { loadSpawners, resetSpawners, spawnerSystem } from "../systems/spawners";
+import { loadSpawners, resetSpawners, spawnerSystem, spawnerExists } from "../systems/spawners";
 import { loadWaves } from "../systems/waves";
 import { loadResourceDrops } from "../systems/resourceDrops";
 import { loadStructureLoot } from "../systems/structureDrops";
@@ -91,6 +93,7 @@ import { devTuning, setDevTuning } from "../systems/devTuning";
 import { perfTracker } from "../systems/perf";
 import { grantXp } from "../systems/leveling";
 import { verifyNostrLogin, type NostrJoinPayload, type VerifiedNostr } from "../systems/nostr";
+import { isAdmin } from "../systems/admins";
 import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrSave";
 import { serverPluginHost } from "../systems/plugins/host";
 import { loadServerPlugins } from "../systems/plugins/loader";
@@ -336,6 +339,26 @@ export class GameRoom extends Room<GameState> {
     this.onMessage("dev_action", (client, msg: DevActionMessage) => {
       if (!msg || !this.devSender(client)) return;
       this.handleDevAction(client, msg.action);
+    });
+
+    // Admin controls (Esc menu → Admin). Unlike the dev_* family these are
+    // server-authorized: the sender's pubkey was signature-verified on join and
+    // must be in the ADMIN_NPUBS allowlist.
+    this.onMessage("admin_waves", (client, msg: AdminWavesMessage) => {
+      const p = this.adminSender(client);
+      if (!p || !msg) return;
+      this.state.wavesEnabled = !!msg.enabled;
+      console.log(`[admin] ${p.name} ${this.state.wavesEnabled ? "resumed" : "stopped"} waves`);
+    });
+    this.onMessage("admin_spawner", (client, msg: AdminSpawnerMessage) => {
+      const p = this.adminSender(client);
+      const id = String(msg?.id || "");
+      if (!p || !id || !spawnerExists(id)) return;
+      const disabled = this.state.disabledSpawnerIds;
+      const at = disabled.indexOf(id);
+      if (msg.enabled && at >= 0) disabled.splice(at, 1);
+      else if (!msg.enabled && at < 0) disabled.push(id);
+      console.log(`[admin] ${p.name} ${msg.enabled ? "enabled" : "disabled"} spawner ${id}`);
     });
 
     this.onMessage("pickup", (client, msg: PickupMessage) => {
@@ -846,6 +869,14 @@ export class GameRoom extends Room<GameState> {
     console.log(`[room] new realm started — everyone respawned from scratch`);
   }
 
+  /** The sender's Player, but only when their server-vouched pubkey is a
+   *  configured admin (silently drops the message otherwise). Stricter than
+   *  devSender: the admin_* family stays admin-only even on dev/test servers. */
+  private adminSender(client: Client): Player | null {
+    const p = this.state.players.get(client.sessionId);
+    return p?.nostrVerified && isAdmin(p.pubkey) ? p : null;
+  }
+
   /** Resolve the sender of a dev_* message — or undefined when they may not
    *  use the Dev Mode family on this server. Open to everyone on an explicit
    *  dev/test server; admin-only (ADMIN_NPUBS) everywhere else, including the
@@ -917,6 +948,7 @@ export class GameRoom extends Room<GameState> {
       // The pubkey + profile are now server-vouched (signature-proven).
       p.pubkey = nostr.pubkey;
       p.nostrVerified = true;
+      p.isAdmin = isAdmin(nostr.pubkey);
       p.picture = nostr.picture;
       p.nip05 = nostr.nip05;
       p.name = (

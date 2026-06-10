@@ -35,6 +35,10 @@ export class Player extends Schema {
   @type("boolean") nostrVerified = false;
   @type("string") picture = ""; // avatar URL from the kind-0 profile
   @type("string") nip05 = ""; // nip-05 identifier from the profile, if any
+  // True when the verified pubkey is in the server's ADMIN_NPUBS allowlist.
+  // Set only by the server (after signature verification), so clients can gate
+  // admin UI on it — the server still re-checks on every admin message.
+  @type("boolean") isAdmin = false;
 
   // progression
   @type("number") level = 1;

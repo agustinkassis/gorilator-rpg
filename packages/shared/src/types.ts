@@ -287,6 +287,19 @@ export interface SprintMessage {
   on: boolean;
 }
 
+/** Admin-only (Esc menu → Admin): pause/resume the tower-defense wave clock.
+ *  The server rejects it unless the sender's verified pubkey is in ADMIN_NPUBS. */
+export interface AdminWavesMessage {
+  enabled: boolean;
+}
+
+/** Admin-only (Esc menu → Admin): switch one spawners.json spawner on/off at
+ *  runtime. Same ADMIN_NPUBS gate as AdminWavesMessage. */
+export interface AdminSpawnerMessage {
+  id: string;
+  enabled: boolean;
+}
+
 export type ClientMessages = {
   move: MoveMessage;
   attack: AttackMessage;
@@ -306,6 +319,8 @@ export type ClientMessages = {
   dev_time: DevTimeMessage;
   dev_action: DevActionMessage;
   dev_tune: DevTuneMessage;
+  admin_waves: AdminWavesMessage;
+  admin_spawner: AdminSpawnerMessage;
 };
 
 // Server -> client: emitted every time a hit lands, so clients can pop a

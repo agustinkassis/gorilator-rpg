@@ -250,8 +250,9 @@ export function waveSystem(state: GameState, dt: number) {
   }
 
   const { alive } = playerLevelStats(state);
-  if (alive === 0) {
-    // nobody defending — hold the countdown in place (don't reset it to a grace)
+  if (alive === 0 || !state.wavesEnabled) {
+    // nobody defending, or an admin stopped the waves — hold the countdown in
+    // place (don't reset it to a grace); queued spawns stay queued too.
     syncWaveState(state, clock);
     return;
   }

@@ -24,6 +24,12 @@ const PORT_FLOOR = 4100;
 const BLOCKS = 300;
 const BLOCK_SIZE = 10;
 
+// Default dev admin (public key — safe to commit). Every generated launch.json
+// starts the game server with this in ADMIN_NPUBS so the Esc-menu Admin controls
+// and /api/admin/* work out of the box in any worktree. Local dev only — deployed
+// servers get ADMIN_NPUBS from their install .env (gorilator setup).
+const DEV_ADMIN_NPUBS = "npub19tv378w29hx4ljy7wgydreg9nu96czrs6clu8wkzr3af8z86rr7sujx4xe";
+
 export function portsFor(dir) {
   const h = parseInt(createHash("sha1").update(dir).digest("hex").slice(0, 8), 16);
   const base = PORT_FLOOR + (h % BLOCKS) * BLOCK_SIZE;
@@ -50,7 +56,10 @@ export function configFor(dir) {
         {
           name: "game",
           runtimeExecutable: "sh",
-          runtimeArgs: ["-c", `CLIENT_PORT=${client} GAME_SERVER_PORT=${server} pnpm dev`],
+          runtimeArgs: [
+            "-c",
+            `CLIENT_PORT=${client} GAME_SERVER_PORT=${server} ADMIN_NPUBS=\${ADMIN_NPUBS:-${DEV_ADMIN_NPUBS}} pnpm dev`,
+          ],
           port: client,
         },
       ],
