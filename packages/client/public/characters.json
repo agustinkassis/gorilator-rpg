@@ -1,1 +1,30 @@
-[]
+[
+  {
+    "id": "mage_1780892895638",
+    "name": "mage",
+    "category": "Characters",
+    "baseModel": "/models/characters/mage_1780892895638/Meshy_AI_merchant_stranger_biped_Character_output.glb",
+    "anims": {
+      "HIT": {
+        "file": "/models/characters/mage_1780892895638/Meshy_AI_merchant_stranger_biped_Animation_BeHit_FlyUp_withSkin.glb",
+        "speed": 1
+      },
+      "IDLE": {
+        "file": "/models/characters/mage_1780892895638/Meshy_AI_merchant_stranger_biped_Animation_Idle_6_withSkin.glb",
+        "speed": 1
+      },
+      "WALK": {
+        "file": "/models/characters/mage_1780892895638/Meshy_AI_merchant_stranger_biped_Animation_Walking_withSkin.glb",
+        "speed": 1
+      }
+    },
+    "yaw": 0,
+    "scale": 1,
+    "stats": {},
+    "community": {
+      "pubkey": "2ad91f1dca2dcd5fc89e7208d1e5059f0bac0870d63fc3bac21c7a9388fa18fd",
+      "d": "gorilator-entity-v1:mage_1780892895638",
+      "ts": 1781061747904
+    }
+  }
+]

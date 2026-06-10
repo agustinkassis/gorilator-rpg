@@ -7,12 +7,12 @@ export type { PlayerSave };
 
 /**
  * Build a NIP-98 `Authorization: Nostr …` header for an HTTP request, signed by
- * the connected NIP-07 extension. Used to call the server's protected
- * /api/admin/* endpoints. Throws if no extension is available.
+ * the connected signer (`window.nostr` — a NIP-07 extension, the dev mock, or the
+ * bunker shim). Used to call the server's protected /api/admin/* endpoints.
  */
 export async function nip98AuthHeader(url: string, method: string): Promise<string> {
   const signer = window.nostr;
-  if (!signer) throw new Error("no Nostr extension");
+  if (!signer) throw new Error("no Nostr signer");
   // getToken signs a kind-27235 event tagging the URL + method; the `true` flag
   // prefixes the returned token with the "Nostr " auth scheme.
   return getToken(url, method, (e) => signer.signEvent(e), true);
@@ -43,15 +43,23 @@ export interface NostrProfile {
   about: string;
 }
 
-export interface NostrCredentials extends NostrAuthPayload {
+/**
+ * A verified Nostr identity: who the player is + their profile + a preview of
+ * recovered progress. It deliberately carries NO `auth` — the kind-22242 auth is
+ * signed FRESH at join time (`signNostrAuth`) so a persisted/restored identity
+ * never reuses a stale (>300s) challenge.
+ */
+export interface NostrIdentity {
   pubkey: string;
   npub: string;
   meta: NostrProfile;
+  profile?: NostrEvent; // the kind-0 event, forwarded in the server join payload
   recovered?: PlayerSave; // last server-signed save (read-only preview for the splash)
 }
 
-/** Minimal NIP-07 signer interface exposed by extensions (Alby, nos2x, …). */
-interface Nip07 {
+/** Minimal NIP-07 signer interface — extensions (Alby, nos2x), the dev mock, and
+ *  the bunker shim (`installBunkerSigner`) all implement exactly this. */
+export interface Nip07 {
   getPublicKey(): Promise<string>;
   signEvent(event: {
     kind: number;
@@ -68,14 +76,14 @@ declare global {
 }
 
 /** A few well-known public relays to look up the user's profile metadata. */
-const RELAYS = [
+export const RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
   "wss://relay.nostr.band",
   "wss://relay.primal.net",
 ];
 
-/** True when a NIP-07 browser extension is available to sign with. */
+/** True when a signer is connected right now (extension / mock / bunker shim). */
 export function hasNostrExtension(): boolean {
   return typeof window !== "undefined" && !!window.nostr;
 }
@@ -91,11 +99,6 @@ function httpBase(): string {
   return `${proto}://${location.hostname}:${serverPort}`;
 }
 
-/**
- * Full NIP-07 login: prove control of the pubkey by signing a one-time
- * server challenge, then fetch the user's kind-0 profile from relays. The
- * returned `auth`/`profile` are re-verified server-side on join.
- */
 /** A coarse phase of the login, reported to `onPhase` so the UI can narrate it. */
 export type NostrPhase =
   | "signer"
@@ -109,34 +112,57 @@ export type NostrPhase =
   | "save"
   | "done";
 
-export async function nostrLogin(
+/** Fetch a one-time challenge + the server's own pubkey (it signs/owns saves). */
+async function fetchChallenge(): Promise<{ challenge: string; serverPubkey: string }> {
+  const res = await fetch(`${httpBase()}/nostr/challenge`);
+  if (!res.ok) throw new Error(String(res.status));
+  const j = (await res.json()) as { challenge: string; serverPubkey?: string };
+  return { challenge: j.challenge, serverPubkey: j.serverPubkey ?? "" };
+}
+
+/**
+ * Establish a verified identity from the connected signer (`window.nostr`): read
+ * the pubkey, then fetch the kind-0 profile + the server-signed save preview from
+ * the relays. Does NOT sign an auth challenge — `signNostrAuth()` does that fresh
+ * at join, so this same call powers both fresh login and a restored session.
+ */
+export async function establishNostrIdentity(
   onPhase: (phase: NostrPhase, detail?: string) => void = () => {},
-): Promise<NostrCredentials> {
-  if (!window.nostr) {
-    throw new Error("No Nostr extension found — install Alby or nos2x.");
-  }
+): Promise<NostrIdentity> {
+  if (!window.nostr) throw new Error("No Nostr signer connected.");
   onPhase("signer");
   const pubkey = await window.nostr.getPublicKey();
   onPhase("pubkey", npubEncode(pubkey));
 
-  // 1. one-time challenge from the server (single-use → no replay). The server
-  //    also returns its own pubkey: it signs/owns the save events, so we query
-  //    the relays under THAT key (not the user's) to preview recovered progress.
-  onPhase("challenge");
-  let challenge: string;
+  // The server owns the save events, so we need ITS pubkey to read them. A
+  // throwaway challenge fetch carries it (unused challenges are stateless + free).
+  onPhase("relays");
   let serverPubkey = "";
   try {
-    const res = await fetch(`${httpBase()}/nostr/challenge`);
-    if (!res.ok) throw new Error(String(res.status));
-    const j = (await res.json()) as { challenge: string; serverPubkey?: string };
-    challenge = j.challenge;
-    serverPubkey = j.serverPubkey ?? "";
+    serverPubkey = (await fetchChallenge()).serverPubkey;
   } catch {
-    throw new Error("Couldn't reach the game server for a challenge.");
+    /* server unreachable for the preview — proceed with just the pubkey */
   }
-  onPhase("challenged", challenge);
 
-  // 2. sign a fresh client-auth event embedding the challenge (proves ownership)
+  const { meta, profile, recovered } = await fetchProfileAndSave(pubkey, serverPubkey);
+  onPhase("profile", meta.name);
+  if (recovered) onPhase("save", `level ${recovered.level} · ${recovered.xp} xp`);
+  onPhase("done");
+
+  return { pubkey, npub: npubEncode(pubkey), meta, profile, recovered };
+}
+
+/**
+ * Sign a FRESH kind-22242 client-auth event for the current join (the challenge
+ * is single-use and the server requires it < 300s old). Called right before
+ * `net.connect` — for both extension and bunker signers, via `window.nostr`.
+ */
+export async function signNostrAuth(
+  onPhase: (phase: NostrPhase, detail?: string) => void = () => {},
+): Promise<NostrEvent> {
+  if (!window.nostr) throw new Error("No Nostr signer connected.");
+  onPhase("challenge");
+  const { challenge } = await fetchChallenge();
   onPhase("sign");
   const auth = await window.nostr.signEvent({
     kind: 22242, // NIP-42 client authentication
@@ -149,12 +175,18 @@ export async function nostrLogin(
     content: "Authenticate to Gorilator",
   });
   onPhase("signed");
+  return auth;
+}
 
-  // 3. fetch the kind-0 profile (the user's key) AND the kind-30078 save (the
-  //    SERVER's key, keyed by saveDTag(pubkey)) in parallel (best-effort). The
-  //    save is read-only here — just to preview "recovered level N" on the splash;
-  //    the server does the authoritative recovery on join.
-  onPhase("relays");
+/**
+ * Best-effort fetch of a pubkey's kind-0 profile metadata + the latest
+ * server-signed save (under `serverPubkey`, keyed by `saveDTag(pubkey)`), used to
+ * preview "recovered level N" on the splash. Never throws.
+ */
+export async function fetchProfileAndSave(
+  pubkey: string,
+  serverPubkey: string,
+): Promise<{ meta: NostrProfile; profile?: NostrEvent; recovered?: PlayerSave }> {
   let profile: NostrEvent | undefined;
   let recovered: PlayerSave | undefined;
   let meta: NostrProfile = { name: "", picture: "", nip05: "", about: "" };
@@ -175,25 +207,19 @@ export async function nostrLogin(
     ]);
     pool.close(RELAYS);
     if (profEv) {
-      profile = profEv;
-      meta = parseProfile(profEv);
+      profile = profEv as NostrEvent;
+      meta = parseProfile(profEv as NostrEvent);
     }
-    if (saveEv) recovered = parseSave(saveEv) ?? undefined;
+    if (saveEv) recovered = parseSave(saveEv as NostrEvent) ?? undefined;
   } catch {
     /* relays unreachable — proceed with just the verified pubkey */
   }
-  onPhase("profile", meta.name);
-  if (recovered) onPhase("save", `level ${recovered.level} · ${recovered.xp} xp`);
-  onPhase("done");
-
-  return { pubkey, npub: npubEncode(pubkey), auth, profile, meta, recovered };
+  return { meta, profile, recovered };
 }
 
-// ---- save preview (read-only) ----------------------------------------------
+// ---- parsing ----------------------------------------------------------------
 
-/** Parse a save event's JSON content into a PlayerSave (or null if malformed).
- *  Used only to preview recovered progress on the splash — the server signs and
- *  applies the authoritative save. */
+/** Parse a save event's JSON content into a PlayerSave (or null if malformed). */
 function parseSave(ev: NostrEvent): PlayerSave | null {
   try {
     return JSON.parse(ev.content) as PlayerSave;
@@ -202,7 +228,8 @@ function parseSave(ev: NostrEvent): PlayerSave | null {
   }
 }
 
-function parseProfile(ev: NostrEvent): NostrProfile {
+/** Parse a kind-0 metadata event into a NostrProfile (name/picture/nip05/about). */
+export function parseProfile(ev: NostrEvent): NostrProfile {
   try {
     const m = JSON.parse(ev.content) as Record<string, unknown>;
     return {

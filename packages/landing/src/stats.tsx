@@ -65,10 +65,8 @@ function Avatar({
   return (
     <a
       className={`avatar ${live ? "live" : ""}`}
-      href={`https://njump.me/${npub}`}
-      target="_blank"
-      rel="noreferrer"
-      title={profile?.name || shortNpub(npub)}
+      href={`/profile.html?npub=${npub}`}
+      title={`${profile?.name || shortNpub(npub)} — view their community entities`}
       style={{ width: size, height: size }}
     >
       {showImg ? (

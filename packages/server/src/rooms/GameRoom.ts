@@ -466,6 +466,43 @@ export class GameRoom extends Room<GameState> {
       this.broadcast("chat", { playerId: client.sessionId, name: p.name, text });
     });
 
+    // In-game Nostr login: a live (anonymous) session proves an npub with the same
+    // signed-challenge as join, and we "upgrade" its identity IN PLACE — current
+    // progress is kept (we attach the npub; we don't reload a different save), so
+    // the player can publish community entities + persist under their key.
+    this.onMessage("nostr_upgrade", (client, msg: NostrJoinPayload & { id?: string }) => {
+      const reqId = msg?.id;
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      let nostr: VerifiedNostr;
+      try {
+        nostr = verifyNostrLogin(msg);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : "verification failed";
+        console.warn(`[nostr] in-game upgrade rejected ${client.sessionId}: ${reason}`);
+        client.send("nostr_upgrade_result", { id: reqId, ok: false, error: reason });
+        return;
+      }
+      // Idempotent: already this npub → succeed without touching anything.
+      if (p.nostrVerified && p.pubkey === nostr.pubkey) {
+        client.send("nostr_upgrade_result", { id: reqId, ok: true, pubkey: nostr.pubkey });
+        return;
+      }
+      // Kick any OTHER live session on this npub (don't inherit its state — this
+      // session keeps the progress it already has).
+      this.takeOverSameNpub(client.sessionId, nostr.pubkey);
+      p.pubkey = nostr.pubkey;
+      p.nostrVerified = true;
+      p.picture = nostr.picture;
+      p.nip05 = nostr.nip05;
+      p.name = (nostr.name || p.name).slice(0, 24);
+      this.saveTrack.set(client.sessionId, { level: p.level, dead: p.state === AnimState.DEAD });
+      realmTracker.noteNpub(p.pubkey);
+      this.persistSave(client.sessionId, p, "login"); // persist current progress under the npub
+      console.log(`[room] ${p.name} ⚡ logged in in-game (npub ${nostr.pubkey.slice(0, 8)}…)`);
+      client.send("nostr_upgrade_result", { id: reqId, ok: true, pubkey: nostr.pubkey });
+    });
+
     // Fixed-step authoritative simulation. Dev Mode's time control scales every
     // system's dt by `timeScale` (0 = fully paused, 2 = double speed, …) so the
     // whole game freezes/slows/speeds for everyone. Direct edits (dev_move etc.)
@@ -970,6 +1007,9 @@ export class GameRoom extends Room<GameState> {
       break;
     }
     if (!snap || !oldSid) return null;
+    // Stop tracking the kicked session's saves immediately (its onLeave fires
+    // async; clearing here avoids a stray save for a session being taken over).
+    this.saveTrack.delete(oldSid);
     // Kick the old session — onLeave removes its player/inventory/throws, and we
     // already captured everything the new session inherits.
     this.clients.find((c) => c.sessionId === oldSid)?.leave(NOSTR_TAKEOVER_CODE);

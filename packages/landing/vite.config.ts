@@ -44,10 +44,12 @@ export default defineConfig({
   plugins: [react(), installScript()],
   build: {
     rollupOptions: {
-      // Multi-page: the landing (index.html) + the live stats dashboard (stats.html).
+      // Multi-page: landing (index.html), live stats (stats.html), creator profiles
+      // (profile.html?npub=…).
       input: {
         index: resolve(rootDir, "index.html"),
         stats: resolve(rootDir, "stats.html"),
+        profile: resolve(rootDir, "profile.html"),
       },
     },
   },

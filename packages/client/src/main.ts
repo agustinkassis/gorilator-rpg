@@ -9,9 +9,9 @@ import { preloadBerserkerPotion } from "./entities/models/berserkerPotion";
 import { loadHouse } from "./entities/models/house";
 import { PropManager } from "./dev/PropManager";
 import { CharacterManager } from "./dev/CharacterManager";
-import { CharacterImporter } from "./dev/CharacterImporter";
+import { EntityCreator } from "./dev/EntityCreator";
 import { AnimationTester } from "./dev/AnimationTester";
-import { DevMode, frontOfPlayer } from "./dev/DevMode";
+import { DevMode } from "./dev/DevMode";
 import { DeveloperLabels } from "./dev/DeveloperLabels";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
@@ -20,6 +20,7 @@ import { XpBar } from "./ui/xpBar";
 import { StaminaBar } from "./ui/staminaBar";
 import { CharacterSheet } from "./ui/characterSheet";
 import { PlayerBadge } from "./ui/playerBadge";
+import { PlayerMenu } from "./ui/playerMenu";
 import { InventoryUI } from "./ui/inventory";
 import { HotkeyBar } from "./ui/hotkeyBar";
 import { Minimap } from "./ui/minimap";
@@ -32,6 +33,15 @@ import { AudioControls } from "./ui/audioControls";
 import { TopBar } from "./ui/topBar";
 import { GameMenu, loadStoredShadowMode } from "./ui/gameMenu";
 import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
+import {
+  signNostrAuth,
+  establishNostrIdentity,
+  type NostrAuthPayload,
+  type NostrIdentity,
+} from "./net/nostr";
+import { loadSession, clearSession } from "./net/nostrSession";
+import { restoreBunkerClient, installBunkerSigner } from "./net/nip46";
+import { setActiveSession, getActiveIdentity, clearActiveSession } from "./net/nostrSigner";
 import { preloadMouseCursors, setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
@@ -1187,6 +1197,41 @@ game.setAudio(audio);
 void audio.ready.then(() => audio.startSplashMusic());
 const net = new NetworkClient();
 
+/** Logout: leave the room, drop the signer + saved session, return to splash. */
+async function doLogout(): Promise<void> {
+  try {
+    await net.leave();
+  } catch {
+    /* ignore */
+  }
+  clearActiveSession();
+  clearSession();
+  if (typeof window !== "undefined") delete window.nostr;
+  location.reload(); // cold reset to the splash (storage cleared → no auto-restore)
+}
+
+// The bottom-left player badge opens a profile / logout menu.
+new PlayerMenu({
+  getIdentity: () => getActiveIdentity(),
+  getPlayer: () => {
+    const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
+    return me
+      ? {
+          name: me.name,
+          level: me.level,
+          picture: me.picture,
+          nostrVerified: me.nostrVerified,
+          attack: me.attack,
+          armor: me.armor,
+          hp: me.hp,
+          maxHp: me.maxHp,
+        }
+      : null;
+  },
+  onLogout: () => void doLogout(),
+  landingBase: import.meta.env.VITE_LANDING_URL as string | undefined,
+});
+
 // Performance tracking: Babylon probes feed the tracker each frame (FPS, draw
 // calls, meshes, triangles always; CPU+GPU frame time + heap while the overlay or
 // a benchmark is active). Toggle the on-screen HUD with F3 or `?perf`; drive it
@@ -1510,11 +1555,97 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
   };
 }
 
+/** Wait briefly for a signer (`window.nostr`) to appear, returning its pubkey. */
+async function pollForPubkey(timeoutMs: number): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (window.nostr) {
+      try {
+        return await window.nostr.getPublicKey();
+      } catch {
+        return null;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  return null;
+}
+
+/** A logged-in splash state from a cached session, without re-fetching relays. */
+function identityFromCache(s: { pubkey: string; npub: string; meta: NostrIdentity["meta"] }): NostrIdentity {
+  return { pubkey: s.pubkey, npub: s.npub, meta: s.meta };
+}
+
+/**
+ * On startup, restore a persisted Nostr session: re-establish/verify the signer
+ * (NIP-07 extension present & same pubkey, or bunker reachable) and show the
+ * logged-in state on the splash. The player still clicks JOIN (which signs a
+ * fresh auth). Never throws — a failed restore just leaves an anonymous splash.
+ */
+async function restoreSession(): Promise<void> {
+  const saved = loadSession();
+  if (!saved) return;
+  // `?mocknostr=` (dev) owns window.nostr and must not be overwritten by a bunker.
+  const mockActive =
+    import.meta.env.DEV &&
+    import.meta.env.VITE_NO_MOCK_NOSTR !== "1" &&
+    !!new URLSearchParams(location.search).get("mocknostr");
+
+  try {
+    if (saved.method === "nip07") {
+      const pk = await pollForPubkey(2000);
+      if (pk && pk === saved.pubkey) {
+        const id = await establishNostrIdentity(); // one fresh identity for both
+        splash.restoreNostr(id);
+        setActiveSession(id, null);
+      } else if (pk && pk !== saved.pubkey) {
+        clearSession(); // extension switched accounts → don't restore the wrong key
+      } else {
+        // No signer right now — show the cached identity; JOIN will surface the
+        // "reconnect your signer" error if it's still missing then.
+        splash.restoreNostr(identityFromCache(saved));
+        setActiveSession(identityFromCache(saved), null);
+      }
+      return;
+    }
+
+    if (saved.method === "bunker") {
+      if (mockActive) return; // mock wins this session
+      const client = restoreBunkerClient(saved.bunker, (url) => window.open(url, "_blank", "noopener"));
+      client.start();
+      installBunkerSigner(client); // JOIN signs through it (lazily reconnects if asleep)
+      const alive = await client.ping().then(() => true).catch(() => false);
+      if (alive) {
+        const id = await establishNostrIdentity().catch(() => null);
+        // Re-verify the signer still controls the stored npub (mirrors nip07).
+        if (id && id.pubkey !== saved.pubkey) {
+          client.close();
+          if (typeof window !== "undefined") delete window.nostr;
+          clearSession();
+          return;
+        }
+        const identity = id ?? identityFromCache(saved);
+        splash.restoreNostr(identity);
+        setActiveSession(identity, client);
+      } else {
+        // Signer asleep — show cached identity; JOIN re-signs through the shim.
+        splash.restoreNostr(identityFromCache(saved));
+        setActiveSession(identityFromCache(saved), client);
+      }
+    }
+  } catch (err) {
+    console.warn("[nostr] session restore failed", err);
+  }
+}
+
 async function start() {
   // First reveal the splash only after its own scene/hero assets are ready. After
   // that, the full game asset preload can run in the background while the player
   // chooses how to enter.
   await splashReady;
+  // Restore a saved Nostr login (re-verify the signer) — non-blocking so the
+  // splash shows immediately and flips to logged-in once verified.
+  void restoreSession();
   const preload = buildAssetPreload();
 
   const handlers: NetHandlers = {
@@ -1599,13 +1730,27 @@ async function start() {
     await preload.done;
     splash.setAssetProgress(100, "joining realm", "joining");
 
+    // Nostr players sign a FRESH kind-22242 auth here (the challenge must be
+    // <300s old), so a restored/persisted identity never reuses a stale one. The
+    // signer (extension / mock / bunker) may prompt or be offline → handle apart.
+    let nostrPayload: NostrAuthPayload | undefined;
+    if (creds.nostr) {
+      try {
+        splash.setAssetProgress(100, "signing in…", "joining");
+        const auth = await signNostrAuth();
+        nostrPayload = { auth, profile: creds.nostr.profile };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        splash.showJoinError(`couldn't sign in with your Nostr signer — ${msg}`);
+        continue;
+      }
+    }
+
     try {
       await net.connect(handlers, {
         name: creds.name,
         // Only the signed auth + profile go to the server; it owns the save.
-        nostr: creds.nostr
-          ? { auth: creds.nostr.auth, profile: creds.nostr.profile }
-          : undefined,
+        nostr: nostrPayload,
       });
     } catch (err) {
       console.error(err);
@@ -1640,20 +1785,13 @@ start().catch((err) => {
 
 // Dev-only hook: poke at the running game from the browser console (window.__rpg).
 if (import.meta.env.DEV) {
-  // Character importer: drop a Meshy character .zip, map clips→actions, fix
-  // orientation/scale, preview, then save + add to the world (button bottom-right).
-  const characterImporter = new CharacterImporter({
-    getPlayerPos: () => {
-      const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
-      return me ? frontOfPlayer({ x: me.x, z: me.z, rotY: me.rotY }) : null; // beside the player, not on them
-    },
-    onPlaced: (_def, placement) => {
-      window.setTimeout(() => devMode?.focusEntity("enemy", placement.id), 500);
-      window.setTimeout(() => devMode?.focusEntity("enemy", placement.id), 1700);
-    },
+  // Entity creator: the stepped Library wizard (details → model → stats) that
+  // authors a character / structure / item without placing it on the map.
+  const entityCreator = new EntityCreator({
+    onAdded: (type) => devMode?.revealLibraryTab(type),
   });
 
-  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode, debugStats };
+  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, entityCreator, devMode, debugStats };
 
   // Standalone model inspector (button bottom-right, or press C).
   new CharacterDebugWindow();
@@ -1670,10 +1808,10 @@ if (import.meta.env.DEV) {
     clearClip: () => game.clearAnimationTestClip(),
   });
   devMode?.setAnimationTester(animationTester);
-  devMode?.setCharacterImporter(characterImporter); // Library "Add Character" opens it
+  devMode?.setEntityCreator(entityCreator); // Library "＋ Add" opens the wizard
   devMode?.onVisibilityChange((on) => {
     document.body.classList.toggle("devMode", on);
-    characterImporter.setVisible(on);
+    entityCreator.setVisible(on);
     propImporter.setVisible(on);
     animationTester.setVisible(on);
     game.setDamageFxSuppressed(on); // no red flash / shake / low-HP vignette while editing

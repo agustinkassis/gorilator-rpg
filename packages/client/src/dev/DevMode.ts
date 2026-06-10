@@ -13,7 +13,8 @@ import type { CharacterDef } from "../entities/characterDef";
 import type { Game } from "../game/Game";
 import type { AnimationTester } from "./AnimationTester";
 import type { InventoryUI } from "../ui/inventory";
-import type { CharacterImporter } from "./CharacterImporter";
+import type { EntityCreator } from "./EntityCreator";
+import type { CommunityEntityType } from "@rpg/shared";
 import {
   type DevActionId,
   type DevTuningKey,
@@ -99,7 +100,7 @@ export class DevMode {
   private globalActionsPanel: HTMLElement;
   private globalActionsOpen = false;
   private animationTester: AnimationTester | null = null; // wired post-construction (main.ts)
-  private charImporter: CharacterImporter | null = null; // wired post-construction (main.ts)
+  private entityCreator: EntityCreator | null = null; // wired post-construction (main.ts)
   private inventoryUI: InventoryUI | null = null; // wired post-construction (main.ts)
   private slotPopup: HTMLElement | null = null; // dev inventory slot editor popup
   private banner: HTMLElement;
@@ -151,8 +152,15 @@ export class DevMode {
   private refreshLabelsBtn() {
     if (!this.labelsBtn) return;
     const on = this.developerLabels?.isEnabled() ?? false;
-    this.labelsBtn.style.background = on ? "#3a7a40" : "#2a3242";
-    this.labelsBtn.style.color = on ? "#fff" : "#9fe0a0";
+    // Explicit ON/OFF toggle (a pill on the right of the label).
+    this.labelsBtn.innerHTML =
+      `🏷 Labels <span style="margin-left:6px; padding:1px 7px; border-radius:999px; font-weight:700; font-size:11px;` +
+      `background:${on ? "#9fe0a0" : "#1a2230"}; color:${on ? "#10311a" : "#7e8da0"}; border:1px solid ${
+        on ? "#cdebcf" : "#384a5e"
+      };">${on ? "ON" : "OFF"}</span>`;
+    this.labelsBtn.style.background = on ? "#23472b" : "#2a3242";
+    this.labelsBtn.style.color = on ? "#eaffea" : "#9fe0a0";
+    this.labelsBtn.style.borderColor = on ? "#5fb86a" : "#4a9a52";
   }
 
   /** Wire in the inventory UI so Dev Mode slot-clicks open the set-item popup. */
@@ -160,9 +168,14 @@ export class DevMode {
     this.inventoryUI = inv;
   }
 
-  /** Wire in the Character Importer so the Library's "Add Character" can open it. */
-  setCharacterImporter(ci: CharacterImporter) {
-    this.charImporter = ci;
+  /** Wire in the Entity Creator so the Library's "＋ Add" opens the wizard. */
+  setEntityCreator(ec: EntityCreator) {
+    this.entityCreator = ec;
+  }
+
+  /** Reveal the Library focused on a tab (used after the creator adds an entity). */
+  revealLibraryTab(type: CommunityEntityType) {
+    this.explorer.showTab(type);
   }
 
   onVisibilityChange(fn: (on: boolean) => void) {
@@ -281,8 +294,10 @@ export class DevMode {
     labelsBtn.id = "devLabelsBtn";
     labelsBtn.textContent = "🏷 Labels";
     labelsBtn.title = "Toggle component labels";
+    // z-index above the dev panels (80–95) + modals (200) so Labels is always
+    // reachable on top, per design.
     labelsBtn.style.cssText =
-      "position:fixed; right:240px; top:10px; z-index:40; cursor:pointer; height:34px; display:none;" +
+      "position:fixed; right:240px; top:10px; z-index:210; cursor:pointer; height:34px; display:none;" +
       "background:#2a3242; color:#9fe0a0; border:1px solid #4a9a52; border-radius:8px;" +
       "padding:0 10px; font:12px system-ui,sans-serif;";
     labelsBtn.onclick = () => {
@@ -366,7 +381,8 @@ export class DevMode {
       placeModel: (model, name) => void this.addFromModel(model, name),
       uploadModel: (file, name) => void this.uploadModel(file, name),
       openItemLibrary: () => this.itemLibrary.toggle(),
-      addCharacter: () => this.charImporter?.openImporter(),
+      createEntity: (type) => this.entityCreator?.openFor(type),
+      giveItem: (id) => this.net.sendDevGiveItem(id, 1),
     });
     this.itemLibrary = new ItemLibrary({
       net: this.net,

@@ -21,19 +21,16 @@ import type { SpawnedCharacter } from "../entities/types";
 import { CharacterFactory } from "../entities/CharacterFactory";
 import { AnimationController } from "../entities/AnimationController";
 import { anyPackageBehind, localPackageVersions } from "../util/version";
-import {
-  nostrLogin,
-  hasNostrExtension,
-  nip98AuthHeader,
-  type NostrCredentials,
-  type NostrPhase,
-} from "../net/nostr";
+import { hasNostrExtension, nip98AuthHeader, type NostrIdentity, type NostrPhase } from "../net/nostr";
+import { clearSession } from "../net/nostrSession";
+import { clearActiveSession, getActiveBunkerClient } from "../net/nostrSigner";
+import { NostrLoginModal, completeLogin } from "./nostrLoginModal";
 
-/** What the player commits at the splash: a name, optionally a verified Nostr id
- *  (the full credentials — main.ts derives the server join payload from them). */
+/** What the player commits at the splash: a name, optionally a verified Nostr id.
+ *  The kind-22242 auth is signed fresh at join (main.ts), not carried here. */
 export interface SplashCredentials {
   name: string;
-  nostr?: NostrCredentials;
+  nostr?: NostrIdentity;
 }
 
 export interface SplashScreenOptions {
@@ -105,7 +102,7 @@ export class SplashScreen {
   private assetShownPct = 0;
 
   /** A verified Nostr identity once the player connects one (else anonymous). */
-  private nostr?: NostrCredentials;
+  private nostr?: NostrIdentity;
   /** Times the level-reveal → profile-card hand-off in the logged-in reframe. */
   private revealTimer?: number;
 
@@ -465,9 +462,16 @@ export class SplashScreen {
     this.clearImpactFx();
     this.input.disabled = false;
     this.assetLoadEl.classList.remove("joining", "ready");
-    this.assetStatusEl.textContent = "server offline";
+    // A sign-in/signer failure isn't a server outage — label it honestly.
+    this.assetStatusEl.textContent = /sign|signer|nostr/i.test(message) ? "sign-in failed" : "server offline";
     const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
-    if (joinBtn) joinBtn.disabled = false;
+    // Un-morph the spinner button + re-enable so the player can retry.
+    this.enterBtn.classList.remove("btnSpin");
+    this.enterBtn.disabled = false;
+    if (joinBtn) {
+      joinBtn.classList.remove("btnSpin");
+      joinBtn.disabled = false;
+    }
     const status = document.getElementById("nostrStatus") as HTMLElement | null;
     if (status) status.textContent = message;
     this.syncEnter();
@@ -789,16 +793,17 @@ export class SplashScreen {
     this.enterBtn.disabled = this.input.value.trim().length === 0 && !this.nostr;
   }
 
-  /** Run the NIP-07 login behind a terminal-style progress log, then reframe. */
+  /** Open the unified tabbed login modal (Extension / Remote signer), then
+   *  establish + persist identity behind the terminal-style progress log. */
   private async connectNostr() {
     const status = document.getElementById("nostrStatus") as HTMLElement;
-    if (!hasNostrExtension()) {
-      status.textContent = "No Nostr extension found — install Alby or nos2x.";
-      return;
-    }
+    const result = await new NostrLoginModal().open();
+    if (!result) return; // cancelled
     this.startProgress();
     try {
-      const creds = await nostrLogin((phase, detail) => this.onNostrPhase(phase, detail));
+      // completeLogin mounts the signer, establishes identity, and persists the
+      // session (so it's remembered + re-verified on refresh).
+      const creds = await completeLogin(result, { onPhase: (phase, detail) => this.onNostrPhase(phase, detail) });
       this.stopRelayTicker();
       this.npLog("✓ identity verified", "ok", 100);
       await this.whenDrained();
@@ -936,7 +941,15 @@ export class SplashScreen {
   /** Reframe the splash into the logged-in layout. The gorilla's current level
    *  flashes up FIRST; a beat later the profile card (avatar + name + level) and
    *  the big JOIN button rise into place. */
-  private showNostrProfile(creds: NostrCredentials) {
+  /** Restore a persisted Nostr identity onto the splash (no connect flow) — the
+   *  signer was re-verified at startup; the player just clicks JOIN. */
+  restoreNostr(identity: NostrIdentity) {
+    this.nostr = identity;
+    this.showNostrProfile(identity);
+    this.syncEnter();
+  }
+
+  private showNostrProfile(creds: NostrIdentity) {
     const nameText = document.getElementById("nhNameText") as HTMLElement;
     const img = document.getElementById("nhAvatarImg") as HTMLImageElement;
     nameText.textContent =
@@ -968,6 +981,15 @@ export class SplashScreen {
 
   private clearNostr() {
     this.nostr = undefined;
+    // Fully disconnect: drop the persisted session + runtime identity, and close
+    // the live bunker client — otherwise "use a name instead" would leave a stale
+    // identity that silently re-logs-in on reload. Only unmount window.nostr when
+    // it's OUR bunker shim (a real extension's window.nostr must stay, since there's
+    // no reload here to re-inject it).
+    const wasBunker = !!getActiveBunkerClient();
+    clearSession();
+    clearActiveSession();
+    if (wasBunker && typeof window !== "undefined") delete window.nostr;
     window.clearTimeout(this.revealTimer);
     this.el.classList.remove("nostr", "revealing");
     // Back to anonymous → revert any admin button to the CLI hint.
@@ -1003,6 +1025,8 @@ export class SplashScreen {
     this.input.disabled = true;
     const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
     if (joinBtn) joinBtn.disabled = true;
+    // Morph the button the player actually pressed into a circular loading spinner.
+    (this.nostr ? joinBtn : this.enterBtn)?.classList.add("btnSpin");
     this.assetLoadEl.classList.add("joining");
     const resolve = this.resolveCreds;
     this.resolveCreds = undefined;

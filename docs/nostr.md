@@ -197,6 +197,36 @@ A **realm** = one game (first live defender → La Crypta falls / room empties).
 
 ---
 
+## 4. Community entities — kind 30333, user-signed
+
+Players can **publish their own game content** — a custom character, structure, or item
+created in Dev Mode — as an addressable Nostr event. Unlike saves/discovery (which the
+**server** signs), these are signed by the **author's own key**: anyone can publish, and
+re-publishing replaces the same address (`d` tag → one latest version per entity).
+
+Because a `.glb` model is far too large for an event, the assets live on **Blossom**
+(content-addressed blob storage) and the event references their absolute URLs + sha-256.
+
+| | |
+| --- | --- |
+| `kind` | `30333` (`GORILATOR_ENTITY_KIND`) — parameterized-replaceable |
+| `pubkey` (author) | the **creator's** pubkey |
+| `d` tag | `gorilator-entity-v1:<entityId>` (`entityDTag(entityId)`) |
+| `t` tag | `gorilator-entity` (`GORILATOR_ENTITY_T`) — find every entity |
+| `entity-type` tag | `character` \| `structure` \| `item` (filtered client-side — relays only index single-letter tags) |
+| `name` tag | display name (also in content) |
+| `image` tag | Blossom URL of the preview thumbnail (lets non-3D consumers render a card) |
+| `x` tags | sha-256 of each referenced blob (Blossom content address) |
+| `content` | a `CommunityEntity` JSON (all asset paths are absolute Blossom URLs) |
+
+**Discover them:** `{ kinds: [30333], "#t": ["gorilator-entity"] }`, or for one creator's
+profile page `{ kinds: [30333], authors: [pubkey], "#t": ["gorilator-entity"] }`.
+
+Full content schema, the Blossom upload (BUD-01/kind-24242 auth), and the import / pending /
+commit lifecycle: **[community-entities.md](community-entities.md)**.
+
+---
+
 ## Summary of kinds
 
 | Kind | Author | Purpose |
@@ -206,3 +236,5 @@ A **realm** = one game (first live defender → La Crypta falls / room empties).
 | `30078` · d=`gorilator-save-v1:<pk>` | the server | per-player progress save |
 | `30078` · d=`gorilator-player-realm-v1:<realm-id>:<pk>` | the server | per-player update for one realm |
 | `30078` · d=`gorilator-server` | the server | server + realm discovery/status |
+| `30333` · d=`gorilator-entity-v1:<id>` | **the player** | a published community entity (character/structure/item); assets on Blossom |
+| `24242` | the player | Blossom upload authorization (BUD-01) for an entity's assets |

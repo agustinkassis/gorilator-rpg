@@ -72,8 +72,25 @@ the in-game importers and re-read on change. They live in `packages/client/publi
 | `props.json` | imported props (Model Importer / Dev Mode). Server reads it for **collision** (`loadPropObstacles`, props with `collisionRadius > 0`); the client renders them (`PropManager`). |
 | `spawners.json` | Dev-Mode-placed object **spawners** (`loadSpawners` + `spawnerSystem`). |
 | `npcs.json` | placed custom **characters** (imported Meshy zips), rendered by `CharacterManager`. |
-| `characters.json` | the custom-character **library** (definitions/templates for the importer). |
+| `characters.json` | the custom-character **library** (definitions/templates for the creator). |
+| `structures-lib.json` | the creator-authored **structure** library (a `.glb` + placement physics + stats). |
+| `items.json` | the custom **item** library (icon + optional world model + stack/scale). |
 | `resources.json` | resource **drop tables** (`loadResourceDrops`). |
 | `audio/manifest.json` | optional **audio sample overrides** — maps sound keys → files; anything unlisted is synthesized procedurally. See `public/audio/README.md`. |
 
 The server watches the files it reads and applies changes without a restart.
+
+### Library / creator dev endpoints (Vite, dev-only)
+
+The in-game **Library** + creator wizard talk to Vite middleware (present only under
+`pnpm dev`). Besides the per-type CRUD (`/__char/*`, `/__structures/*`, `/__items/*`,
+`/__props/*`), three endpoints back the Local/Community + pending flow:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /__content/pending` | which Library entities are **not yet committed to git** (→ the "pending" badge), per type, via `git show HEAD:…` + `git status`. |
+| `POST /__char/def-delete` | remove a character def (+ its `public/models/characters/<id>/` dir). |
+| `POST /__content/import-remote` | download a community entity's Blossom assets locally and add it as a **pending, imported** def. |
+
+> Community **publishing** (Blossom upload + the kind-30333 event) happens browser-side
+> with the user's own Nostr key — see [community-entities.md](community-entities.md).
