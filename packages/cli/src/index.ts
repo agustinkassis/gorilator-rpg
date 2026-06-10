@@ -8,6 +8,7 @@
 //   gorilator update                       stop services, git pull, rebuild, start services
 //   gorilator remote                       compare local versions with remote ones
 //   gorilator tunnel <login|status|restart>  manage the Cloudflare tunnel
+//   gorilator plugin <list|enable|disable|add>  manage plugins + realm-pack authors
 //   gorilator uninstall                    stop and remove Gorilator from this machine
 //   gorilator serve                        internal: the supervised foreground process
 import { readFileSync } from "node:fs";
@@ -15,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { install } from "./commands/install.js";
+import { pluginCmd } from "./commands/plugin.js";
 import { remoteCmd } from "./commands/remote.js";
 import { serve } from "./commands/serve.js";
 import { logsCmd, restartCmd, startCmd, statusCmd, stopCmd } from "./commands/service.js";
@@ -76,6 +78,7 @@ const CONTEXT_AWARE_COMMANDS = new Set([
   "logs",
   "update",
   "remote",
+  "plugin",
 ]);
 
 /** One-line banner naming the target a command will act on. */
@@ -113,6 +116,7 @@ Usage: gorilator <command> [options]
   update             Stop services, git pull, rebuild, start services
   remote             Check remote updates and compare package versions
   tunnel <cmd>       Manage the Cloudflare tunnel — login | status | restart
+  plugin <cmd>       Manage plugins — list | enable | disable | add <path|npub>
   uninstall          Stop and remove Gorilator services, config, global command, and installed files
   serve              Run the server in the foreground (used by the service)
   version            Print the version
@@ -146,6 +150,9 @@ Options (uninstall):
 
 Options (remote):
   --no-npm           Skip the published npm package version check
+
+Options (plugin add):
+  --link             Symlink a local plugin directory into plugins/ instead of copying
 `);
 }
 
@@ -291,6 +298,33 @@ Examples:
   gorilator tunnel login
   gorilator tunnel restart
 `,
+  plugin: `${log.bold("gorilator plugin")} — manage plugins and realm-pack authors
+
+Usage:
+  gorilator plugin [list]
+  gorilator plugin enable <name>
+  gorilator plugin disable <name>
+  gorilator plugin add <path|npub> [--link]
+  gorilator help plugin
+
+Subcommands:
+  list               Show discovered plugins (plugins/ + node_modules/gorilator-plugin-*)
+                     with version, enabled state, and declared capabilities
+  enable <name>      Remove <name> from realm.json's plugins.disabled list
+  disable <name>     Add <name> to realm.json's plugins.disabled list (created if missing)
+  add <path>         Copy a local plugin directory into plugins/<name> (--link symlinks instead)
+  add <npub>         Trust a Nostr realm-pack author: appends the npub to
+                     REALM_PACK_AUTHORS in .env (kind-30333 data packs, see docs/plugins.md)
+
+Options:
+  --link             With 'add <path>': symlink instead of copy
+
+Examples:
+  gorilator plugin list
+  gorilator plugin disable example-arena
+  gorilator plugin add ../my-plugin --link
+  gorilator plugin add npub1abc…
+`,
   uninstall: `${log.bold("gorilator uninstall")} — remove Gorilator from this machine
 
 Usage:
@@ -375,6 +409,7 @@ async function main(): Promise<void> {
       filter: { type: "string" },
       since: { type: "string" },
       "no-npm": { type: "boolean" },
+      link: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -460,6 +495,9 @@ async function main(): Promise<void> {
       break;
     case "tunnel":
       tunnelCmd(positionals[1]);
+      break;
+    case "plugin":
+      pluginCmd(ctx, positionals.slice(1), { link: Boolean(values.link) });
       break;
     case "uninstall":
       uninstall(opts);
