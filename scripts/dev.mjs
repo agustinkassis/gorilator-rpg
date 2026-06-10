@@ -83,6 +83,9 @@ const clientPort = await findFreePort(requestedClientPort);
 const serverPort = await findFreePort(requestedServerPort);
 const devEnv = {
   ...process.env,
+  // Explicitly a dev server: the server opens the dev_* (Dev Mode editor)
+  // messages to every client only when NODE_ENV says so (systems/devAuth.ts).
+  NODE_ENV: process.env.NODE_ENV ?? "development",
   CLIENT_PORT: String(clientPort),
   GAME_SERVER_PORT: String(serverPort),
   VITE_SERVER_PORT: String(serverPort),
