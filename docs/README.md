@@ -26,6 +26,7 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | --- | --- |
 | [getting-started.md](getting-started.md) | Prerequisites, install, the dev loop, build, the `@rpg/shared` rebuild gotcha, env, deploy pointers |
 | [plugins.md](plugins.md) | **The plugin system**: data vs code tiers, the `@rpg/shared` plugin API (brains, items, systems, events), plugin.json, the Vite bundler, Nostr realm packs, `realm.json`, fork rules |
+| [presentations/how-plugins-work.pptx](presentations/how-plugins-work.pptx) | 🚧 *Under development* — a 10-slide intro deck to the plugin system (tiers, manifest, discovery, hooks, realm packs, safety rails, CLI) |
 | [TESTING.md](TESTING.md) | The four test layers: Vitest unit/characterization tests, Playwright e2e (landing + headless game smoke), the bench gate, CI — and the "DOM not canvas" rule |
 | [DEBUGGING.md](DEBUGGING.md) | The debugging toolkit (F3, `__perf`, `/api/perf`, Colyseus monitor, auto-captured stutters) + the troubleshooting table |
 | [architecture.md](architecture.md) | Monorepo layout, the three packages, the authoritative-server networking model, the simulation tick, full directory tree |

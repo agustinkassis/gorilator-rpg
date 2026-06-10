@@ -16,6 +16,11 @@ The worked example — **`plugins/example-arena/`** — exercises every seam in
 ~100 lines and has an integration test
 (`packages/server/src/systems/plugins/plugins.test.ts`).
 
+> 🚧 **Slide deck (under development):** a 10-slide intro to this system lives at
+> [`presentations/how-plugins-work.pptx`](presentations/how-plugins-work.pptx) —
+> the two tiers, the manifest, discovery, server/client hooks, Nostr realm packs,
+> safety rails, and the CLI. This document remains the source of truth.
+
 ## Quick start
 
 ```bash
