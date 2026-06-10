@@ -119,6 +119,16 @@
           "trigger": "damage"
         }
       ]
+    },
+    "goblin_house_1780338969291": {
+      "drops": [
+        {
+          "item": "berserker_potion",
+          "quantity": 1,
+          "probability": 0.03,
+          "trigger": "kill"
+        }
+      ]
     }
   }
 }
