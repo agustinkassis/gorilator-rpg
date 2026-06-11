@@ -1,7 +1,13 @@
 # Configuration & tuning
 
-Three layers: **compile-time constants** (`@rpg/shared`), **environment variables**
-(deploy/identity), and **runtime JSON files** (live-reloaded content).
+Four layers: **compile-time constants** (`@rpg/shared`), **environment variables**
+(deploy/identity), **`realm.json`** (per-realm rules: plugin toggles, tuning seeds,
+death/progression policy — see [plugins.md](plugins.md#realmjson-per-realm--per-fork-config)),
+and **runtime JSON files** (live-reloaded content).
+
+> The `realm.json` `policy` block decides what death costs (`none` / `xp-penalty` /
+> `hardcore`) and whether progression + inventory persist across realm resets
+> (both default to **on**: level persists, death hurts but does not erase).
 
 ## 1. Tuning constants — `packages/shared/src/constants.ts`
 

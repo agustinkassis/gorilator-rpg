@@ -1,0 +1,39 @@
+name: Feature
+description: A roadmap feature or game system (see ROADMAP.md)
+title: "[feat] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What the feature is and why it matters (link the ROADMAP.md workstream if applicable).
+    validations:
+      required: true
+  - type: textarea
+    id: anchors
+    attributes:
+      label: File / system anchors
+      description: Where this lands — packages, systems, manifests, schema (core / plugin / content tier per the fork rule).
+      placeholder: |
+        - packages/server/src/systems/...
+        - packages/client/public/....json
+        - tier: core | plugin | content
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable behavior that proves the feature works.
+    validations:
+      required: true
+  - type: checkboxes
+    id: dod
+    attributes:
+      label: Definition of Done (Feature Lab — docs/feature-lab.md)
+      description: Every feature ships with an isolated way to test it.
+      options:
+        - label: "Scenario manifest (`scenarios/<feature>.json`) staging this feature in isolation, with time acceleration where timers are involved"
+        - label: "Bot self-test: scripted player simulation exercises the feature and asserts state"
+        - label: "Tweak knobs: the scenario declares its tuning keys for the Dev Mode 'Scenario tweaks' panel"
+        - label: "Verification ladder green: `pnpm typecheck && pnpm lint && pnpm test` (+ `pnpm bench` / `pnpm e2e` when relevant)"
+        - label: "Docs updated (configuration/gameplay/plugins as applicable)"

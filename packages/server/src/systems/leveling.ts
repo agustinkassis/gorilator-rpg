@@ -15,7 +15,6 @@ import {
   PLAYER_ATTACK,
   PLAYER_ARMOR,
   PLAYER_CRIT_CHANCE,
-  XP_DEATH_PENALTY,
   DUMMY_XP_REWARD,
   GOBLIN_XP_REWARD,
   PLAYER_KILL_XP,
@@ -23,6 +22,7 @@ import {
   ROCK_XP_REWARD,
   STRUCTURE_XP_REWARD,
 } from "@rpg/shared";
+import { realmPolicy } from "./policy";
 
 /** Sink for XP events so the room can broadcast floating "+N XP" to clients. */
 export type EmitXp = (ev: XpEvent) => void;
@@ -71,7 +71,7 @@ function totalXp(level: number, xp: number): number {
 
 /** Recompute a player's stats from its (possibly reduced) level — base + per-level
  *  growth — so de-leveling sheds exactly the stats those levels had granted. */
-function applyLevelStats(p: Player): void {
+export function applyLevelStats(p: Player): void {
   const levels = Math.max(1, p.level) - 1;
   p.maxHp = PLAYER_MAX_HP + levels * PLAYER_HP_PER_LEVEL;
   p.attack = PLAYER_ATTACK + levels * PLAYER_ATTACK_PER_LEVEL;
@@ -82,12 +82,25 @@ function applyLevelStats(p: Player): void {
 }
 
 /**
- * Death penalty: lose XP_DEATH_PENALTY of TOTAL XP. Re-deriving level + progress
- * from what's left de-levels the player when the loss crosses a level boundary,
- * and the lost levels' stat gains are shed with it. HP is refilled on respawn.
+ * Death penalty, per the realm policy (realm.json `policy.death`):
+ * - "none"       → death costs nothing.
+ * - "xp-penalty" → lose `xpPenalty` of TOTAL XP (default XP_DEATH_PENALTY).
+ *                  Re-deriving level + progress from what's left de-levels the
+ *                  player when the loss crosses a level boundary, and the lost
+ *                  levels' stat gains are shed with it.
+ * - "hardcore"   → back to a level-1 character.
+ * HP is refilled on respawn either way.
  */
 export function applyDeathXpPenalty(p: Player): void {
-  let remaining = totalXp(p.level, p.xp) * (1 - XP_DEATH_PENALTY);
+  const { mode, xpPenalty } = realmPolicy().death;
+  if (mode === "none") return;
+  if (mode === "hardcore") {
+    p.level = 1;
+    p.xp = 0;
+    applyLevelStats(p);
+    return;
+  }
+  let remaining = totalXp(p.level, p.xp) * (1 - xpPenalty);
   let level = 1;
   while (remaining >= xpForLevel(level)) {
     remaining -= xpForLevel(level);

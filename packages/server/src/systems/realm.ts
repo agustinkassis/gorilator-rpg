@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { DevTuningKey } from "@rpg/shared";
 import { setDevTuning } from "./devTuning";
+import { setRealmPolicy } from "./policy";
 
 /**
  * realm.json — the per-realm / per-fork config file at the repo root. Lets an
@@ -10,11 +11,16 @@ import { setDevTuning } from "./devTuning";
  *   {
  *     "name": "my-realm",
  *     "plugins": { "disabled": ["example-arena"] },   // read by plugin discovery
- *     "tuning": { "waveSizeBase": 8, "playerMaxHp": 150 }   // any DevTuningKey
+ *     "tuning": { "waveSizeBase": 8, "playerMaxHp": 150 },  // any DevTuningKey
+ *     "policy": {                                     // death + progression rules
+ *       "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
+ *       "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+ *     }
  *   }
  *
  * Absent file (the default) changes nothing. Tuning keys seed the same live
- * devTuning knobs the in-game Gameplay Options panel edits.
+ * devTuning knobs the in-game Gameplay Options panel edits; the policy block
+ * seeds the realm policy (see ./policy.ts for defaults).
  */
 export function applyRealmConfig(): void {
   const candidates = [resolve(process.cwd(), "realm.json"), resolve(process.cwd(), "../../realm.json")];
@@ -30,6 +36,14 @@ export function applyRealmConfig(): void {
         if (applied === null) console.warn(`[realm] unknown tuning key "${key}" — ignored`);
         else console.log(`[realm] tuning ${key} = ${applied}`);
       }
+    }
+    if (realm?.policy) {
+      const applied = setRealmPolicy(realm.policy);
+      console.log(
+        `[realm] policy: death=${applied.death.mode} (xpPenalty=${applied.death.xpPenalty}) ` +
+          `persistAcrossWipes=${applied.progression.persistAcrossWipes} ` +
+          `keepInventoryOnWipe=${applied.progression.keepInventoryOnWipe}`,
+      );
     }
   } catch (err) {
     console.warn("[realm] failed to read realm.json", err);

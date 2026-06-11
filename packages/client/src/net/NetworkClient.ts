@@ -68,7 +68,7 @@ export interface NetHandlers {
   onXp(ev: XpEvent): void;
   onChat(ev: ChatEvent): void;
   onInventory(slots: InventorySlot[]): void;
-  onWipe(ev: { wave: number }): void; // La Crypta fell → round wiped to scratch
+  onWipe(ev: { wave: number; persist?: boolean }): void; // La Crypta fell → realm resets (persist = progression kept)
   onError(message: string): void;
   onKill(ev: KillEvent): void;
 }
@@ -351,7 +351,7 @@ export class NetworkClient {
       room.onMessage("banana_throw", (ev: BananaThrowEvent) => handlers.onBananaThrow(ev));
       room.onMessage("chat", (ev: ChatEvent) => handlers.onChat(ev));
       room.onMessage("inventory", (slots: InventorySlot[]) => handlers.onInventory(slots));
-      room.onMessage("wipe", (ev: { wave: number }) => handlers.onWipe(ev));
+      room.onMessage("wipe", (ev: { wave: number; persist?: boolean }) => handlers.onWipe(ev));
       room.onMessage("nostr_upgrade_result", (res: { id?: string; ok: boolean; error?: string }) => {
         const p = this.upgradeResolvers.get(res.id ?? "");
         if (!p) return;

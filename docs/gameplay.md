@@ -32,16 +32,21 @@ defend. Lose La Crypta and the realm wipes.
   La Crypta.
 - **Hit/death:** taking damage plays a brief HIT flinch (it never interrupts your
   own attack/throw). At 0 HP you die, then respawn after `PLAYER_RESPAWN_MS` with a
-  lightning strike — keeping your level/stats (unless a wipe resets them).
+  lightning strike — keeping your level/stats (by default even across wipes; see
+  below).
 
 ## Leveling
 
 Kills grant XP (`GOBLIN_XP_REWARD`, `PLAYER_KILL_XP`, `DUMMY_XP_REWARD`,
 `TREE_XP_REWARD`, `ROCK_XP_REWARD`). XP to reach the next level scales as
 `XP_BASE × level^XP_GROWTH`. Each level raises **maxHp, attack, armor, crit chance
-(capped), run speed, and throw power** (`*_PER_LEVEL`). Dying costs ~30% of XP (can
-de-level). Every character (goblins included) derives its stats from its level via
+(capped), run speed, and throw power** (`*_PER_LEVEL`). Every character (goblins
+included) derives its stats from its level via
 the same growth curve, so threat scales with the party.
+
+Dying costs XP per the realm's **death policy** (`realm.json` `policy.death`):
+default is an **XP penalty** (configurable fraction, 30% stock); `none` and
+`hardcore` (reset to level 1) are config options.
 
 ## The siege — waves
 
@@ -73,15 +78,20 @@ past `GOBLIN_DEAGGRO_RADIUS` — then it resumes the march. So goblins attack th
 
 When La Crypta's HP hits 0 it **collapses → a round wipe fires** (once):
 
-1. **Every player dies and respawns from scratch** — reset to level-1 defaults
-   (HP/attack/armor/crit/speed/throw), XP 0, and a **fresh starter inventory**.
+1. **The world resets; the character endures** (default policy). Every player
+   dies and respawns at full HP — **keeping level, XP, stats, and inventory**.
+   The legacy full wipe (level-1 defaults + fresh starter inventory) is one
+   config line away via the `realm.json` `policy` block
+   (`progression.persistAcrossWipes`).
 2. The besieging horde is **cleared**, **La Crypta is rebuilt** to full HP, and the
    **wave clock restarts**.
-3. A "🏛 La Crypta has fallen" banner flashes for everyone.
+3. A "🏛 La Crypta has fallen" banner flashes for everyone — its copy reflects
+   the active policy ("your character endures" vs. the legacy level-1 reset).
 
-A **realm** is one such game: it starts when a player is present and alive, and ends
-when La Crypta falls (or the room empties). Each "survive as long as you can" run is
-one realm — see [nostr.md](nostr.md) and [`../REALMS.md`](../REALMS.md) for how
+A **realm** is one **event/world cycle**, not the whole game: it starts when a
+player is present and alive, and ends when La Crypta falls (or the room empties).
+The world is reborn each cycle; by default character progression persists across
+cycles — see [nostr.md](nostr.md) and [`../REALMS.md`](../REALMS.md) for how
 realms are tracked, counted, and published for external discovery.
 
 ## Resources & economy

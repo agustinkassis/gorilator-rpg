@@ -38,7 +38,6 @@ import {
   BANANA_MAX_THROW,
   STARTING_BANANAS,
   xpForLevel,
-  PLAYER_MAX_STAMINA,
   REALM_RESTART_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
@@ -99,6 +98,8 @@ import { serverPluginHost } from "../systems/plugins/host";
 import { loadServerPlugins } from "../systems/plugins/loader";
 import { initNostrContent } from "../systems/plugins/nostrContent";
 import { applyRealmConfig } from "../systems/realm";
+import { realmPolicy } from "../systems/policy";
+import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
 
 /** A kicked session's gameplay state, handed to the new login that takes it over. */
 interface TakeoverState {
@@ -679,7 +680,7 @@ export class GameRoom extends Room<GameState> {
           }
         }
       });
-      this.checkHomeFall(); // La Crypta fell? → wipe everyone to scratch + restart the round
+      this.checkHomeFall(); // La Crypta fell? → end the realm + restart per the realm policy
       this.detectSaveTriggers(); // persist Nostr progress on level-up / death
       if (++this.realmTick >= TICK_RATE) {
         this.realmTick = 0;
@@ -765,8 +766,16 @@ export class GameRoom extends Room<GameState> {
    */
   private endRealm() {
     const wave = this.state.waveNumber;
+    const persist = realmPolicy().progression.persistAcrossWipes;
 
-    // Everyone dies with the home (they respawn fresh when the next realm starts).
+    // Snapshot living progress first — the "realm-end" save is what carries a
+    // Nostr player's progression across the wipe (and must run while the realm
+    // tracker still points at the ending realm).
+    this.state.players.forEach((p, sid) => {
+      if (p.pubkey && p.nostrVerified) this.persistSave(sid, p, "realm-end");
+    });
+
+    // Everyone dies with the home (they respawn when the next realm starts).
     this.state.players.forEach((p, sid) => {
       p.hp = 0;
       p.state = AnimState.DEAD;
@@ -785,17 +794,32 @@ export class GameRoom extends Room<GameState> {
     realmTracker.homeFell(); // this realm is over (a fresh one starts after the countdown)
 
     serverPluginHost.fire("realm:end", { wave }, this.state);
-    this.broadcast("wipe", { wave }); // defeat banner
+    this.broadcast("wipe", { wave, persist }); // defeat banner (copy branches on persist)
     console.log(`[room] La Crypta fell on wave ${wave} — next realm in ${REALM_RESTART_MS / 1000}s`);
   }
 
   /**
-   * The intermission has elapsed → spin up a brand-new realm from scratch: every
-   * player respawns as a fresh level-1 character with a starter inventory, the
-   * whole world regenerates, La Crypta is rebuilt and the wave clock restarts.
+   * The intermission has elapsed → spin up a new realm: the whole world
+   * regenerates, La Crypta is rebuilt and the wave clock restarts. Whether the
+   * players' progression survives is the realm policy's call — by default level,
+   * XP, stats and inventory persist; with persistAcrossWipes=false everyone
+   * respawns as a fresh level-1 character with a starter inventory (legacy wipe).
    */
   private startNewRealm() {
     this.pendingThrows.clear();
+    // Restore any live berserker buffs to base stats BEFORE dropping the map —
+    // otherwise the buffed attack/maxHp would be baked into persistent stats
+    // (drink a potion right before the fall → keep the buff forever).
+    this.berserkerBase.forEach((base, sid) => {
+      const p = this.state.players.get(sid);
+      if (!p) return;
+      p.attack = base.attack;
+      p.armor = base.armor;
+      p.critChance = base.critChance;
+      p.critMultiplier = base.critMultiplier;
+      p.moveSpeed = base.moveSpeed;
+      p.maxHp = base.maxHp; // HP refills to maxHp in the reset below
+    });
     this.berserkerBase.clear();
     this.sacredHealCarry.clear();
     this.houseRegen.clear();
@@ -816,57 +840,42 @@ export class GameRoom extends Room<GameState> {
     resetWaves(this.state, true);
     resetSpawners();
 
+    const policy = realmPolicy();
+    const persist = policy.progression.persistAcrossWipes;
     this.state.players.forEach((p, sid) => {
-      // back to a brand-new level-1 character (the schema defaults)
-      p.level = 1;
-      p.xp = 0;
-      const tune = devTuning();
-      p.maxHp = tune.playerMaxHp;
-      p.maxStamina = PLAYER_MAX_STAMINA;
-      p.stamina = PLAYER_MAX_STAMINA;
-      p.attack = tune.playerAttack;
-      p.armor = tune.playerArmor;
-      p.critChance = tune.playerCritChance;
-      p.moveSpeed = tune.playerMoveSpeed;
-      p.throwPower = 1;
-      p.godMode = false;
-      p.berserkerMs = 0;
-      p.critMultiplier = 0;
-      p.sprinting = false;
-      p.sprintHeld = false;
-      p.exhausted = false;
-      p.staminaRegen = 0;
-      p.attackCooldown = 0;
-      p.stateTimer = 0;
-      p.respawnTimer = 0;
-      p.attackTargetId = "";
-      p.pendingHitId = "";
-      p.pickupTargetId = "";
-      p.deaths = 0; // fresh realm → reset the death tally
+      resetPlayerForNewRealm(p, persist, devTuning());
       // Respawn ALIVE at a fresh spot. The DEAD→IDLE flip plays the lightning-
       // strike respawn on every client (placeAtFreeSpot sets x/z + targets + path).
       const angle = Math.random() * Math.PI * 2;
       const r = 12 + Math.random() * 4;
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
-      p.hp = p.maxHp;
-      p.state = AnimState.IDLE;
-      p.prevDead = false;
-      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: 1, dead: false });
+      // Watermark at the player's ACTUAL level — seeding {level: 1} under
+      // persistence would fire a bogus "level-up" save on the next tick.
+      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: p.level, dead: false });
     });
 
-    // Fresh empty inventory for everyone; players collect bananas/flasks in-world.
-    this.inventories.forEach((_inv, sid) => {
-      const inv = makeInventory();
-      addItem(inv, "banana", STARTING_BANANAS);
-      this.inventories.set(sid, inv);
-      this.sendInventory(sid);
-    });
+    if (persist && policy.progression.keepInventoryOnWipe) {
+      // Inventories survive the wipe — just refresh every client's view.
+      this.inventories.forEach((_inv, sid) => this.sendInventory(sid));
+    } else {
+      // Fresh empty inventory for everyone; players collect bananas/flasks in-world.
+      this.inventories.forEach((_inv, sid) => {
+        const inv = makeInventory();
+        addItem(inv, "banana", STARTING_BANANAS);
+        this.inventories.set(sid, inv);
+        this.sendInventory(sid);
+      });
+    }
     this.homeStanding = true;
     this.realmTick = 0;
     this.state.restartTimerMs = 0;
 
-    console.log(`[room] new realm started — everyone respawned from scratch`);
+    console.log(
+      persist
+        ? `[room] new realm started — world reset, character progression kept`
+        : `[room] new realm started — everyone respawned from scratch`,
+    );
   }
 
   /** The sender's Player, but only when their server-vouched pubkey is a

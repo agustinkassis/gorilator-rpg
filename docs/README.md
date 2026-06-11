@@ -1,9 +1,12 @@
 # Gorilator — Documentation
 
-**Gorilator** is an online, isometric, low-poly multiplayer **tower-defense brawler**.
-Players are gorillas defending **La Crypta** (the house at the centre of the map)
-against escalating waves of goblins. Survive as long as you can — when La Crypta
-falls, everyone is wiped back to level 1 and a fresh game (a "realm") begins.
+**Gorilator** is an open-source **Nostr MMORPG sandbox** — an online, isometric,
+low-poly multiplayer world where anyone can run a server and players carry their
+identity and progress on Nostr ([vision.md](vision.md)). Its first **event
+module** ("La Crypta Defense") is a tower-defense brawl: gorillas defending
+**La Crypta** (the house at the centre of the map) against escalating waves of
+goblins. When La Crypta falls the world resets and a fresh cycle (a "realm")
+begins — by default your character's progression persists across resets.
 
 - **Engine:** Babylon.js (3D, orthographic isometric camera)
 - **Multiplayer:** Colyseus (authoritative server, automatic state sync)
@@ -24,6 +27,11 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 
 | Doc | What's inside |
 | --- | --- |
+| [vision.md](vision.md) | **The vision**: the open Nostr MMORPG sandbox — product thesis, the eight pillars, rebrand direction ("La Crypta Defense" = first event module), module boundaries, resolved defaults |
+| [game-design.md](game-design.md) | Combat / crafting / survival design: equipment slots, classes from wearables, abilities & spells, trinity threat combat, crafting chains & stations, hunger/farming/ecology |
+| [federation.md](federation.md) | **DRAFT v0** cross-server protocol: save/discovery/policy events, the relay-mediated migration handshake, session locking, trust modes, transfer receipts, kind allocation |
+| [strategy.md](strategy.md) | Public business/growth strategy: positioning, business model, grants-first funding sequence, the 8-week rebrand launch, partnerships, metrics & targets |
+| [feature-lab.md](feature-lab.md) | The scenario harness + AI dev pipeline: per-feature simulation scenarios, time shift, tweak panel, bot self-tests, and the Definition of Done |
 | [getting-started.md](getting-started.md) | Prerequisites, install, the dev loop, build, the `@rpg/shared` rebuild gotcha, env, deploy pointers |
 | [plugins.md](plugins.md) | **The plugin system**: data vs code tiers, the `@rpg/shared` plugin API (brains, items, systems, events), plugin.json, the Vite bundler, Nostr realm packs, `realm.json`, fork rules |
 | [presentations/how-plugins-work.pptx](presentations/how-plugins-work.pptx) | 🚧 *Under development* — a 10-slide intro deck to the plugin system (tiers, manifest, discovery, hooks, realm packs, safety rails, CLI) |
@@ -43,6 +51,7 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [admin.md](admin.md) | The admin list (`ADMIN_NPUBS`) + NIP-98-protected `/api/admin/*` API, and the admin "Update now" self-update button on the splash |
 
 Related top-level docs: [`../README.md`](../README.md) (quick start + stack),
+[`../ROADMAP.md`](../ROADMAP.md) (the public phased roadmap, S/M/L sized),
 [`../CONTRIBUTING.md`](../CONTRIBUTING.md) (the complete dev workflow: setup →
 verify → PR, fork rules, AI-assisted development),
 [`../REALMS.md`](../REALMS.md) (realm/discovery spec for external apps),

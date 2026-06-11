@@ -133,17 +133,20 @@ export class TopBar {
     this.sub.style.removeProperty("--tbCountdownSlot");
   }
 
-  /** Brief full-screen defeat flash when La Crypta falls and the round wipes. */
-  flashDefeat(wave: number) {
+  /** Brief full-screen defeat flash when La Crypta falls and the realm resets.
+   *  Under the default policy progression persists, so the copy reassures
+   *  instead of threatening a wipe. */
+  flashDefeat(wave: number, persist = false) {
     let b = document.getElementById("hbBanner");
     if (!b) {
       b = document.createElement("div");
       b.id = "hbBanner";
       document.body.appendChild(b);
     }
+    const outcome = persist ? "the world resets — your character endures" : "the realm resets to level 1";
     b.innerHTML =
       `<div class="hbbTitle">🏛 La Crypta has fallen</div>` +
-      `<div class="hbbSub">survived ${wave} wave${wave === 1 ? "" : "s"} · the realm resets to level 1</div>`;
+      `<div class="hbbSub">survived ${wave} wave${wave === 1 ? "" : "s"} · ${outcome}</div>`;
     b.classList.remove("hbbShow");
     void b.offsetWidth; // reflow so the animation restarts on a repeat wipe
     b.classList.add("hbbShow");
