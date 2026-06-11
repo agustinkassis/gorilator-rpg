@@ -8,8 +8,9 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { downloadReleaseDist } from "./dist.js";
+import { parseEnv } from "./env.js";
 import * as log from "./log.js";
-import { cliEntryPath, isLinux } from "./paths.js";
+import { cliEntryPath, envFile, isLinux } from "./paths.js";
 import {
   activateNpmGlobalBin,
   capture,
@@ -135,10 +136,24 @@ export function buildShared(appDir: string): void {
   runAsTargetUser("pnpm", ["--filter", "@rpg/shared", "build"], { cwd: appDir });
 }
 
+/** `{VITE_DEV_TOOLS:"1"}` when this install runs in dev mode (GORILATOR_DEV=1 in
+ *  its .env) — so the client build compiles in the in-game Dev Mode editor (which
+ *  is otherwise tree-shaken out of a production build). Empty otherwise. Mirrors
+ *  serve.ts's GORILATOR_DEV gate; the editor is admin-gated at runtime. */
+export function devToolsEnv(appDir: string): Record<string, string> {
+  try {
+    const env = parseEnv(readFileSync(envFile(appDir), "utf8"));
+    return env.GORILATOR_DEV === "1" ? { VITE_DEV_TOOLS: "1" } : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Build the client. With a `serverUrl` it bakes VITE_SERVER_URL for legacy
  *  split-subdomain deploys. With a `serverPort`, the local direct client port
  *  dials ws://<host>:<serverPort>. With neither, it builds same-origin so the
- *  public one-host deploy dials whichever host served the page. */
+ *  public one-host deploy dials whichever host served the page. A dev-mode install
+ *  additionally bakes VITE_DEV_TOOLS so the in-game editor is present. */
 export function buildClient(
   appDir: string,
   opts: { serverUrl?: string; serverPort?: number } = {},
@@ -157,7 +172,8 @@ export function buildClient(
     env = { VITE_SAME_ORIGIN: "1" };
     how = "(same-origin)";
   }
-  log.info(`Building the client ${how}…`);
+  env = { ...env, ...devToolsEnv(appDir) };
+  log.info(`Building the client ${how}${env.VITE_DEV_TOOLS ? " + dev editor" : ""}…`);
   runAsTargetUser("pnpm", ["--filter", "@rpg/client", "build"], { cwd: appDir, env });
 }
 
@@ -321,11 +337,14 @@ export function buildPlan(
   }
 
   // Source build path — only the packages that changed.
-  const clientEnv: Record<string, string> = opts.serverUrl
-    ? { VITE_SERVER_URL: opts.serverUrl }
-    : opts.serverPort
-      ? { VITE_SERVER_PORT: String(opts.serverPort) }
-      : { VITE_SAME_ORIGIN: "1" };
+  const clientEnv: Record<string, string> = {
+    ...(opts.serverUrl
+      ? { VITE_SERVER_URL: opts.serverUrl }
+      : opts.serverPort
+        ? { VITE_SERVER_PORT: String(opts.serverPort) }
+        : { VITE_SAME_ORIGIN: "1" }),
+    ...devToolsEnv(appDir), // bake the in-game editor when this install is in dev mode
+  };
   if (a.install) {
     steps.push({ key: "install", label: "Install dependencies", cmd: "pnpm", args: ["install"], cwd: appDir, estimateMs: 30_000 });
   }

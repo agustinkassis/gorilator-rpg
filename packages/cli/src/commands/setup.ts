@@ -2,7 +2,7 @@
 // Cloudflare path still wires one public hostname to the game port; the menu
 // also exposes server ports, Nostr identity, monitor auth, and supported env.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { buildClient } from "../lib/build.js";
+import { buildClient, buildShared, pnpmInstall } from "../lib/build.js";
 import { logsCmd } from "./service.js";
 import { installId, loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
 import type { RuntimeContext } from "../lib/context.js";
@@ -204,6 +204,21 @@ export function toggleDevMode(opts: Options, on: boolean): void {
       ? "Dev mode ON — the daemon runs in the development environment (single port)."
       : "Dev mode off — back to the production environment.",
   );
+  // Rebuild the client so the in-game Dev Mode editor is compiled in (ON, via
+  // VITE_DEV_TOOLS — see build.ts) or removed (OFF). Dev mode needs the full client
+  // build deps (Vite/Babylon) a slim/prebuilt install skips, so install them first.
+  try {
+    if (on) {
+      log.info("Installing client build deps (Vite + Babylon) for the dev build…");
+      pnpmInstall(ctx.appDir);
+    }
+    buildShared(ctx.appDir);
+    const e = ctx.env;
+    const buildOpts = e.VITE_SAME_ORIGIN === "1" ? {} : e.VITE_SERVER_URL ? { serverUrl: e.VITE_SERVER_URL } : { serverPort: ctx.cfg.port };
+    buildClient(ctx.appDir, buildOpts);
+  } catch (err) {
+    log.warn(`Could not rebuild the client (${(err as Error).message}). Run 'gorilator update' to retry.`);
+  }
   restartDaemon();
   pause();
 }

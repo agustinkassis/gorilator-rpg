@@ -89,6 +89,7 @@ export class DevMode {
   private itemLibrary: ItemLibrary;
   private btn: HTMLButtonElement;
   private labelsBtn: HTMLButtonElement;
+  private adminGate: (() => boolean) | null = null; // deployed dev server: editor is admin-only
   private developerLabels: { isEnabled(): boolean; setEnabled(on: boolean): void } | null = null;
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
@@ -507,7 +508,24 @@ export class DevMode {
   }
 
   toggle() {
+    if (this.adminGate && !this.adminGate()) return; // deployed dev server: admin-only
     this.active ? this.exit() : this.enter();
+  }
+
+  /** On a deployed dev server (a VITE_DEV_TOOLS build, e.g. game.gorilator.io), gate
+   *  the editor behind the local player's admin status: hide the button and refuse to
+   *  open for non-admins. The server independently enforces NIP-98 admin on every
+   *  write — this is just UX so normal players don't see dev tooling. No-op in local
+   *  Vite dev, where the editor stays open. */
+  setAdminGate(check: () => boolean): void {
+    this.adminGate = check;
+    const sync = () => {
+      const allowed = check();
+      this.btn.style.display = allowed ? "" : "none";
+      if (!allowed && this.active) this.exit();
+    };
+    sync();
+    window.setInterval(sync, 1500);
   }
 
   private enter() {
