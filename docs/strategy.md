@@ -35,10 +35,14 @@ open-source core:
    project npub.
 3. **Managed realms** (~$10–30/mo, from month 6+) — productizes the existing
    CLI/installer: we host your world, you own its policy and keys.
-4. **Marketplace fee experiments** (month 9+) — opt-in, operator-adjustable
+4. **Hosted AI Forge generation fees** (Phase 4+) — sats-native, per-generation
+   pricing on prompt-to-content creation ([ai-creation.md](ai-creation.md));
+   complements managed realms (operators can always bring their own provider
+   keys instead).
+5. **Marketplace fee experiments** (month 9+) — opt-in, operator-adjustable
    fees on sats-economy trades; never required to play or host.
-5. **Sponsorships & bounties** — sponsored events, feature bounties.
-6. **Custom worlds consulting** — branded realms for communities/companies.
+6. **Sponsorships & bounties** — sponsored events, feature bounties.
+7. **Custom worlds consulting** — branded realms for communities/companies.
 
 **Never:** a token, pay-to-win defaults, custodial sats, an ad-injected
 client.
@@ -99,6 +103,9 @@ dilution.
 - **Nobody credible occupies "open-source, self-hostable, Nostr-federated
   multiplayer game."** That's the position, and it is defensible because it is
   expensive to fake: the moat is the open network, not the code.
+- **The AI Forge sharpens the wedge:** create a creature from a prompt on your
+  phone, pay sats, publish to the network ([ai-creation.md](ai-creation.md)) —
+  nobody else has this.
 - **Adjacent allies, not rivals:** [Nostr Game Engine](https://ngengine.org)
   (shared NIP interests), [Zapstore](https://zapstore.dev) (distribution).
 - **Precedents to steal from:** [Luanti](https://content.luanti.org)'s

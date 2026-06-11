@@ -154,6 +154,10 @@ Recipes live in a new `recipes.json` manifest:
   therefore an economy. The door stays open for later automation experiments
   (stations with queues and production rates).
 
+The content itself is craftable too: creatures, items, and recipes can be
+generated from an in-game prompt, paid in sats — see
+[ai-creation.md](ai-creation.md).
+
 ## Survival & ecology (Don't Starve-style)
 
 The survival layer gives the sandbox a day-to-day loop that exists even when

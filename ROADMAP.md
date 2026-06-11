@@ -4,7 +4,9 @@ The phased plan from tower-defense brawler to **open Nostr MMORPG sandbox**
 ([docs/vision.md](docs/vision.md)). Design detail:
 [docs/game-design.md](docs/game-design.md) ·
 [docs/federation.md](docs/federation.md) ·
-[docs/feature-lab.md](docs/feature-lab.md).
+[docs/feature-lab.md](docs/feature-lab.md) ·
+[docs/engineering.md](docs/engineering.md) ·
+[docs/ai-creation.md](docs/ai-creation.md).
 
 > **Sizing:** S/M/L assume a solo dev + AI agents + community contributors —
 > not a studio. **Definition of Done for every feature:** code + an isolated
@@ -62,6 +64,7 @@ it. Full design: [docs/feature-lab.md](docs/feature-lab.md).
 | timeScale audit | S/M | all gameplay timers respect `state.timeScale` so accelerated simulation works end-to-end |
 | Bot driver v1 | M | scripted player behaviors + state assertions; reuses the brain registry + bench harness; headless and live |
 | Scenario tweaks panel + feature-dev skill | S | Dev Mode "Scenario tweaks" section; `.claude/skills/feature-dev` pipeline + feature issue template |
+| Seeded deterministic RNG service | M | per-realm-cycle seed, injectable PRNG replacing scattered `Math.random()` in gameplay systems — makes bot self-tests, replays, and bench runs reproducible ([docs/engineering.md](docs/engineering.md) §3) |
 
 ## Phase 3 — Modular game loops + RPG combat core
 
@@ -73,6 +76,7 @@ DoD. Design detail per system: [docs/game-design.md](docs/game-design.md).
 | Plugin API 1.1 | M (core) | `registerEventModule({id, autoStart, onStart, onTick, onEnd})`, `EventModuleContext` (`setEventHud`, `endEvent`), host-owned `PluginWorld` mutators (`spawnEnemy`, `spawnStructure`, `giveItem`, `grantXp`, `broadcast`); new lifecycle events `realm:start`, `event:start/end`, `objective:complete` |
 | One batched schema change | S/M (core) | do once: `GameState` +`eventId/eventLabel/eventTimerMs/eventProgress`; `Player` +`mana/maxMana`, `hunger/maxHunger`, synced visible-gear fields (`gearWeapon/gearHead/gearChest/gearBoots`) — shared rebuild + client hard reload |
 | Extract `plugins/la-crypta-defense/` | L | wave orchestration, `checkHomeFall`, house spawn/regen, scheduler + `waves.json` move into the plugin; brains/schema/combat stay core; `realm.json` gains `events: {enabled, autoStart}`; flagship keeps it on |
+| De-tower-defense rename refactor | S/M | dedicated rename-only PRs, characterization tests first: `goblins.ts` → generic `enemyAi.ts` + wave scheduler into the event plugin, generic objective structure, GameRoom slimming ([docs/engineering.md](docs/engineering.md) §4) |
 | Default sandbox loop | M | `realm:start` without a house; ambient spawner/resource tuning; passive/patrol brains |
 | Equipment & wearables | L | equipment defs in items.json `{slot, tier, stats, abilities[], durability}`; `systems/equipment.ts`; single stat-recompute path (base + level + gear); durability loss on death (ties into Phase 2 policy); `PlayerSave` v2 +`equipment[]` +`mana`; crafting-only gear |
 | Crafting v1 — recipes + chains | L | `recipes.json` (inputs/output/station/craftMs/xp/tier); `systems/crafting.ts`; **stations = craftable, placeable structures** (absorbs the building workstream: `placeable` flag, `place` message, spawns into `state.structures`); v1 builds last until realm reset |
@@ -92,7 +96,9 @@ any time after equipment.
 ## Phase 4 — Collaborative creation
 
 Community content beyond models — quests and recipes are pure JSON (no Blossom
-assets), the easiest community content type and a good early win.
+assets), the easiest community content type and a good early win. Then the
+**AI Forge** ([docs/ai-creation.md](docs/ai-creation.md)): prompt-to-content
+creation, sats-paid, landing in the same Library/publish flow.
 
 | Workstream | Size | Notes |
 | --- | --- | --- |
@@ -100,6 +106,11 @@ assets), the easiest community content type and a good early win.
 | EntityCreator wizards | M | form wizards for quests/recipes in the in-game Library |
 | Curation | S/M | `realm.json` `content: {authors, blockedIds}` + NIP-98 admin endpoint to hot-add trusted authors |
 | Docs | S | extend community-entities.md |
+| Forge provider interface + Meshy creature pipeline | L | `ForgeProvider` API + first provider: text prompt → rigged/animated creature → Local library ([docs/ai-creation.md](docs/ai-creation.md)) |
+| LLM data-content generator | M | schema-constrained JSON output — stats, items, recipes, drop tables, quests — the same manifests Dev Mode writes, validated before preview |
+| Sats payment rail via NWC | M | per-generation Lightning pricing, paid before the job runs; operator BYO keys = free for their community |
+| Hosted Forge experiment + operator BYO keys | M | managed-realms-style revenue rail: operators point at a hosted Forge instead of holding provider keys ([docs/strategy.md](docs/strategy.md)) |
+| Forge-in-scenario test-drive | S | generated content auto-staged in a Feature Lab scenario before saving ([docs/feature-lab.md](docs/feature-lab.md)) |
 
 ## Phase 5 — Federation
 

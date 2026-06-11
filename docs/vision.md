@@ -50,11 +50,11 @@ other games can use it too.
 | 1 | **Identity** | Your npub is your character. Log in anywhere with your Nostr key; guests can play, but persistence and portability require a key. |
 | 2 | **Sovereignty** | Anyone runs a world. Servers are self-hostable, policy-publishing, and independent — no central authority, no master server. |
 | 3 | **Migration** | Progress travels. Compatible servers can import your save under their own published trust policy ([federation.md](federation.md)). |
-| 4 | **Collaborative creation** | Content is a Nostr event. Players author characters, items, structures — later quests and recipes — in-game and publish them for any world to import. |
+| 4 | **Collaborative creation** | Content is a Nostr event. Players author characters, items, structures — later quests and recipes — in-game and publish them for any world to import. AI-assisted creation opens the same pipeline to total beginners: prompt → sats-paid generation → Library ([ai-creation.md](ai-creation.md)). |
 | 5 | **Crafting & building** | A player-made economy. All meaningful gear is player-crafted through refinement chains at player-built stations. |
 | 6 | **Quests** | Data-driven objectives. Quests are JSON manifests — server-authored or community-published — driving gather/kill/craft/deliver loops with XP, item, and (optionally) sats rewards. |
 | 7 | **Social** | Parties, chat channels, clans. Team play is mechanically rewarded (trinity combat), and clans are founder-signed Nostr rosters. |
-| 8 | **Sats** | An optional economy. Lightning rewards and trading via NWC, always plugin-tier and operator-opt-in — never pay-to-win by default. |
+| 8 | **Sats** | An optional economy. Lightning rewards, trading, and AI generation fees ([ai-creation.md](ai-creation.md)) via NWC, always plugin-tier and operator-opt-in — never pay-to-win by default. |
 
 ## Combat, crafting & survival — the sharpened pillars
 

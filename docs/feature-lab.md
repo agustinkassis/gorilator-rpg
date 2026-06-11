@@ -67,6 +67,9 @@ pnpm scenario hunger        # boots the dev stack with scenarios/hunger.json lay
 - Builds on what exists: the `GORILATOR_TEST` isolation flag, the
   `applyRealmConfig`/DevTuning seeding path, and per-worktree ports — a
   scenario in one worktree never collides with the game in another.
+- Scenarios become **fully reproducible** (same scenario + same seed → same
+  run) once the seeded RNG service lands
+  ([engineering.md](engineering.md) §3).
 
 ## Time shift
 

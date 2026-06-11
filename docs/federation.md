@@ -254,6 +254,21 @@ What a server's policy amounts to in practice — the named presets:
 | 30335 | `gorilator-clan-v1:<id>` | clan founder | **proposed** | clan roster (Phase 6) |
 | 24242 | — | player | **existing** | Blossom upload auth (BUD-01) |
 
+## 9. Interoperability principles
+
+This spec exists so **other engines and clients can implement it** — the full
+principles live in [engineering.md](engineering.md) §5; the summary:
+
+- Protocol over implementation: every wire format gets a versioned, NIP-style
+  spec here before it ships; the TypeScript is one implementation, not the
+  contract.
+- Standard asset formats: GLB models, content-addressed Blossom blobs.
+- Namespaced item ids, so cross-server imports never collide.
+- Every payload carries a `v` field; readers accept lower versions forever.
+- Reuse existing NIPs/BUDs (NIP-58 badges, NWC, kind-0 profiles, Blossom)
+  before inventing anything.
+- Every new kind or `d` tag lands in the §8 allocation table before it ships.
+
 ## Open questions (v0)
 
 - **Relay set agreement** — v0 assumes the default relay set overlaps between

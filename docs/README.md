@@ -32,6 +32,8 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [federation.md](federation.md) | **DRAFT v0** cross-server protocol: save/discovery/policy events, the relay-mediated migration handshake, session locking, trust modes, transfer receipts, kind allocation |
 | [strategy.md](strategy.md) | Public business/growth strategy: positioning, business model, grants-first funding sequence, the 8-week rebrand launch, partnerships, metrics & targets |
 | [feature-lab.md](feature-lab.md) | The scenario harness + AI dev pipeline: per-feature simulation scenarios, time shift, tweak panel, bot self-tests, and the Definition of Done |
+| [engineering.md](engineering.md) | Engineering conventions & refactor direction: the terminology glossary, code conventions, the seeded-RNG direction, the rename/refactor map, interoperability principles |
+| [ai-creation.md](ai-creation.md) | **The AI Forge**: prompt-to-content creation — sats-paid generation of creatures (Meshy), items, recipes, and quests, landing in the existing Library/publish flow |
 | [getting-started.md](getting-started.md) | Prerequisites, install, the dev loop, build, the `@rpg/shared` rebuild gotcha, env, deploy pointers |
 | [plugins.md](plugins.md) | **The plugin system**: data vs code tiers, the `@rpg/shared` plugin API (brains, items, systems, events), plugin.json, the Vite bundler, Nostr realm packs, `realm.json`, fork rules |
 | [presentations/how-plugins-work.pptx](presentations/how-plugins-work.pptx) | 🚧 *Under development* — a 10-slide intro deck to the plugin system (tiers, manifest, discovery, hooks, realm packs, safety rails, CLI) |
