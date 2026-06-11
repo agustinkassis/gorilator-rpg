@@ -106,7 +106,7 @@ creation, sats-paid, landing in the same Library/publish flow.
 | EntityCreator wizards | M | form wizards for quests/recipes in the in-game Library |
 | Curation | S/M | `realm.json` `content: {authors, blockedIds}` + NIP-98 admin endpoint to hot-add trusted authors |
 | Docs | S | extend community-entities.md |
-| Forge provider interface + Meshy creature pipeline | L | `ForgeProvider` API + first provider: text prompt → rigged/animated creature → Local library ([docs/ai-creation.md](docs/ai-creation.md)) |
+| Forge provider interface + Meshy creature pipeline | L | `ForgeProvider` API + first provider: ONE text prompt → model → auto-rig → auto-animate (every engine anim slot: idle/walk/hit/attack/death) → Local library — no rigging/animation knowledge needed ([docs/ai-creation.md](docs/ai-creation.md) §3.1) |
 | LLM data-content generator | M | schema-constrained JSON output — stats, items, recipes, drop tables, quests — the same manifests Dev Mode writes, validated before preview |
 | Sats payment rail via NWC | M | per-generation Lightning pricing, paid before the job runs; operator BYO keys = free for their community |
 | Hosted Forge experiment + operator BYO keys | M | managed-realms-style revenue rail: operators point at a hosted Forge instead of holding provider keys ([docs/strategy.md](docs/strategy.md)) |

@@ -20,6 +20,12 @@ few hundred sats, and two minutes later a rigged, animated creature with tuned
 stats is in your Library — publishable to the community (kind 30333 + Blossom)
 exactly like any hand-made entity.
 
+- **One prompt is the whole interaction.** The creator describes the entity;
+  the Forge decides everything technical. If the entity is *alive*, it is
+  automatically rigged and animated with the full clip set the engine needs —
+  the creator is never asked about bones, retargeting, or animation files
+  (§3.1). If it's static (prop, structure), the Forge derives the collision
+  footprint instead.
 - **Beginners need zero tooling.** No Blender, no JSON, no git — a prompt and
   a Lightning wallet.
 - **Experts keep the full manual pipeline.** GLB import, JSON editing, the
@@ -37,7 +43,7 @@ see [engineering.md](engineering.md) §2).
 
 | Category | How | Examples |
 | --- | --- | --- |
-| **3D content** | provider APIs — **Meshy text-to-3D + auto-rig is the first provider** | characters/creatures (rigged + animated), props, structures |
+| **3D content** | provider APIs — **Meshy text-to-3D + auto-rig + auto-animate is the first provider** | characters/creatures (rigged + animated automatically, §3.1), props, structures |
 | **Data content** | LLMs with schema-constrained output, emitting the same JSON manifests Dev Mode writes | entity stats + brain config, items, crafting recipes, drop tables, quests/dialogue, spawner layouts, map/zone arrangements |
 | **Combos** | one prompt, multiple jobs | a creature + its drop table + a quest to hunt it |
 
@@ -61,6 +67,34 @@ Everything after "generation job" **reuses what exists**
 `libraryCache`, `communityPublish`, Blossom upload, kind-30333 events, and the
 git-tracked pending/commit flow. The Forge adds a content *source*, not a
 content *system*.
+
+### 3.1 Living entities: auto-rig + auto-animate
+
+When the prompt describes something alive, the generation job runs the full
+character chain without asking the creator anything:
+
+```
+text-to-3D model
+  → auto-rig (biped/quadruped skeleton)
+  → auto-animate: one clip per engine animation slot
+  → auto-map clips into the characters.json anims entry
+```
+
+- **The clip set is fixed by the engine**, not the creator: `IDLE`, `WALK`,
+  `HIT` (today's `characters.json` slots), plus `ATTACK` and `DEAD` as the
+  schema grows — every `AnimState` the simulation can put the entity in gets a
+  clip, so a Forge creature animates correctly everywhere a hand-imported one
+  does.
+- **This automates the proven manual flow.** The Library's character importer
+  already consumes exactly this shape — a Meshy rigged model GLB plus
+  per-state animation GLBs (`anims: {IDLE: {file, speed}, …}`). The Forge
+  produces the same files and writes the same entry; nothing downstream
+  changes.
+- **Alive-vs-static is the Forge's call**, inferred from the prompt and the
+  provider's classification, with a one-tap override in the preview step
+  ("this should move" / "this is scenery") for the rare miss.
+- Static results skip rigging and get an auto-derived collision footprint
+  (`collisionRadius`) from the model bounds instead.
 
 ## 4. Sats rails
 
@@ -94,7 +128,7 @@ behind a `ForgeProvider` interface:
 
 | Provider type | First implementation | Produces |
 | --- | --- | --- |
-| text-to-3D + rig | Meshy | creature/prop/structure GLB + animations |
+| text-to-3D + rig + animate | Meshy | creature GLB + per-slot animation GLBs (§3.1); prop/structure GLB |
 | image generation | TBD | item icons, preview thumbnails |
 | LLM (schema-constrained) | TBD | manifest JSON: stats, items, recipes, quests |
 
@@ -127,12 +161,14 @@ These are the Phase 4 workstreams in [ROADMAP.md](../ROADMAP.md):
 
 | Workstream | Size |
 | --- | --- |
-| Forge provider interface + Meshy creature pipeline | L |
+| Forge provider interface + Meshy creature pipeline (model → auto-rig → auto-animate → library, §3.1) | L |
 | LLM data-content generator with schema-constrained output | M |
 | Sats payment rail via NWC | M |
 | Hosted Forge experiment + operator BYO keys | M |
 | Forge-in-scenario test-drive integration | S |
 
-**MVP first slice:** text prompt → creature (Meshy) → Local library, paid by a
-manually issued invoice. Everything else — LLM content, NWC automation, the
-hosted service — layers on once that loop works end to end.
+**MVP first slice:** one text prompt → rigged, fully animated creature (Meshy,
+§3.1) → Local library, paid by a manually issued invoice. The MVP bar is the
+no-knowledge test: someone who has never heard the word "rigging" gets a
+creature that idles, walks, and reacts to hits. Everything else — LLM content,
+NWC automation, the hosted service — layers on once that loop works end to end.
