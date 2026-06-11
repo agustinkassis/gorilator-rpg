@@ -4,8 +4,12 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
+    "composite": true,
+    "incremental": true,
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
     "experimentalDecorators": true,
     "useDefineForClassFields": false
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

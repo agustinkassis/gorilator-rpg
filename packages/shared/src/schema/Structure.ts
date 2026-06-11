@@ -9,6 +9,8 @@ export class Structure extends Schema {
   @type("string") id = "";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") rotY = 0;
+  @type("number") scale = 1;
   @type("number") radius = 1; // footprint (the prop's collisionRadius)
   @type("number") hp = STRUCTURE_HP;
   @type("number") maxHp = STRUCTURE_HP;

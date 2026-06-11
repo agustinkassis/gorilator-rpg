@@ -1,6 +1,6 @@
 import {
-  Scene,
-  Mesh,
+  type Scene,
+  type Mesh,
   MeshBuilder,
   StandardMaterial,
   Color3,
@@ -56,8 +56,8 @@ function makeGrassTexture(scene: Scene, variant = 0): DynamicTexture {
   const size = 1024;
   const P = GRASS_PALETTES[variant] ?? GRASS_PALETTES[0];
   const tex = new DynamicTexture("grass" + variant, size, scene, false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ctx = tex.getContext() as any;
+  // Babylon types getContext() as ICanvasRenderingContext; this code uses the full DOM 2D canvas API.
+  const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
 
   ctx.fillStyle = P.base;
   ctx.fillRect(0, 0, size, size);

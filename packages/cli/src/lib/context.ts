@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { loadConfig, type InstallConfig } from "./config.js";
 import { parseEnv } from "./env.js";
 import type { Options } from "./options.js";
@@ -71,6 +71,48 @@ export function resolveRuntimeContext(opts: Options, cwd = process.cwd()): Runti
     configPath: systemConfigPath(),
     envPath: envFile(appDir),
   };
+}
+
+export interface TargetSummary {
+  kind: "project" | "system";
+  appDir: string;
+  /** Current git branch (or short SHA) of the targeted checkout, if any. */
+  ref: string | null;
+  /** `owner/repo` slug of the checkout's first remote, if any. */
+  remote: string | null;
+  /** Name of the linked git worktree the checkout lives in, or null when it's
+   *  the main worktree / not a worktree. */
+  worktree: string | null;
+  /** Whether the targeted install exists (always true for project mode; for
+   *  system mode, whether an install record is on disk). */
+  installed: boolean;
+}
+
+/** Summarize what a command is about to act on — the local git checkout
+ *  (project mode) or the system-wide install (global mode) — for the banner the
+ *  CLI prints before context-aware commands. */
+export function describeTarget(ctx: RuntimeContext): TargetSummary {
+  const remoteUrl = firstRemoteUrl(ctx.appDir);
+  const normalized = remoteUrl ? normalizeRepoUrl(remoteUrl) : null;
+  // normalized is "host/owner/repo" → drop the host for a tidy "owner/repo".
+  const remote = normalized ? normalized.split("/").slice(1).join("/") || normalized : null;
+  return {
+    kind: ctx.kind,
+    appDir: ctx.appDir,
+    ref: currentGitRef(ctx.appDir),
+    remote,
+    worktree: gitWorktreeName(ctx.appDir),
+    installed: ctx.kind === "project" ? true : loadConfig() !== null,
+  };
+}
+
+/** When `root` is a linked git worktree (its git dir lives under
+ *  `.git/worktrees/…`), return a friendly name (the worktree directory's
+ *  basename); otherwise null (the main worktree, or not a repo). */
+export function gitWorktreeName(root: string): string | null {
+  const gitDir = captureGit(root, ["rev-parse", "--git-dir"]);
+  if (!gitDir || !/[/\\]worktrees[/\\]/.test(gitDir)) return null;
+  return basename(resolve(root));
 }
 
 export function loadProjectConfig(ctx: RuntimeContext, opts: Options): InstallConfig {

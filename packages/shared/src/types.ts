@@ -1,3 +1,6 @@
+import type { CommunityEntityType } from "./constants";
+import type { CharacterStatsConfig } from "./entityFeatures";
+
 // Animation / entity states. The server is authoritative over which state an
 // entity is in; clients map the synced state onto an animation clip.
 export enum AnimState {
@@ -55,6 +58,74 @@ export interface PlayerSave {
   ts?: number; // wall-clock save time (ms)
 }
 
+// ---- Community entities (Nostr kind GORILATOR_ENTITY_KIND) ----
+// A player-published, portable game entity. All asset paths are ABSOLUTE Blossom
+// URLs (content-addressed by sha256) so any other client can download them. This
+// is the JSON `content` of the kind-30333 event; see docs/community-entities.md.
+
+/** A single asset hosted on Blossom, referenced by URL + content hash. */
+export interface CommunityEntityAsset {
+  url: string; // absolute Blossom URL (…/<sha256>[.ext])
+  sha256: string; // hex sha-256 of the bytes (Blossom content address)
+  size: number; // bytes
+  mime: string; // e.g. "model/gltf-binary", "image/webp"
+}
+
+/** A custom character's portable payload: base rig + per-action animation clips. */
+export interface CommunityCharacterPayload {
+  baseModel: CommunityEntityAsset;
+  anims: Record<string, { asset: CommunityEntityAsset; speed?: number; yawFix?: number }>;
+  yaw: number; // base orientation (radians)
+  scale: number;
+}
+
+/** A structure/prop's portable payload: one model + placement physics. */
+export interface CommunityStructurePayload {
+  model: CommunityEntityAsset;
+  scale: number;
+  collisionRadius?: number;
+  hp?: number;
+}
+
+/** An inventory item's portable payload: icon + optional world model. */
+export interface CommunityItemPayload {
+  icon?: CommunityEntityAsset;
+  model?: CommunityEntityAsset;
+  stack: number;
+  worldScale: number;
+}
+
+/**
+ * Local bookkeeping stamped on a def once it has been published to — or imported
+ * from — the community (Nostr kind GORILATOR_ENTITY_KIND). Lets the Library show
+ * "published" / "by @owner" and re-publish to the same replaceable address.
+ */
+export interface CommunityProvenance {
+  pubkey: string; // author of the community event
+  d: string; // the event's d tag (entityDTag(id))
+  ts: number; // last publish/import time (epoch ms)
+  imported?: boolean; // true → this local def was imported FROM the community
+}
+
+/**
+ * The full portable definition of a community entity (the kind-30333 event
+ * `content`). Exactly one of `character` / `structure` / `item` is set, matching
+ * `type`. `stats` carries combat tuning where it applies (characters/structures).
+ */
+export interface CommunityEntity {
+  v: 1; // content schema version
+  type: CommunityEntityType;
+  id: string; // stable entity id (also the d-tag suffix, see entityDTag)
+  name: string;
+  description: string;
+  preview?: CommunityEntityAsset; // thumbnail image (so non-3D consumers can render a card)
+  character?: CommunityCharacterPayload;
+  structure?: CommunityStructurePayload;
+  item?: CommunityItemPayload;
+  stats?: CharacterStatsConfig;
+  ts: number; // publish time (epoch ms)
+}
+
 // Client -> server message payloads.
 export interface MoveMessage {
   x: number;
@@ -97,8 +168,11 @@ export interface ChatMessage {
 }
 
 // ---- Dev Mode (in-game world editor) ----
-// These mutate authoritative state and are intended for the dev-only editor;
-// they are unguarded like the other dev tooling in this demo.
+// These mutate authoritative state and are intended for the dev-only editor.
+// Server-side they are open to every client ONLY on an explicit dev/test
+// server (NODE_ENV=development|test or GORILATOR_TEST=1); on any other server
+// — production builds AND the env-less `gorilator` CLI install — they require
+// a Nostr-verified admin (ADMIN_NPUBS). See server systems/devAuth.ts.
 
 /** Toggle the sender's immortality (no damage while on). */
 export interface DevGodMessage {
@@ -213,6 +287,19 @@ export interface SprintMessage {
   on: boolean;
 }
 
+/** Admin-only (Esc menu → Admin): pause/resume the tower-defense wave clock.
+ *  The server rejects it unless the sender's verified pubkey is in ADMIN_NPUBS. */
+export interface AdminWavesMessage {
+  enabled: boolean;
+}
+
+/** Admin-only (Esc menu → Admin): switch one spawners.json spawner on/off at
+ *  runtime. Same ADMIN_NPUBS gate as AdminWavesMessage. */
+export interface AdminSpawnerMessage {
+  id: string;
+  enabled: boolean;
+}
+
 export type ClientMessages = {
   move: MoveMessage;
   attack: AttackMessage;
@@ -232,6 +319,8 @@ export type ClientMessages = {
   dev_time: DevTimeMessage;
   dev_action: DevActionMessage;
   dev_tune: DevTuneMessage;
+  admin_waves: AdminWavesMessage;
+  admin_spawner: AdminSpawnerMessage;
 };
 
 // Server -> client: emitted every time a hit lands, so clients can pop a

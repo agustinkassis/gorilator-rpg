@@ -5,10 +5,12 @@
 // server then runs from TS via tsx (see commands/serve.ts) — `node dist/index.js`
 // is intentionally NOT used because tsc emits extensionless ESM imports Node's
 // loader rejects.
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { downloadReleaseDist } from "./dist.js";
+import { parseEnv } from "./env.js";
 import * as log from "./log.js";
-import { cliEntryPath, isLinux } from "./paths.js";
+import { cliEntryPath, envFile, isLinux } from "./paths.js";
 import {
   activateNpmGlobalBin,
   capture,
@@ -86,30 +88,72 @@ export function cloneOrUpdate(repo: string, ref: string, appDir: string): void {
   if (existsSync(join(appDir, ".git"))) {
     log.info(`Updating ${appDir} → ${ref}…`);
     runAsTargetUser("git", ["-C", appDir, "fetch", "--depth", "1", "origin", ref]);
-    runAsTargetUser("git", ["-C", appDir, "checkout", "-f", "FETCH_HEAD"]);
+    checkoutFetchedRef(appDir, ref);
   } else {
     log.info(`Cloning ${repo} (${ref}) → ${appDir}…`);
     runAsTargetUser("git", ["clone", "--depth", "1", "--branch", ref, repo, appDir]);
   }
 }
 
+function checkoutFetchedRef(appDir: string, ref: string): void {
+  if (fetchedRefIsBranch(appDir, ref)) {
+    runAsTargetUser("git", ["-C", appDir, "checkout", "-B", ref, "FETCH_HEAD"]);
+  } else {
+    runAsTargetUser("git", ["-C", appDir, "-c", "advice.detachedHead=false", "checkout", "-f", "FETCH_HEAD"]);
+  }
+}
+
+function fetchedRefIsBranch(appDir: string, ref: string): boolean {
+  try {
+    return readFileSync(join(appDir, ".git", "FETCH_HEAD"), "utf8").includes(`\tbranch '${ref}' of `);
+  } catch {
+    return false;
+  }
+}
+
 /** pnpm install. node_modules is kept whole (no prune — pnpm 10's prune is
  *  interactive and hangs non-TTY; robustness over size). A failed
- *  msgpackr-extract native build is non-fatal (pure-JS fallback). */
-export function pnpmInstall(appDir: string): void {
-  log.info("Installing dependencies (pnpm install)…");
-  runAsTargetUser("pnpm", ["install"], { cwd: appDir });
+ *  msgpackr-extract native build is non-fatal (pure-JS fallback).
+ *
+ *  `filter` scopes the install to a subset of the workspace (e.g.
+ *  `@rpg/server...` = the server + its deps, including @rpg/shared and tsx).
+ *  Used on the prebuilt fast path to skip the client's heavy build-only deps
+ *  (Babylon, Vite) the running daemon never imports. */
+export function pnpmInstall(appDir: string, opts: { filter?: string } = {}): void {
+  const args = ["install"];
+  if (opts.filter) args.push("--filter", opts.filter);
+  log.info(opts.filter ? `Installing dependencies (${opts.filter})…` : "Installing dependencies (pnpm install)…");
+  runAsTargetUser("pnpm", args, { cwd: appDir });
 }
+
+/** The server subtree filter: @rpg/server plus everything it depends on
+ *  (@rpg/shared, tsx/esbuild). The daemon runs the server from source via tsx
+ *  and serves a prebuilt static client, so this is all it needs at runtime. */
+const SERVER_FILTER = "@rpg/server...";
 
 export function buildShared(appDir: string): void {
   log.info("Building @rpg/shared…");
   runAsTargetUser("pnpm", ["--filter", "@rpg/shared", "build"], { cwd: appDir });
 }
 
+/** `{VITE_DEV_TOOLS:"1"}` when this install runs in dev mode (GORILATOR_DEV=1 in
+ *  its .env) — so the client build compiles in the in-game Dev Mode editor (which
+ *  is otherwise tree-shaken out of a production build). Empty otherwise. Mirrors
+ *  serve.ts's GORILATOR_DEV gate; the editor is admin-gated at runtime. */
+export function devToolsEnv(appDir: string): Record<string, string> {
+  try {
+    const env = parseEnv(readFileSync(envFile(appDir), "utf8"));
+    return env.GORILATOR_DEV === "1" ? { VITE_DEV_TOOLS: "1" } : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Build the client. With a `serverUrl` it bakes VITE_SERVER_URL for legacy
  *  split-subdomain deploys. With a `serverPort`, the local direct client port
  *  dials ws://<host>:<serverPort>. With neither, it builds same-origin so the
- *  public one-host deploy dials whichever host served the page. */
+ *  public one-host deploy dials whichever host served the page. A dev-mode install
+ *  additionally bakes VITE_DEV_TOOLS so the in-game editor is present. */
 export function buildClient(
   appDir: string,
   opts: { serverUrl?: string; serverPort?: number } = {},
@@ -128,7 +172,8 @@ export function buildClient(
     env = { VITE_SAME_ORIGIN: "1" };
     how = "(same-origin)";
   }
-  log.info(`Building the client ${how}…`);
+  env = { ...env, ...devToolsEnv(appDir) };
+  log.info(`Building the client ${how}${env.VITE_DEV_TOOLS ? " + dev editor" : ""}…`);
   runAsTargetUser("pnpm", ["--filter", "@rpg/client", "build"], { cwd: appDir, env });
 }
 
@@ -160,6 +205,159 @@ export function installAndBuild(
   buildClient(appDir, opts);
   buildCli(appDir);
   log.ok("Build complete.");
+}
+
+/** Either fetch a prebuilt release dist (skipping the build) or build from
+ *  source, installing only what each path needs. `prebuilt` is set only for
+ *  same-origin release-tag installs; on any download miss it transparently
+ *  falls back to a full install + source build. Used by `install` (the update
+ *  command drives the change-aware `buildPlan` instead, for its progress UI).
+ *
+ *  Fast path: download the prebuilt dist first (curl/tar only — no node_modules
+ *  needed), then a server-scoped `pnpm install` (@rpg/server...) — skipping the
+ *  client's build-only deps (Babylon, Vite) the daemon never imports.
+ *  Fallback: full `pnpm install` + build shared/client/cli from source. */
+export function buildOrFetch(
+  appDir: string,
+  opts: { serverUrl?: string; serverPort?: number } = {},
+  prebuilt?: { slug: string; tag: string } | null,
+): void {
+  if (prebuilt && downloadReleaseDist(prebuilt.slug, prebuilt.tag, appDir)) {
+    pnpmInstall(appDir, { filter: SERVER_FILTER });
+    log.ok(`Fetched prebuilt build for ${prebuilt.tag} — skipped the local build.`);
+    return;
+  }
+  if (prebuilt) log.info("No prebuilt build for this release — building from source.");
+  pnpmInstall(appDir);
+  buildShared(appDir);
+  buildClient(appDir, opts);
+  buildCli(appDir);
+  log.ok("Build complete.");
+}
+
+/** Which work an update needs, derived from the per-package version changes.
+ *  shared is foundational: the server imports its built output, the client
+ *  bundles it, and the CLI imports it — so a shared bump fans out to all three. */
+export interface UpdateActions {
+  buildShared: boolean;
+  buildClient: boolean;
+  buildCli: boolean;
+  /** Restart the daemon — only when the server runtime changed (server/shared). */
+  restartServer: boolean;
+  /** (Re)install dependencies before building/restarting. */
+  install: boolean;
+  /** Any actionable change at all (false ⇒ nothing to do). */
+  any: boolean;
+}
+
+/** Map the set of changed package labels (app/cli/client/server/shared/landing)
+ *  to the work an update must do. `app` is the umbrella version and `landing` is
+ *  the standalone marketing site — neither affects the running game daemon, so
+ *  both are ignored here. */
+export function planUpdateActions(changedLabels: Iterable<string>): UpdateActions {
+  const changed = new Set(changedLabels);
+  const shared = changed.has("shared");
+  const buildShared = shared;
+  const buildClient = changed.has("client") || shared;
+  const buildCli = changed.has("cli") || shared;
+  const restartServer = changed.has("server") || shared;
+  const any = buildShared || buildClient || buildCli || restartServer;
+  return { buildShared, buildClient, buildCli, restartServer, install: any, any };
+}
+
+const ALL_ACTIONS: UpdateActions = {
+  buildShared: true,
+  buildClient: true,
+  buildCli: true,
+  restartServer: true,
+  install: true,
+  any: true,
+};
+
+export interface BuildCmd {
+  key: string;
+  label: string;
+  cmd: string;
+  args: string[];
+  env?: Record<string, string>;
+  cwd: string;
+  estimateMs: number;
+  /** Non-fatal if it fails (e.g. the in-repo CLI build). */
+  optional?: boolean;
+  /** A JS step (e.g. download the prebuilt dist) instead of a shell command;
+   *  returns success. When present, cmd/args are ignored. */
+  run?: () => boolean;
+}
+
+/** The ordered build commands as data, so a progress UI (see commands/update.ts)
+ *  can run them quietly with its own spinner. Only the packages flagged in
+ *  `opts.actions` are included (default: all). With `opts.prebuilt`, a single
+ *  atomic "download prebuilt dist" step replaces the shared/client/cli builds
+ *  and the install is scoped to the server subtree. Mirrors
+ *  pnpmInstall/buildShared/buildClient/buildCli above — keep them in sync. */
+export function buildPlan(
+  appDir: string,
+  opts: {
+    serverUrl?: string;
+    serverPort?: number;
+    prebuilt?: { slug: string; tag: string } | null;
+    actions?: UpdateActions;
+  } = {},
+): BuildCmd[] {
+  const a = opts.actions ?? ALL_ACTIONS;
+  const hasCli = existsSync(join(appDir, "packages", "cli", "package.json"));
+  const steps: BuildCmd[] = [];
+
+  // Prebuilt fast path: one download lands shared+client+cli dist atomically.
+  if (opts.prebuilt) {
+    const { slug, tag } = opts.prebuilt;
+    if (a.buildShared || a.buildClient || a.buildCli) {
+      steps.push({
+        key: "fetch",
+        label: `Download prebuilt build (${tag})`,
+        cmd: "",
+        args: [],
+        cwd: appDir,
+        estimateMs: 8_000,
+        run: () => downloadReleaseDist(slug, tag, appDir),
+      });
+    }
+    // Only the server subtree's deps matter at runtime, and only when it changed.
+    if (a.install && a.restartServer) {
+      steps.push({
+        key: "install",
+        label: "Install dependencies (server)",
+        cmd: "pnpm",
+        args: ["install", "--filter", SERVER_FILTER],
+        cwd: appDir,
+        estimateMs: 20_000,
+      });
+    }
+    return steps;
+  }
+
+  // Source build path — only the packages that changed.
+  const clientEnv: Record<string, string> = {
+    ...(opts.serverUrl
+      ? { VITE_SERVER_URL: opts.serverUrl }
+      : opts.serverPort
+        ? { VITE_SERVER_PORT: String(opts.serverPort) }
+        : { VITE_SAME_ORIGIN: "1" }),
+    ...devToolsEnv(appDir), // bake the in-game editor when this install is in dev mode
+  };
+  if (a.install) {
+    steps.push({ key: "install", label: "Install dependencies", cmd: "pnpm", args: ["install"], cwd: appDir, estimateMs: 30_000 });
+  }
+  if (a.buildShared) {
+    steps.push({ key: "shared", label: "Build @rpg/shared", cmd: "pnpm", args: ["--filter", "@rpg/shared", "build"], cwd: appDir, estimateMs: 8_000 });
+  }
+  if (a.buildClient) {
+    steps.push({ key: "client", label: "Build client", cmd: "pnpm", args: ["--filter", "@rpg/client", "build"], env: clientEnv, cwd: appDir, estimateMs: 45_000 });
+  }
+  if (a.buildCli && hasCli) {
+    steps.push({ key: "cli", label: "Build gorilator CLI", cmd: "pnpm", args: ["--filter", "gorilator", "build"], cwd: appDir, estimateMs: 6_000, optional: true });
+  }
+  return steps;
 }
 
 /** Absolute path to the node binary + the CLI entry used to build service

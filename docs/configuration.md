@@ -1,7 +1,13 @@
 # Configuration & tuning
 
-Three layers: **compile-time constants** (`@rpg/shared`), **environment variables**
-(deploy/identity), and **runtime JSON files** (live-reloaded content).
+Four layers: **compile-time constants** (`@rpg/shared`), **environment variables**
+(deploy/identity), **`realm.json`** (per-realm rules: plugin toggles, tuning seeds,
+death/progression policy — see [plugins.md](plugins.md#realmjson-per-realm--per-fork-config)),
+and **runtime JSON files** (live-reloaded content).
+
+> The `realm.json` `policy` block decides what death costs (`none` / `xp-penalty` /
+> `hardcore`) and whether progression + inventory persist across realm resets
+> (both default to **on**: level persists, death hurts but does not erase).
 
 ## 1. Tuning constants — `packages/shared/src/constants.ts`
 
@@ -43,7 +49,8 @@ the section comments in the file:
 | `VITE_SERVER_URL` | Legacy `wss://…` URL baked into the client bundle for split-host deploys |
 | `NOSTR_NSEC` | the server's Nostr secret key — signs player saves **and** the server discovery event. **Keep it stable** across restarts, or saved progress + a stable server identity are lost. Ephemeral if unset (printed at boot). |
 | `MONITOR_USER` / `MONITOR_PASS` | HTTP Basic auth for the `/colyseus` monitor (open if unset) |
-| `SERVER_HOSTNAME` | public game hostname (informational + `PLAY_URL` fallback) |
+| `SERVER_HOSTNAME` | public game hostname (informational + `PLAY_URL` fallback). Set by `gorilator setup` — your domain for a permanent tunnel, or the ephemeral `…trycloudflare.com` host for a temporary one. |
+| `TUNNEL_MODE` | which Cloudflare tunnel `gorilator` manages: `temporary` (quick, no login — ephemeral `…trycloudflare.com` URL; the default) or `permanent` (your domain, requires `cloudflared login`). Set by `gorilator setup → Cloudflare`. |
 | `CLIENT_DIST` | single-service deploys: path to the built client to serve from the server |
 | `SERVER_NAME` | display name in the realm event + `/api/*` |
 | `PLAY_URL` | public URL players join at (defaults to `https://$SERVER_HOSTNAME`) |
@@ -51,8 +58,15 @@ the section comments in the file:
 | `UPDATE_CHECK_HOURS` | how often the daemon checks GitHub for a newer release (default `1`; `0` disables). Configure via `gorilator setup → Server settings`. See [publishing-cli.md](publishing-cli.md#auto-update-check). |
 | `UPDATE_REPO` | `owner/repo` the auto-update check queries (default `agustinkassis/gorilator-rpg`) |
 | `GITHUB_TOKEN` | optional — raises the GitHub API rate limit for the auto-update check |
-| `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → Server settings → Manage admins`. See [admin.md](admin.md). |
-| `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer`. Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
+| `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → General settings → Manage admins`. See [admin.md](admin.md). |
+| `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer` (enabling it runs a full `pnpm install` first, so a prebuilt/slim install gains the build-only deps the dev server needs). Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
+
+> **Multiple installs on one machine.** Each install owns its **temporary** (quick) tunnel: the
+> boot service, launchd label, and log are keyed by a stable per-install id (derived from the install
+> dir), and what each install created is tracked in its `config.json` (`tunnel` record). So two installs
+> can run their own `…trycloudflare.com` tunnels at once, and `gorilator update`/`uninstall` only ever
+> touch *that* install's tunnel. The **permanent** (named) tunnel still uses the single shared
+> `cloudflared` system service — one permanent tunnel per machine — but is tracked the same way.
 
 ## 3. Runtime content files (live-reloaded JSON)
 
@@ -64,8 +78,25 @@ the in-game importers and re-read on change. They live in `packages/client/publi
 | `props.json` | imported props (Model Importer / Dev Mode). Server reads it for **collision** (`loadPropObstacles`, props with `collisionRadius > 0`); the client renders them (`PropManager`). |
 | `spawners.json` | Dev-Mode-placed object **spawners** (`loadSpawners` + `spawnerSystem`). |
 | `npcs.json` | placed custom **characters** (imported Meshy zips), rendered by `CharacterManager`. |
-| `characters.json` | the custom-character **library** (definitions/templates for the importer). |
+| `characters.json` | the custom-character **library** (definitions/templates for the creator). |
+| `structures-lib.json` | the creator-authored **structure** library (a `.glb` + placement physics + stats). |
+| `items.json` | the custom **item** library (icon + optional world model + stack/scale). |
 | `resources.json` | resource **drop tables** (`loadResourceDrops`). |
 | `audio/manifest.json` | optional **audio sample overrides** — maps sound keys → files; anything unlisted is synthesized procedurally. See `public/audio/README.md`. |
 
 The server watches the files it reads and applies changes without a restart.
+
+### Library / creator dev endpoints (Vite, dev-only)
+
+The in-game **Library** + creator wizard talk to Vite middleware (present only under
+`pnpm dev`). Besides the per-type CRUD (`/__char/*`, `/__structures/*`, `/__items/*`,
+`/__props/*`), three endpoints back the Local/Community + pending flow:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /__content/pending` | which Library entities are **not yet committed to git** (→ the "pending" badge), per type, via `git show HEAD:…` + `git status`. |
+| `POST /__char/def-delete` | remove a character def (+ its `public/models/characters/<id>/` dir). |
+| `POST /__content/import-remote` | download a community entity's Blossom assets locally and add it as a **pending, imported** def. |
+
+> Community **publishing** (Blossom upload + the kind-30333 event) happens browser-side
+> with the user's own Nostr key — see [community-entities.md](community-entities.md).

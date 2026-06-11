@@ -101,9 +101,11 @@
         border: 2px solid #6b4f2e;
         border-radius: 999px;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55), inset 0 0 14px rgba(0, 0, 0, 0.5);
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: pointer;
         user-select: none;
       }
+      #playerBadge:hover { filter: brightness(1.12); }
       #playerBadge[hidden] { display: none; }
       #pbAvatar {
         position: relative;
@@ -616,6 +618,107 @@
       body.devMode #playerBadge,
       body.devMode #respawnOverlay { display: none !important; }
 
+      #splashBoot {
+        position: fixed;
+        inset: 0;
+        z-index: 20000;
+        display: grid;
+        place-items: center;
+        background: #000;
+        opacity: 1;
+        visibility: visible;
+        transition:
+          opacity 0.22s ease,
+          visibility 0s linear 0s;
+      }
+      #splashBootInner {
+        display: grid;
+        justify-items: center;
+        gap: 10px;
+        transform: translateY(-2vh);
+      }
+      #splashBootLabel {
+        width: min(360px, 84vw);
+        min-height: 15px;
+        color: #78ff92;
+        font: 800 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0.8px;
+        text-align: center;
+        text-transform: lowercase;
+        text-shadow: 0 0 10px rgba(57, 231, 100, 0.42);
+        opacity: 0.86;
+      }
+      #splashBootTrack {
+        position: relative;
+        width: min(226px, 48vw);
+        height: 4px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #031006;
+        box-shadow:
+          0 0 0 1px rgba(57, 231, 100, 0.16),
+          0 0 18px rgba(57, 231, 100, 0.08);
+      }
+      #splashBootTrack::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(57, 231, 100, 0.2),
+          transparent
+        );
+        transform: translateX(-100%);
+        animation: splashBootScan 1.05s linear infinite;
+      }
+      #splashBootBar {
+        width: 4%;
+        height: 100%;
+        border-radius: inherit;
+        min-width: 9px;
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(90deg, #22b84b, #78ff92 58%, #2bd75a);
+        box-shadow: 0 0 14px rgba(57, 231, 100, 0.78);
+        transition: width 0.16s cubic-bezier(0.22, 0.9, 0.22, 1);
+        animation: splashBootPulse 0.78s ease-in-out infinite;
+      }
+      #splashBootBar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          100deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.58) 45%,
+          transparent 74%
+        );
+        transform: translateX(-100%);
+        animation: splashBootShine 0.7s linear infinite;
+      }
+      @keyframes splashBootScan {
+        to { transform: translateX(100%); }
+      }
+      @keyframes splashBootPulse {
+        0%, 100% { filter: brightness(0.94); }
+        50% { filter: brightness(1.25); }
+      }
+      @keyframes splashBootShine {
+        to { transform: translateX(100%); }
+      }
+      body:not(.splashBooting) #splashBoot {
+        opacity: 0;
+        visibility: hidden;
+        transition:
+          opacity 0.22s ease,
+          visibility 0s linear 0.24s;
+      }
+      body.splashBooting #splash {
+        opacity: 0;
+        visibility: hidden;
+      }
+
       /* "Update available" banner — a small pill near the top of the splash,
          revealed only when the daemon's /api/update check finds a new release. */
       #updateBanner {
@@ -797,6 +900,26 @@
       }
       #versionTag:hover {
         opacity: 0.7;
+      }
+      /* Developer build (Vite dev server / GORILATOR_DEV): the tag carries a small
+         DEV badge and sits a bit brighter so it's obvious this isn't a release. */
+      #versionTag.isDev {
+        opacity: 0.62;
+      }
+      #versionTag.isDev:hover {
+        opacity: 0.92;
+      }
+      #versionTag .devBadge {
+        display: inline-block;
+        margin-right: 5px;
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: #f5c542;
+        color: #1a1206;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        text-shadow: none;
+        vertical-align: baseline;
       }
       /* Package-versions popup, anchored above the version tag (bottom-right). */
       #versionPanel {
@@ -1816,13 +1939,15 @@
         caret-color: transparent;
       }
       #splash.nameCommitted:not(.nostr) #nameInput::placeholder { opacity: 0; }
-      #splash.nameCommitted:not(.nostr) #actionRow,
       #splash.nameCommitted:not(.nostr) #nostrStatus,
       #splash.nameCommitted:not(.nostr) #splashHint {
         opacity: 0;
         transform: translateY(-50px) scale(0.97);
         pointer-events: none;
       }
+      /* Keep the action row (the ENTER button morphs into a spinner) but drop the
+         secondary connect button so the spinner can centre itself. */
+      #splash.nameCommitted:not(.nostr) #nostrBtn { display: none; }
       @keyframes splashNameRise {
         from { transform: translateY(-34px) scale(1); }
         to { transform: translateY(-58px) scale(1.03); }
@@ -2197,6 +2322,48 @@
       }
       #nhDisconnect:hover { color: #d7c4a0; text-decoration: underline; }
 
+      /* ---- Join in progress: morph the clicked ENTER button into a circular
+         spinner with a smooth fade (applied on submit, removed on join error). ---- */
+      #enterBtn.btnSpin,
+      #nhJoin.btnSpin {
+        flex: none !important;
+        width: 58px !important;
+        min-width: 0 !important;
+        height: 58px !important;
+        padding: 0 !important;
+        margin: 0 auto !important;
+        border-radius: 50% !important;
+        color: transparent !important;
+        letter-spacing: 0 !important;
+        filter: none !important;
+        animation: none !important;
+        pointer-events: none;
+        position: relative;
+        overflow: hidden;
+        transition:
+          width 0.45s cubic-bezier(0.45, 0, 0.2, 1),
+          height 0.45s cubic-bezier(0.45, 0, 0.2, 1),
+          padding 0.4s ease,
+          border-radius 0.4s ease,
+          color 0.25s ease;
+      }
+      #enterBtn.btnSpin::after,
+      #nhJoin.btnSpin::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 3px solid rgba(42, 22, 5, 0.28);
+        border-top-color: #2a1605;
+        animation: btnSpin 0.7s linear infinite;
+      }
+      @keyframes btnSpin { to { transform: rotate(360deg); } }
+      /* Drop the "use a name instead" link while the join spinner is showing. */
+      #nhJoin.btnSpin ~ #nhDisconnect { opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+
       /* ---- Nostr connect progress: terminal log + smooth shimmer bar ---- */
       #splash.connecting #nameWrap,
       #splash.connecting #actionRow,
@@ -2333,7 +2500,13 @@
       }
     </style>
   </head>
-  <body class="preGame">
+  <body class="preGame splashBooting">
+    <div id="splashBoot" role="status" aria-live="polite">
+      <div id="splashBootInner">
+        <div id="splashBootLabel">loading the cold open</div>
+        <div id="splashBootTrack"><div id="splashBootBar"></div></div>
+      </div>
+    </div>
     <canvas id="renderCanvas"></canvas>
     <!-- Intro splash. The gorilla itself is rendered by WebGL
          on the canvas behind this overlay (see ui/splash.ts); this layer holds the
@@ -2385,7 +2558,7 @@
         </div>
         <div id="actionRow">
           <button id="enterBtn" disabled>ENTER ARENA</button>
-          <button id="nostrBtn" aria-label="Connect Nostr" title="Connect with Nostr">CONNECT NOSTR</button>
+          <button id="nostrBtn" aria-label="Connect Nostr" title="Connect with Nostr — extension or remote signer">CONNECT NOSTR</button>
         </div>
         <div id="nostrStatus"></div>
         <div id="splashHint">Pick a name or connect with Nostr</div>

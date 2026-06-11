@@ -1,25 +1,25 @@
-import { Client, Room, getStateCallbacks } from "colyseus.js";
+import { Client, type Room, getStateCallbacks } from "colyseus.js";
 import type { NostrAuthPayload } from "./nostr";
 import {
-  GameState,
-  Player,
-  Enemy,
-  Potion,
-  Tree,
-  Log,
-  Rock,
-  Stone,
-  Banana,
-  Item,
-  House,
-  Structure,
-  DamageEvent,
-  KillEvent,
-  HealEvent,
-  XpEvent,
-  BananaThrowEvent,
-  ChatEvent,
-  InventorySlot,
+  type GameState,
+  type Player,
+  type Enemy,
+  type Potion,
+  type Tree,
+  type Log,
+  type Rock,
+  type Stone,
+  type Banana,
+  type Item,
+  type House,
+  type Structure,
+  type DamageEvent,
+  type KillEvent,
+  type HealEvent,
+  type XpEvent,
+  type BananaThrowEvent,
+  type ChatEvent,
+  type InventorySlot,
   ROOM_NAME,
   SERVER_PORT,
   NOSTR_TAKEOVER_CODE,
@@ -68,7 +68,7 @@ export interface NetHandlers {
   onXp(ev: XpEvent): void;
   onChat(ev: ChatEvent): void;
   onInventory(slots: InventorySlot[]): void;
-  onWipe(ev: { wave: number }): void; // La Crypta fell → round wiped to scratch
+  onWipe(ev: { wave: number; persist?: boolean }): void; // La Crypta fell → realm resets (persist = progression kept)
   onError(message: string): void;
   onKill(ev: KillEvent): void;
 }
@@ -109,10 +109,48 @@ export class NetworkClient {
   private client: Client;
   private endpoint: string;
   room?: Room<GameState>;
+  /** Set during an intentional logout so onLeave doesn't flash a "disconnected" toast. */
+  private leaving = false;
+  /** In-flight nostr_upgrade round-trips, keyed by request id (so concurrent
+   *  upgrades + a disconnect mid-flight settle the right promise). */
+  private upgradeResolvers = new Map<
+    string,
+    { resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+  >();
 
   constructor(endpoint: string = defaultEndpoint()) {
     this.endpoint = endpoint;
     this.client = new Client(endpoint);
+  }
+
+  /** Intentionally leave the current room (logout). Suppresses the leave toast. */
+  async leave(): Promise<void> {
+    this.leaving = true;
+    try {
+      await this.room?.leave(true);
+    } catch {
+      /* already gone */
+    }
+    this.room = undefined;
+  }
+
+  /**
+   * Upgrade the current (e.g. anonymous) session to a Nostr identity in place —
+   * send a freshly-signed kind-22242 auth; the server verifies + attaches the npub
+   * to the live player (keeping current progress). Resolves on the server's ack.
+   */
+  upgradeNostr(payload: NostrAuthPayload): Promise<void> {
+    const room = this.room;
+    if (!room) return Promise.reject(new Error("not connected"));
+    const id = (globalThis.crypto?.randomUUID?.() ?? `up_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.upgradeResolvers.delete(id);
+        reject(new Error("server didn't respond"));
+      }, 12000);
+      this.upgradeResolvers.set(id, { resolve, reject, timer });
+      room.send("nostr_upgrade", { ...payload, id });
+    });
   }
 
   /** The server's HTTP(S) base (the WebSocket endpoint with ws→http), for the
@@ -313,12 +351,27 @@ export class NetworkClient {
       room.onMessage("banana_throw", (ev: BananaThrowEvent) => handlers.onBananaThrow(ev));
       room.onMessage("chat", (ev: ChatEvent) => handlers.onChat(ev));
       room.onMessage("inventory", (slots: InventorySlot[]) => handlers.onInventory(slots));
-      room.onMessage("wipe", (ev: { wave: number }) => handlers.onWipe(ev));
+      room.onMessage("wipe", (ev: { wave: number; persist?: boolean }) => handlers.onWipe(ev));
+      room.onMessage("nostr_upgrade_result", (res: { id?: string; ok: boolean; error?: string }) => {
+        const p = this.upgradeResolvers.get(res.id ?? "");
+        if (!p) return;
+        this.upgradeResolvers.delete(res.id ?? "");
+        clearTimeout(p.timer);
+        if (res.ok) p.resolve();
+        else p.reject(new Error(res.error || "login rejected"));
+      });
 
       room.onError((code, message) => {
         handlers.onError(`room error ${code}: ${message ?? ""}`);
       });
       room.onLeave((code) => {
+        // Fail any in-flight nostr_upgrade so it doesn't hang until the timeout.
+        for (const [, p] of this.upgradeResolvers) {
+          clearTimeout(p.timer);
+          p.reject(new Error("disconnected"));
+        }
+        this.upgradeResolvers.clear();
+        if (this.leaving) return; // intentional logout — no toast
         // The server kicks this session when the same npub logs in elsewhere.
         handlers.onError(
           code === NOSTR_TAKEOVER_CODE
@@ -426,5 +479,16 @@ export class NetworkClient {
   /** Override one runtime gameplay tuning value for this server process. */
   sendDevTune(key: DevTuningKey, value: number) {
     this.room?.send("dev_tune", { key, value });
+  }
+
+  // ---- Admin (Esc menu → Admin; the server enforces the ADMIN_NPUBS allowlist) ----
+  /** Stop/resume the tower-defense wave clock. */
+  sendAdminWaves(enabled: boolean) {
+    this.room?.send("admin_waves", { enabled });
+  }
+
+  /** Switch one spawners.json spawner on/off at runtime. */
+  sendAdminSpawner(id: string, enabled: boolean) {
+    this.room?.send("admin_spawner", { id, enabled });
   }
 }

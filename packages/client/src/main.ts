@@ -2,16 +2,23 @@ import { ArcRotateCamera, Color4, Engine, HemisphericLight, Scene, SceneLoader, 
 import "@babylonjs/loaders/glTF";
 import { createScene } from "./scene/createScene";
 import { applyOrthoSize } from "./scene/camera";
+import { compareVer } from "./util/version";
 import { CharacterFactory } from "./entities/CharacterFactory";
 import { preloadBanana } from "./entities/models/banana";
 import { preloadBerserkerPotion } from "./entities/models/berserkerPotion";
 import { loadHouse } from "./entities/models/house";
 import { PropManager } from "./dev/PropManager";
 import { CharacterManager } from "./dev/CharacterManager";
-import { CharacterImporter } from "./dev/CharacterImporter";
+import { EntityCreator } from "./dev/EntityCreator";
 import { AnimationTester } from "./dev/AnimationTester";
-import { DevMode, frontOfPlayer } from "./dev/DevMode";
+// Dev Mode editor + component labels + the editor's NIP-98 save shim. These are
+// referenced only behind the build-time `DEV_TOOLS` constant below, so a production
+// build (DEV_TOOLS === false) tree-shakes ALL of this code — and its heavy subtree
+// (LibraryExplorer, EntityCreator, importers) — out of the bundle entirely. Verified
+// by build: a prod bundle contains none of the editor's code or strings.
+import { DevMode } from "./dev/DevMode";
 import { DeveloperLabels } from "./dev/DeveloperLabels";
+import { installDevEditorAuth } from "./dev/devEditorAuth";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
 import { HealthGlobe } from "./ui/healthGlobe";
@@ -19,6 +26,7 @@ import { XpBar } from "./ui/xpBar";
 import { StaminaBar } from "./ui/staminaBar";
 import { CharacterSheet } from "./ui/characterSheet";
 import { PlayerBadge } from "./ui/playerBadge";
+import { PlayerMenu } from "./ui/playerMenu";
 import { InventoryUI } from "./ui/inventory";
 import { HotkeyBar } from "./ui/hotkeyBar";
 import { Minimap } from "./ui/minimap";
@@ -29,8 +37,17 @@ import { Game } from "./game/Game";
 import { AudioManager } from "./audio/AudioManager";
 import { AudioControls } from "./ui/audioControls";
 import { TopBar } from "./ui/topBar";
-import { GameMenu } from "./ui/gameMenu";
+import { GameMenu, loadStoredShadowMode } from "./ui/gameMenu";
 import { NetworkClient, type NetHandlers } from "./net/NetworkClient";
+import {
+  signNostrAuth,
+  establishNostrIdentity,
+  type NostrAuthPayload,
+  type NostrIdentity,
+} from "./net/nostr";
+import { loadSession, clearSession } from "./net/nostrSession";
+import { restoreBunkerClient, installBunkerSigner } from "./net/nip46";
+import { setActiveSession, getActiveIdentity, clearActiveSession } from "./net/nostrSigner";
 import { preloadMouseCursors, setupClickToMove } from "./input/ClickToMove";
 import { setupSprint } from "./input/Sprint";
 import { SplashScreen } from "./ui/splash";
@@ -39,6 +56,7 @@ import { PerfTracker } from "./perf/PerfTracker";
 import { attachBabylonProbes } from "./perf/babylonProbes";
 import { PerfOverlay } from "./perf/overlay";
 import { buildResourceBreakdown, buildRenderProfile } from "./perf/breakdown";
+import { clientPluginHost, loadClientPlugins } from "./plugins/host";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -47,25 +65,50 @@ const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDi
 const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
 const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
 
+/** Re-render the footer version popup, optionally flagging packages whose remote
+ *  (latest release) version is newer than the local build. Reassigned by
+ *  wireVersionPanel; called again once /api/update reports remote versions.
+ *  Declared BEFORE wireVersionPanel runs so its assignment isn't a TDZ access. */
+let renderVersionPanel: (remote?: Record<string, string>) => void = () => {};
+
 // Tiny always-on version tag (bottom-right). __APP_VERSION__ is replaced at build
-// time by Vite with the package.json version (see vite.config.ts).
+// time by Vite with the root app package version (see vite.config.ts).
 const versionEl = document.getElementById("versionTag");
 if (versionEl) {
-  versionEl.textContent = `v${__APP_VERSION__}`;
+  // In a developer build (Vite dev server / `GORILATOR_DEV` `gorilator serve`)
+  // tag the version with a small DEV badge so it's obvious this isn't a release.
+  if (import.meta.env.DEV) {
+    versionEl.classList.add("isDev");
+    versionEl.innerHTML = `<span class="devBadge">DEV</span>v${__APP_VERSION__}`;
+    versionEl.title = "Developer build (live dev server)";
+  } else {
+    versionEl.textContent = `v${__APP_VERSION__}`;
+  }
   wireVersionPanel(versionEl);
 }
 
 /** Click the footer version tag to toggle a small popup listing every workspace
- *  package version (injected at build time as __PKG_VERSIONS__). */
+ *  package version (injected at build time as __PKG_VERSIONS__). An ⬆ appears
+ *  next to any package the latest release has a newer version of. */
 function wireVersionPanel(tag: HTMLElement): void {
   const panel = document.getElementById("versionPanel");
   if (!panel) return;
   const versions = __PKG_VERSIONS__ ?? {};
-  panel.innerHTML =
-    `<div class="vpTitle">Package versions</div>` +
-    Object.entries(versions)
-      .map(([label, v]) => `<div class="vpRow"><span class="vpName">${label}</span><span class="vpVer">v${v}</span></div>`)
-      .join("");
+  renderVersionPanel = (remote: Record<string, string> = {}) => {
+    panel.innerHTML =
+      `<div class="vpTitle">Package versions</div>` +
+      Object.entries(versions)
+        .map(([label, v]) => {
+          const r = remote[label];
+          const icon =
+            r && compareVer(r, v) > 0
+              ? ` <span class="vpUpd" style="color:#f5c542" title="v${r} available">⬆</span>`
+              : "";
+          return `<div class="vpRow"><span class="vpName">${label}</span><span class="vpVer">v${v}${icon}</span></div>`;
+        })
+        .join("");
+  };
+  renderVersionPanel();
   const close = () => {
     panel.hidden = true;
     document.removeEventListener("pointerdown", onOutside, true);
@@ -1140,7 +1183,8 @@ if (import.meta.env.DEV && import.meta.env.VITE_NO_MOCK_NOSTR !== "1") {
 }
 
 const engine = new Engine(canvas, true, { stencil: true }, true);
-const { scene, camera, ground, shadow } = createScene(engine);
+const shadowMode = loadStoredShadowMode();
+const { scene, camera, ground, shadows } = createScene(engine, { shadowMode });
 
 const factory = new CharacterFactory(scene);
 const hud = new HUD(scene);
@@ -1150,7 +1194,7 @@ const staminaBar = new StaminaBar();
 const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
 const topBar = new TopBar(); // top HUD (La Crypta HP + wave); hidden on the splash via CSS
-const game = new Game(camera, factory, hud, shadow);
+const game = new Game(camera, factory, hud, shadows);
 const debugStats = new DebugStats(engine, scene);
 // Sound system: spatial SFX + music. Unlocks itself on the first user gesture
 // (the splash "ENTER" click), so it's safe to build up-front.
@@ -1158,6 +1202,41 @@ const audio = new AudioManager();
 game.setAudio(audio);
 void audio.ready.then(() => audio.startSplashMusic());
 const net = new NetworkClient();
+
+/** Logout: leave the room, drop the signer + saved session, return to splash. */
+async function doLogout(): Promise<void> {
+  try {
+    await net.leave();
+  } catch {
+    /* ignore */
+  }
+  clearActiveSession();
+  clearSession();
+  if (typeof window !== "undefined") delete window.nostr;
+  location.reload(); // cold reset to the splash (storage cleared → no auto-restore)
+}
+
+// The bottom-left player badge opens a profile / logout menu.
+new PlayerMenu({
+  getIdentity: () => getActiveIdentity(),
+  getPlayer: () => {
+    const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
+    return me
+      ? {
+          name: me.name,
+          level: me.level,
+          picture: me.picture,
+          nostrVerified: me.nostrVerified,
+          attack: me.attack,
+          armor: me.armor,
+          hp: me.hp,
+          maxHp: me.maxHp,
+        }
+      : null;
+  },
+  onLogout: () => void doLogout(),
+  landingBase: import.meta.env.VITE_LANDING_URL as string | undefined,
+});
 
 // Performance tracking: Babylon probes feed the tracker each frame (FPS, draw
 // calls, meshes, triangles always; CPU+GPU frame time + heap while the overlay or
@@ -1175,6 +1254,10 @@ perf.setRenderProfileProvider(() => buildRenderProfile(scene, perfProbes.renderP
 (window as Window & { __perf?: unknown }).__perf = perf;
 if (new URLSearchParams(location.search).has("perf")) perfOverlay.toggle();
 
+// Client plugins: item models, per-frame systems, dev panels. Discovered via
+// /plugins/manifest.json (pluginBundler); quietly a no-op when none exist.
+void loadClientPlugins();
+
 const inventory = new InventoryUI(
   (from, to) => net.sendInventoryMove(from, to),
   (slot) => net.sendUseItem(slot),
@@ -1182,14 +1265,19 @@ const inventory = new InventoryUI(
 const hotkeyBar = new HotkeyBar((slot) => net.sendUseItem(slot));
 const minimap = new Minimap(net); // top-left radar + hold TAB / Map button for the big map
 const chat = new ChatLog((text) => net.sendChat(text)); // Enter to chat (right-side log)
-const developerLabels = import.meta.env.DEV ? new DeveloperLabels(scene) : null;
+// Dev tools (in-game editor + component labels) compile in for a local Vite dev
+// server (import.meta.env.DEV) OR a deployed dev-tools build (VITE_DEV_TOOLS=1 —
+// the `gorilator` dev server). On the deployed build the editor is admin-gated below.
+const DEV_TOOLS = import.meta.env.DEV || import.meta.env.VITE_DEV_TOOLS === "1";
+const developerLabels = DEV_TOOLS ? new DeveloperLabels(scene) : null;
 // Esc menu: resume, hotkeys, sound/graphics settings, login-with-Nostr, kill-yourself, exit.
 new GameMenu({
   net,
   audio,
   engine,
-  shadow,
+  shadows,
   isNostrVerified: () => !!(game.localId && net.room?.state.players.get(game.localId)?.nostrVerified),
+  isAdmin: () => !!(game.localId && net.room?.state.players.get(game.localId)?.isAdmin),
   developerLabels: developerLabels
     ? {
         isEnabled: () => developerLabels.isEnabled(),
@@ -1200,15 +1288,22 @@ new GameMenu({
 
 // Imported-prop registry (loads props.json into the world). In dev builds it also
 // backs Dev Mode, the in-game world editor (toggle with the button or ` backtick).
-const propManager = new PropManager(scene, shadow);
+const propManager = new PropManager(scene, shadows);
 game.setStructureProps(propManager); // destroyed structures hide their prop visual
 // Placed custom characters (imported Meshy zips) — loads npcs.json + renders them.
-const characterManager = new CharacterManager(scene, shadow);
+const characterManager = new CharacterManager(scene, shadows);
 minimap.setProps(propManager); // so the map can icon imported trees/rocks/concrete props
-const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
+const devMode = DEV_TOOLS ? new DevMode(scene, ground, net, propManager) : null;
 devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
 devMode?.setGame(game); // library explorer can select + camera-focus world entities
 devMode?.setInventoryUI(inventory); // Dev Mode: click an inventory slot to set its item/qty
+// Deployed dev server (a VITE_DEV_TOOLS build, NOT a local Vite dev): the page is
+// public, so gate the editor behind the local player's admin status and sign its
+// `/__*` saves with NIP-98 (the server also enforces admin on every write).
+if (devMode && !import.meta.env.DEV && import.meta.env.VITE_DEV_TOOLS === "1") {
+  devMode.setAdminGate(() => !!(game.localId && net.room?.state.players.get(game.localId)?.isAdmin));
+  installDevEditorAuth();
+}
 if (developerLabels)
   devMode?.setDeveloperLabels({
     isEnabled: () => developerLabels.isEnabled(),
@@ -1240,13 +1335,148 @@ setupClickToMove({
 // Hold SPACE to sprint (server drains stamina + applies the speed boost).
 setupSprint(net);
 
+// A pool of loading quips (funny, gaming, faintly self-aware). Six distinct ones
+// are picked at random on each load and spread across the boot bar, so the splash
+// reads differently every time.
+const SPLASH_BOOT_QUIPS = [
+  "loading the cold open",
+  "polishing the boss entrance",
+  "arming buttons, no mercy",
+  "teaching the gorilla to flex",
+  "negotiating with the physics engine",
+  "bribing the frame rate",
+  "convincing bananas they're weapons",
+  "warming the bass for impact",
+  "untangling the spaghetti code (don't look)",
+  "asking the gorilla to look dangerous",
+  "feeding the goblins their morning rage",
+  "calibrating maximum primate",
+  "rendering muscles nobody asked for",
+  "summoning the arena from the void",
+  "double-checking gravity still works",
+  "stretching before the grind",
+  "loading 400 polygons of pure attitude",
+  "pretending the lag is intentional",
+  "sharpening the difficulty curve",
+  "waking the boss, gently",
+  "counting the bananas, twice",
+  "training goblins to miss dramatically",
+  "applying war paint to the UI",
+  "tuning the roar to eleven",
+  "hiding the loading bar's anxiety",
+  "rolling for initiative",
+  "buffering pure chaos",
+  "compiling questionable life choices",
+  "opening the arena gates",
+  "last second vanity check",
+] as const;
+
+// The six boot-bar thresholds the picked quips snap to as it fills 0 → 100.
+const SPLASH_BOOT_STOPS = [0, 16, 34, 52, 70, 88] as const;
+
+/** Shuffle the quip pool and pin the first six to the boot-bar stops, so each
+ *  load shows six different lines from the pool. */
+function pickSplashBootTasks(): { pct: number; label: string }[] {
+  const pool = [...SPLASH_BOOT_QUIPS];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return SPLASH_BOOT_STOPS.map((pct, i) => ({ pct, label: pool[i] }));
+}
+
+const SPLASH_BOOT_TASKS = pickSplashBootTasks();
+
+let splashBootShown = 4;
+let splashBootTarget = 4;
+let splashBootOverrideLabel = "";
+let splashBootLabelTimer: number | undefined;
+
+function splashBootLabelFor(pct: number): string {
+  let label = SPLASH_BOOT_TASKS[0].label;
+  for (const task of SPLASH_BOOT_TASKS) {
+    if (pct >= task.pct) label = task.label;
+  }
+  return label;
+}
+
+function renderSplashBoot(): void {
+  const bar = document.getElementById("splashBootBar") as HTMLElement | null;
+  const label = document.getElementById("splashBootLabel") as HTMLElement | null;
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, splashBootShown))}%`;
+  if (label) label.textContent = splashBootOverrideLabel || splashBootLabelFor(splashBootShown);
+}
+
+const splashBootTicker = window.setInterval(() => {
+  if (!document.body.classList.contains("splashBooting")) {
+    window.clearInterval(splashBootTicker);
+    return;
+  }
+  if (splashBootShown < splashBootTarget) {
+    splashBootShown += Math.max(0.35, (splashBootTarget - splashBootShown) * 0.14);
+  } else if (splashBootTarget < 90) {
+    splashBootTarget += 0.28;
+    splashBootShown += 0.08;
+  }
+  renderSplashBoot();
+}, 60);
+
+function setSplashBootProgress(pct: number, label?: string): void {
+  const next = Math.max(0, Math.min(100, pct));
+  const previousTarget = splashBootTarget;
+  if (next >= splashBootTarget) {
+    splashBootTarget = next;
+  }
+  if (label && next >= previousTarget) {
+    splashBootOverrideLabel = label;
+    if (splashBootLabelTimer !== undefined) window.clearTimeout(splashBootLabelTimer);
+    splashBootLabelTimer = window.setTimeout(() => {
+      splashBootOverrideLabel = "";
+      renderSplashBoot();
+    }, next >= 100 ? 1800 : 920);
+  }
+  renderSplashBoot();
+}
+
+async function revealSplashWhenReady(splash: SplashScreen, audioReady: Promise<void>): Promise<void> {
+  const minimumDisplay = new Promise((resolve) => window.setTimeout(resolve, 760));
+  try {
+    const heroReady = splash.ready.then(() => {
+      setSplashBootProgress(72);
+    });
+    const soundReady = audioReady.then(() => {
+      setSplashBootProgress(84);
+    });
+    await Promise.all([heroReady, soundReady]);
+  } finally {
+    splashBootOverrideLabel = "";
+    setSplashBootProgress(94);
+    await minimumDisplay;
+    setSplashBootProgress(100);
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    document.body.classList.remove("splashBooting");
+    window.setTimeout(() => document.getElementById("splashBoot")?.remove(), 320);
+  }
+}
+
 // The intro / character-select splash. It renders its own hero scene on this
 // same engine while the player picks a name; the main render loop below draws it
 // instead of the game world until `splash.active` flips during the launch.
-const splash = new SplashScreen(engine);
+const splash = new SplashScreen(engine, { onBootProgress: setSplashBootProgress });
+setSplashBootProgress(24);
+const splashReady = revealSplashWhenReady(splash, audio.ready);
 // Surface a daemon "update available" banner on the splash (best-effort, silent
 // when offline / up to date). Fed by the server's /api/update auto-check.
 void splash.showUpdateBanner(net.httpBase());
+// Flag any out-of-date packages in the footer version popup with an ⬆.
+void fetch(`${net.httpBase()}/api/update`, { cache: "no-store" })
+  .then((r) => (r.ok ? (r.json() as Promise<{ latest?: { packages?: Record<string, string> } | null }>) : null))
+  .then((s) => {
+    if (s?.latest?.packages) renderVersionPanel(s.latest.packages);
+  })
+  .catch(() => {
+    /* offline / not configured — leave the list unflagged */
+  });
 
 // homeMaxHp is kept so the home bar can still read "fallen" after the house is
 // removed from state on collapse.
@@ -1293,7 +1523,7 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
     {
       label: "La Crypta house",
       weight: 4,
-      promise: loadHouse(scene, shadow).then((house) => {
+      promise: loadHouse(scene, shadows).then((house) => {
         game.setHouseModel(house);
       }),
     },
@@ -1343,10 +1573,97 @@ function buildAssetPreload(): { done: Promise<void>; setJoining(): void } {
   };
 }
 
+/** Wait briefly for a signer (`window.nostr`) to appear, returning its pubkey. */
+async function pollForPubkey(timeoutMs: number): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (window.nostr) {
+      try {
+        return await window.nostr.getPublicKey();
+      } catch {
+        return null;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  return null;
+}
+
+/** A logged-in splash state from a cached session, without re-fetching relays. */
+function identityFromCache(s: { pubkey: string; npub: string; meta: NostrIdentity["meta"] }): NostrIdentity {
+  return { pubkey: s.pubkey, npub: s.npub, meta: s.meta };
+}
+
+/**
+ * On startup, restore a persisted Nostr session: re-establish/verify the signer
+ * (NIP-07 extension present & same pubkey, or bunker reachable) and show the
+ * logged-in state on the splash. The player still clicks JOIN (which signs a
+ * fresh auth). Never throws — a failed restore just leaves an anonymous splash.
+ */
+async function restoreSession(): Promise<void> {
+  const saved = loadSession();
+  if (!saved) return;
+  // `?mocknostr=` (dev) owns window.nostr and must not be overwritten by a bunker.
+  const mockActive =
+    import.meta.env.DEV &&
+    import.meta.env.VITE_NO_MOCK_NOSTR !== "1" &&
+    !!new URLSearchParams(location.search).get("mocknostr");
+
+  try {
+    if (saved.method === "nip07") {
+      const pk = await pollForPubkey(2000);
+      if (pk && pk === saved.pubkey) {
+        const id = await establishNostrIdentity(); // one fresh identity for both
+        splash.restoreNostr(id);
+        setActiveSession(id, null);
+      } else if (pk && pk !== saved.pubkey) {
+        clearSession(); // extension switched accounts → don't restore the wrong key
+      } else {
+        // No signer right now — show the cached identity; JOIN will surface the
+        // "reconnect your signer" error if it's still missing then.
+        splash.restoreNostr(identityFromCache(saved));
+        setActiveSession(identityFromCache(saved), null);
+      }
+      return;
+    }
+
+    if (saved.method === "bunker") {
+      if (mockActive) return; // mock wins this session
+      const client = restoreBunkerClient(saved.bunker, (url) => window.open(url, "_blank", "noopener"));
+      client.start();
+      installBunkerSigner(client); // JOIN signs through it (lazily reconnects if asleep)
+      const alive = await client.ping().then(() => true).catch(() => false);
+      if (alive) {
+        const id = await establishNostrIdentity().catch(() => null);
+        // Re-verify the signer still controls the stored npub (mirrors nip07).
+        if (id && id.pubkey !== saved.pubkey) {
+          client.close();
+          if (typeof window !== "undefined") delete window.nostr;
+          clearSession();
+          return;
+        }
+        const identity = id ?? identityFromCache(saved);
+        splash.restoreNostr(identity);
+        setActiveSession(identity, client);
+      } else {
+        // Signer asleep — show cached identity; JOIN re-signs through the shim.
+        splash.restoreNostr(identityFromCache(saved));
+        setActiveSession(identityFromCache(saved), client);
+      }
+    }
+  } catch (err) {
+    console.warn("[nostr] session restore failed", err);
+  }
+}
+
 async function start() {
-  // Kick the asset loads off immediately, in the background, so the splash time
-  // is useful. The launch waits for this, so gameplay starts with all known
-  // world assets already available instead of popping in after the cut.
+  // First reveal the splash only after its own scene/hero assets are ready. After
+  // that, the full game asset preload can run in the background while the player
+  // chooses how to enter.
+  await splashReady;
+  // Restore a saved Nostr login (re-verify the signer) — non-blocking so the
+  // splash shows immediately and flips to logged-in once verified.
+  void restoreSession();
   const preload = buildAssetPreload();
 
   const handlers: NetHandlers = {
@@ -1409,7 +1726,7 @@ async function start() {
       inventory.setInventory(slots);
       hotkeyBar.setInventory(slots);
     },
-    onWipe: (ev) => topBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
+    onWipe: (ev) => topBar.flashDefeat(ev.wave, ev.persist), // La Crypta fell → defeat flash (state sync carries the reset)
     onError: (message) => {
       statusEl.textContent = message;
       console.warn("[net]", message);
@@ -1431,13 +1748,27 @@ async function start() {
     await preload.done;
     splash.setAssetProgress(100, "joining realm", "joining");
 
+    // Nostr players sign a FRESH kind-22242 auth here (the challenge must be
+    // <300s old), so a restored/persisted identity never reuses a stale one. The
+    // signer (extension / mock / bunker) may prompt or be offline → handle apart.
+    let nostrPayload: NostrAuthPayload | undefined;
+    if (creds.nostr) {
+      try {
+        splash.setAssetProgress(100, "signing in…", "joining");
+        const auth = await signNostrAuth();
+        nostrPayload = { auth, profile: creds.nostr.profile };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        splash.showJoinError(`couldn't sign in with your Nostr signer — ${msg}`);
+        continue;
+      }
+    }
+
     try {
       await net.connect(handlers, {
         name: creds.name,
         // Only the signed auth + profile go to the server; it owns the save.
-        nostr: creds.nostr
-          ? { auth: creds.nostr.auth, profile: creds.nostr.profile }
-          : undefined,
+        nostr: nostrPayload,
       });
     } catch (err) {
       console.error(err);
@@ -1472,27 +1803,20 @@ start().catch((err) => {
 
 // Dev-only hook: poke at the running game from the browser console (window.__rpg).
 if (import.meta.env.DEV) {
-  // Character importer: drop a Meshy character .zip, map clips→actions, fix
-  // orientation/scale, preview, then save + add to the world (button bottom-right).
-  const characterImporter = new CharacterImporter({
-    getPlayerPos: () => {
-      const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
-      return me ? frontOfPlayer({ x: me.x, z: me.z, rotY: me.rotY }) : null; // beside the player, not on them
-    },
-    onPlaced: (_def, placement) => {
-      window.setTimeout(() => devMode?.focusEntity("enemy", placement.id), 500);
-      window.setTimeout(() => devMode?.focusEntity("enemy", placement.id), 1700);
-    },
+  // Entity creator: the stepped Library wizard (details → model → stats) that
+  // authors a character / structure / item without placing it on the map.
+  const entityCreator = new EntityCreator({
+    onAdded: (type) => devMode?.revealLibraryTab(type),
   });
 
-  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, characterImporter, devMode, debugStats };
+  (window as Window & { __rpg?: unknown }).__rpg = { engine, scene, net, game, audio, playerBadge, propManager, characterManager, entityCreator, devMode, debugStats };
 
   // Standalone model inspector (button bottom-right, or press C).
   new CharacterDebugWindow();
 
   // Model importer: upload a .glb, place/resize/rotate/name it, concrete or not,
   // and persist it to the codebase (button bottom-right, or press M).
-  const propImporter = new PropImporter(scene, shadow, () => {
+  const propImporter = new PropImporter(scene, shadows, () => {
     const me = game.localId ? net.room?.state.players.get(game.localId) : undefined;
     return me ? { x: me.x, z: me.z } : null;
   });
@@ -1502,10 +1826,10 @@ if (import.meta.env.DEV) {
     clearClip: () => game.clearAnimationTestClip(),
   });
   devMode?.setAnimationTester(animationTester);
-  devMode?.setCharacterImporter(characterImporter); // Library "Add Character" opens it
+  devMode?.setEntityCreator(entityCreator); // Library "＋ Add" opens the wizard
   devMode?.onVisibilityChange((on) => {
     document.body.classList.toggle("devMode", on);
-    characterImporter.setVisible(on);
+    entityCreator.setVisible(on);
     propImporter.setVisible(on);
     animationTester.setVisible(on);
     game.setDamageFxSuppressed(on); // no red flash / shake / low-HP vignette while editing
@@ -1523,6 +1847,16 @@ engine.runRenderLoop(() => {
     splash.update(dt);
     const renderStartedAt = performance.now();
     splash.scene.render();
+    const frameEndedAt = performance.now();
+    perf.setFrameMetrics({
+      fps: engine.getFps(),
+      frameMs: frameEndedAt - frameStartedAt,
+      gpuMs: null,
+      drawCalls: 0,
+      activeMeshes: splash.scene.getActiveMeshes().length,
+      triangles: Math.round(splash.scene.getActiveIndices() / 3),
+    });
+    perf.tick();
     debugStats.endFrame(frameStartedAt, renderStartedAt);
     return;
   }
@@ -1537,6 +1871,17 @@ engine.runRenderLoop(() => {
   perf.span("game.update", () => game.update(dt * timeScale)); // the world stays frozen at pause…
   if (paused) game.updateGhost(dt); // …but the ghost free-roams + camera follows at real dt
   perf.span("minimap", () => minimap.update()); // redraws only while TAB is held
+  // Plugin frame systems — each in its own span (F3 shows plugin:<name>) and
+  // try/caught so a plugin can't kill the render loop.
+  for (const s of clientPluginHost.frameSystems) {
+    perf.span(`plugin:${s.name}`, () => {
+      try {
+        s.fn(dt);
+      } catch (err) {
+        console.error(`[plugins] frame system "${s.name}" failed:`, err);
+      }
+    });
+  }
 
   const hp = game.localHp();
   if (hp) globe.set(hp.hp, hp.maxHp);
@@ -1631,3 +1976,20 @@ window.addEventListener("resize", () => {
   engine.resize();
   applyOrthoSize(camera);
 });
+
+// HMR guard: main.ts builds singletons (engine + render loop, the Colyseus room,
+// DOM UI, audio) that can't hot-swap. Without this, an edit that bubbles up to
+// main.ts re-executes the module ON TOP of the live instance — stacked render
+// loops, duplicate UI, ghost websockets (the "HMR stacks main.ts" gotcha).
+// dispose() tears the old world down before Vite re-runs the entry / full-reloads.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    try {
+      engine.stopRenderLoop();
+      void net.room?.leave();
+      engine.dispose();
+    } catch {
+      /* tearing down a half-built world is best-effort */
+    }
+  });
+}

@@ -11,9 +11,16 @@ import {
 import { get } from "node:http";
 import { dirname, join } from "node:path";
 import { ensureNode, ensurePnpm } from "./build.js";
-import { loadProjectConfig, type ProjectDevState, type RuntimeContext } from "./context.js";
+import {
+  gitWorktreeName,
+  loadProjectConfig,
+  readProjectEnv,
+  type ProjectDevState,
+  type RuntimeContext,
+} from "./context.js";
 import { probeHealth } from "./health.js";
 import * as log from "./log.js";
+import { Stepper } from "./progress.js";
 import type { Options } from "./options.js";
 import { run, tryRun } from "./proc.js";
 import { printField, printPackageVersions, printSection, readEnvInfo } from "./summary.js";
@@ -42,8 +49,12 @@ export async function startProjectDev(ctx: RuntimeContext, opts: Options): Promi
 
   const cfg = loadProjectConfig(ctx, opts);
   const logFd = openSync(ctx.logPath!, "a");
+  // Merge the project's .env so its vars reach the dev process — notably any
+  // VITE_* (e.g. VITE_SERVER_URL / VITE_ALLOWED_HOSTS set by the tunnel menu),
+  // which Vite picks up from process.env. The explicit ports below win.
   const env = {
     ...process.env,
+    ...readProjectEnv(ctx),
     GAME_SERVER_PORT: String(cfg.port),
     CLIENT_PORT: String(cfg.clientPort ?? 5173),
     GORILATOR_STATE_FILE: ctx.statePath!,
@@ -75,8 +86,62 @@ export async function startProjectDev(ctx: RuntimeContext, opts: Options): Promi
 
   log.ok(`Started local Gorilator dev (pid ${child.pid}).`);
   await waitForStateRefresh(ctx, child.pid, startedAt);
+  await trackProjectServices(ctx, child.pid);
   await printProjectStatus(ctx, opts);
   process.stdout.write(`  Logs   : ${ctx.logPath}\n`);
+}
+
+/** Live per-service spinner while the dev server and Vite client come up. Each
+ *  tracks until its port answers (or the dev process dies / times out), and
+ *  surfaces the relevant log error inline if it doesn't. */
+async function trackProjectServices(ctx: RuntimeContext, pid: number): Promise<void> {
+  const state = readProjectState(ctx);
+  if (!state) return;
+  const ui = new Stepper("Starting services", [
+    { key: "server", label: `Game server :${state.serverPort}`, estimateMs: 12_000 },
+    { key: "client", label: `Client (Vite) :${state.clientPort}`, estimateMs: 16_000 },
+  ]);
+  ui.start();
+  try {
+    const serverUp = await ui.run("server", () =>
+      pollUntilUp(() => probeHealth(state.serverPort), pid),
+    );
+    if (!serverUp) ui.fail("server", devError(ctx) ?? "did not come up — check the logs");
+    const clientUp = await ui.run("client", () => pollUntilUp(() => probeHttp(state.clientPort), pid));
+    if (!clientUp) ui.fail("client", devError(ctx) ?? "did not come up — check the logs");
+  } finally {
+    ui.finish();
+  }
+}
+
+/** Poll `check` until it succeeds, the dev process exits, or the timeout. */
+async function pollUntilUp(
+  check: () => Promise<boolean>,
+  pid: number,
+  totalMs = 25_000,
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < totalMs) {
+    if (await check()) return true;
+    if (!isPidRunning(pid)) return false; // the dev process bailed
+    await sleep(400);
+  }
+  return false;
+}
+
+/** The most recent error-looking line from the dev log, for inline reporting. */
+function devError(ctx: RuntimeContext): string | null {
+  try {
+    const lines = readFileSync(ctx.logPath!, "utf8").split(/\r?\n/).filter(Boolean).slice(-80);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/error|EADDRINUSE|already in use|Exit status [1-9]|ELIFECYCLE|exited unexpectedly|failed/i.test(lines[i])) {
+        return lines[i].replace(/^\[\w+\]\s*/, "").trim().slice(0, 100);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export async function stopProjectDev(ctx: RuntimeContext): Promise<void> {
@@ -128,6 +193,9 @@ export async function printProjectStatus(ctx: RuntimeContext, opts: Options): Pr
   printField("State", label);
   printField("Files", ctx.appDir);
   printField("Ref", cfg.ref);
+  const wt = gitWorktreeName(ctx.appDir);
+  if (wt) printField("Worktree", wt);
+  printField("Environment", "development (dev server)");
   if (state) {
     const info = readEnvInfo(ctx.appDir, state.serverPort, state.clientPort);
     printField("PID", String(state.pid));
@@ -172,11 +240,12 @@ export async function printProjectStatus(ctx: RuntimeContext, opts: Options): Pr
   printPackageVersions(ctx.appDir, { heading: true });
 }
 
-export function logsProjectDev(ctx: RuntimeContext): void {
+export function logsProjectDev(ctx: RuntimeContext, { follow = true }: { follow?: boolean } = {}): void {
   assertProject(ctx);
   ensureLocalDir(ctx);
   if (!existsSync(ctx.logPath!)) writeFileSync(ctx.logPath!, "");
-  spawnSync("tail", ["-n", "100", "-f", ctx.logPath!], { stdio: "inherit" });
+  const args = ["-n", "100", ...(follow ? ["-f"] : []), ctx.logPath!];
+  spawnSync("tail", args, { stdio: "inherit" });
 }
 
 export async function updateProjectDev(ctx: RuntimeContext, opts: Options): Promise<void> {
@@ -298,7 +367,10 @@ async function waitForStateRefresh(
 
 function probeHttp(port: number, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = get({ host: "127.0.0.1", port, path: "/", timeout: timeoutMs }, (res) => {
+    // Use "localhost" (not 127.0.0.1) so the probe reaches a server bound to
+    // IPv6 ::1 — Vite's dev server listens on ::1 only, so an IPv4-only probe
+    // would report it "starting…" forever even when it's up.
+    const req = get({ host: "localhost", port, path: "/", timeout: timeoutMs }, (res) => {
       res.resume();
       res.on("end", () => resolve(Boolean(res.statusCode && res.statusCode < 500)));
     });

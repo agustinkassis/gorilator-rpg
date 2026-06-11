@@ -13,6 +13,8 @@ export interface SummaryInfo {
   monitorPass?: string;
   clientHost?: string; // legacy public play.* (from old split-host setups)
   serverHost?: string; // public game host (or legacy api.*)
+  tunnelMode?: string; // "temporary" | "permanent" (from TUNNEL_MODE)
+  dev?: boolean; // GORILATOR_DEV=1 → development environment (single-port build, NODE_ENV=development)
 }
 
 export interface PackageVersion {
@@ -97,6 +99,8 @@ export function readEnvInfo(
     monitorPass: e.MONITOR_PASS,
     clientHost: e.CLIENT_HOSTNAME,
     serverHost: e.SERVER_HOSTNAME,
+    tunnelMode: e.TUNNEL_MODE,
+    dev: e.GORILATOR_DEV === "1",
   };
 }
 
@@ -131,7 +135,8 @@ export function printPublic(info: SummaryInfo, opts: PrintPublicOptions = {}): b
   if (!info.clientHost && !info.serverHost) return false;
   if (opts.leadingBlank !== false) process.stdout.write("\n");
   if (opts.heading) {
-    printSection(typeof opts.heading === "string" ? opts.heading : "Public URLs");
+    const title = typeof opts.heading === "string" ? opts.heading : "Public URLs";
+    printSection(info.tunnelMode === "temporary" ? `${title} ${log.dim("(temporary tunnel)")}` : title);
   }
   const creds = info.monitorUser ? `  (user ${info.monitorUser})` : "";
   if (info.clientHost && info.serverHost && info.clientHost !== info.serverHost) {

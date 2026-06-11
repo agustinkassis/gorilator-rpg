@@ -1,4 +1,4 @@
-import { InventorySlot, ItemType, INV_SLOTS, INV_COLS } from "@rpg/shared";
+import { type InventorySlot, type ItemType, INV_SLOTS, INV_COLS } from "@rpg/shared";
 import { loadItemDefs, renderItemIcon } from "../items/itemRegistry";
 
 type HeldItem =

@@ -1,11 +1,11 @@
 import {
-  ClientPerfSample,
-  BenchmarkResult,
-  MetricSummary,
-  PerfBreakdown,
-  RenderProfile,
-  ResourceItem,
-  SlowEvent,
+  type ClientPerfSample,
+  type BenchmarkResult,
+  type MetricSummary,
+  type PerfBreakdown,
+  type RenderProfile,
+  type ResourceItem,
+  type SlowEvent,
   summarize,
 } from "@rpg/shared";
 

@@ -4,7 +4,7 @@
 
 ### Defend La Crypta.
 
-**An open-source online multiplayer RPG tower-defense — with the game-dev SDK built right into the game.**
+**An open-source Nostr MMORPG sandbox — anyone can run a world, create content, and players carry identity and progress across compatible servers.**
 
 [![Open Source](https://img.shields.io/badge/100%25-Open%20Source-ffcc33?style=flat-square)](https://github.com/agustinkassis/gorilator-rpg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](#license)
@@ -22,7 +22,9 @@
 
 ## What is Gorilator?
 
-Gorilator is a **multiplayer isometric RPG tower defense**. Pick a warrior, drop into a shared realm with other players, and hold **La Crypta** against waves of enemies — looting, crafting, and leveling as you go. Open two tabs (or invite friends to your server) and you'll see everyone move and fight in real time.
+Gorilator is an **open-source Nostr MMORPG sandbox** where anyone can run a world, create content, and let players carry identity and progress across compatible servers. Log in with your Nostr key and your character is *yours* — saved to public relays, not locked in one server's database.
+
+Today's gameplay is the sandbox's first **event module — "La Crypta Defense"**: pick a warrior, drop into a shared realm with other players, and hold **La Crypta** against waves of enemies — looting, crafting, and leveling as you go. Open two tabs (or invite friends to your server) and you'll see everyone move and fight in real time. Where the sandbox is headed — player-crafted gear, classes from wearables, trinity combat, survival & farming, quests, and cross-server federation — lives in **[the vision](docs/vision.md)** and **[the roadmap](ROADMAP.md)**.
 
 But the twist is what's *inside* the game: Gorilator ships a **developer SDK and world editor baked into the running client**. You don't clone a separate tool — you flip on Dev Mode, place props, import 3D models from the UI, define new items and entities, and **commit your changes from within the game itself**. Building the game and playing the game happen in the same window.
 
@@ -63,12 +65,12 @@ gorilator start       # start the service
 gorilator stop        # stop the service
 gorilator restart     # restart the service
 gorilator logs -f     # follow logs
-gorilator update      # git pull, rebuild, restart
+gorilator update      # fetch latest; rebuild & restart only what changed
 gorilator remote      # compare local package versions against remote/latest
-gorilator setup       # ports, server NSEC, Cloudflare tunnel, env
+gorilator setup       # general (name/NSEC/admins), ports, Cloudflare tunnel, dev mode, env
 ```
 
-`gorilator setup` can put your realm online on **your own subdomain** (`game.<yourdomain>`) through a Cloudflare Tunnel — anyone can run a server. Full details in **[DEPLOY.md](DEPLOY.md)**.
+`gorilator setup` can put your realm online with **one click** — a **temporary** Cloudflare tunnel (no account, an ephemeral `…trycloudflare.com` URL) by default, or a **permanent** tunnel on **your own subdomain** (`game.<yourdomain>`) after a Cloudflare login. Anyone can run a server. Full details in **[DEPLOY.md](DEPLOY.md)**.
 
 > Prefer containers? A **Docker Compose** stack and a one-click **[Railway](RAILWAY.md)** template ship in the repo too.
 
@@ -100,7 +102,7 @@ This makes content creation approachable: artists and designers can contribute m
 
 ## 🎮 Core systems
 
-- **Tower defense** — hold the house, break the waves.
+- **La Crypta Defense** — the first event module: hold the house, break the waves.
 - **RPG progression** — level up, loot, and craft.
 - **Online multiplayer** — server-authoritative Colyseus rooms with automatic state sync.
 - **Crafting & resource pickups** — gather and build.
@@ -136,11 +138,13 @@ packages/
 ## 💻 Develop locally
 
 ```bash
-pnpm install
-pnpm dev          # starts server + client together
+pnpm bootstrap    # one-time: install + .env + dev ports + warm build cache
+pnpm dev          # starts server + client together (~3s to interactive)
 ```
 
 Then open the client URL printed by `pnpm dev` (default <http://localhost:5173>). The live room-state inspector is at the monitor URL (default <http://localhost:2567/colyseus>).
+
+Verification: `pnpm exec turbo run lint typecheck build test` (cached DAG), `pnpm e2e` (Playwright), `pnpm bench` (server perf gate). Parallel worktrees with collision-free ports: `pnpm wt <name>`. Full workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - **Left-click the ground** → your warrior walks there.
 - **Left-click an enemy** → approach and attack; target takes damage, dies, respawns.
@@ -153,18 +157,22 @@ Then open the client URL printed by `pnpm dev` (default <http://localhost:5173>)
 
 Gorilator is under active development and built to be easy to jump into:
 
-- **Content** (models, props, items, entities) → use the **in-game dev SDK** above. No engine knowledge needed.
+- **Content** (models, props, items, entities) → use the **in-game dev SDK** above, or edit the JSON manifests directly. No engine knowledge needed.
+- **Plugins** (new AI brains, item effects, integrations) → drop a folder in [`plugins/`](docs/plugins.md) — **no core code changes**, fork-safe by design. Start from `plugins/_template/`; `plugins/example-arena/` shows every hook.
 - **Game logic** → it's all TypeScript in `packages/`, with shared schema imported by both client and server.
-- **Docs** → live in [`docs/`](docs/README.md): [getting started](docs/getting-started.md), [architecture](docs/architecture.md), [gameplay](docs/gameplay.md), [entities](docs/entities.md), [configuration](docs/configuration.md), [Nostr events](docs/nostr.md).
+- **Docs** → live in [`docs/`](docs/README.md): [getting started](docs/getting-started.md), [architecture](docs/architecture.md), [plugins](docs/plugins.md), [testing](docs/TESTING.md), [debugging](docs/DEBUGGING.md), [gameplay](docs/gameplay.md), [entities](docs/entities.md), [configuration](docs/configuration.md), [Nostr events](docs/nostr.md).
 
-Fork it, run `pnpm dev`, make a change, and open a PR. Server/realm discovery for external apps is documented in [REALMS.md](REALMS.md).
+The complete dev workflow (setup → verify → PR, fork rules, AI-assisted development) is in [CONTRIBUTING.md](CONTRIBUTING.md). Forks: customize `plugins/` + content + `realm.json`, never `packages/*/src` — then upstream merges stay conflict-free (`node scripts/check-fork.mjs` verifies). Server/realm discovery for external apps is documented in [REALMS.md](REALMS.md).
 
 ---
 
 ## 📚 Documentation
 
-- [Getting started](docs/getting-started.md)
+- [Vision](docs/vision.md) · [Roadmap](ROADMAP.md)
+- [Getting started](docs/getting-started.md) · [Contributing](CONTRIBUTING.md)
 - [Architecture & structure](docs/architecture.md)
+- [Plugins & extensibility](docs/plugins.md)
+- [Testing](docs/TESTING.md) · [Debugging](docs/DEBUGGING.md)
 - [Game dynamics](docs/gameplay.md)
 - [Entities & objects](docs/entities.md)
 - [Configuration & tuning](docs/configuration.md)

@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, watchFile } from "fs";
-import { resolve, dirname, join } from "path";
+import { readFileSync, existsSync, watchFile } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { setPropObstacles } from "./pathfinding";
 
 /** The importer writes the manifest into the client's public dir (so the browser
@@ -17,6 +17,7 @@ interface PropDef {
   z: number;
   model?: string; // path under public/, e.g. "/models/house.glb"
   scale?: number; // uniform model scale
+  rotationY?: number;
   collisionRadius?: number; // present + > 0 ⇒ concrete (blocks movement / bananas)
 }
 
@@ -29,6 +30,8 @@ export interface ConcreteProp {
   x: number;
   z: number;
   radius: number;
+  rotY: number;
+  scale: number;
   spawn: number;
 }
 let concreteCache: ConcreteProp[] = [];
@@ -117,7 +120,16 @@ function applyFrom(path: string): void {
         const vis = visualRadius(dir, p.model, p.scale ?? 1, coll * 2);
         // `radius` blocks movement (walk up to it); `spawn` keeps SPAWNS out of the
         // whole visible model so a restored position never lands inside a building.
-        return { id: p.id || p.model || "", model: p.model, x: p.x, z: p.z, radius: coll, spawn: Math.max(coll, vis) };
+        return {
+          id: p.id || p.model || "",
+          model: p.model,
+          x: p.x,
+          z: p.z,
+          radius: coll,
+          rotY: Number(p.rotationY) || 0,
+          scale: Math.max(0.05, Number(p.scale) || 1),
+          spawn: Math.max(coll, vis),
+        };
       });
     rebuildObstacles();
     console.log(`[props] ${props.length} prop(s), ${concreteCache.length} concrete (collision) from props.json`);

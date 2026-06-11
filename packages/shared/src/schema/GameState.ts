@@ -1,4 +1,4 @@
-import { Schema, type, MapSchema } from "@colyseus/schema";
+import { Schema, type, MapSchema, ArraySchema } from "@colyseus/schema";
 import { Player } from "./Player";
 import { Enemy } from "./Enemy";
 import { Potion } from "./Potion";
@@ -39,4 +39,12 @@ export class GameState extends Schema {
   // down (ms) to the next realm. > 0 means "game over — restarting" (the world is
   // frozen and every client shows the restart countdown); 0 means a realm is live.
   @type("number") restartTimerMs = 0;
+
+  // Admin runtime controls (Esc menu → Admin, ADMIN_NPUBS only). While false the
+  // wave clock holds in place (queued goblins stay queued); resuming continues
+  // the countdown where it stopped.
+  @type("boolean") wavesEnabled = true;
+  // Spawner ids (spawners.json) an admin has switched off; their countdowns
+  // freeze rather than reset, so re-enabling resumes mid-interval.
+  @type(["string"]) disabledSpawnerIds = new ArraySchema<string>();
 }

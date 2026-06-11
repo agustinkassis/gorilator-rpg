@@ -39,7 +39,7 @@ export class PerfOverlay {
     const panel = document.createElement("div");
     panel.id = "perfOverlay";
     panel.style.cssText =
-      "position:fixed; right:12px; top:40px; width:320px; max-height:calc(100vh - 56px); z-index:60; display:none;" +
+      "position:fixed; right:12px; top:12px; width:340px; max-height:calc(100vh - 24px); z-index:2147483647; display:none;" +
       "background:#0c0f16f2; border:1px solid #c9a24a; border-radius:8px;" +
       "box-shadow:0 8px 28px #000a; font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;" +
       "color:#e6e9f0; overflow:auto; user-select:none;";
@@ -169,12 +169,14 @@ export class PerfOverlay {
     const live = this.perf.summary(1).metrics; // last ~1s
     const latest = this.perf.latest();
     const fps = live.fps;
+    const currentFps = latest?.fps;
     const gpuTimer = this.perf.meta.gpuTimer === true;
 
     const lines: string[] = [];
     lines.push(
-      `${colorFps(fps ? fps.avg : 0)}  fps  ${fmt(fps, 0)}  (1%low ${fps ? oneLow(fps).toFixed(0) : "–"})`,
+      `${colorFps(currentFps ?? fps?.avg ?? 0)}  fps  now ${fmtNum(currentFps, 0)}  avg ${fmt(fps, 0)}  min ${fmtMin(fps, 0)}  max ${fmtMax(fps, 0)}`,
     );
+    lines.push(`        1%low ${fps ? oneLow(fps).toFixed(0) : "–"}  samples ${fps?.count ?? 0}`);
     lines.push(`frame   ${fmtMs(live.frameMs)}   gpu ${gpuTimer ? fmtMs(live.gpuMs) : "n/a"}`);
     lines.push(`heap    ${live.heapMB ? live.heapMB.avg.toFixed(0) + " MB" : "n/a (Chromium only)"}`);
     lines.push(
@@ -197,6 +199,7 @@ export class PerfOverlay {
     lines.push("\x1b");
     lines.push(this.renderServer());
 
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: \x1b is the deliberate separator sentinel pushed above
     this.body.textContent = lines.join("\n").replace(/\x1b/g, "─".repeat(34));
 
     if (this.perf.isBenchmarking()) {
@@ -295,6 +298,9 @@ function btn(bg: string, fg: string): string {
   );
 }
 const fmt = (s: MetricSummary | undefined, dp: number) => (s ? s.avg.toFixed(dp) : "–");
+const fmtNum = (v: number | undefined, dp: number) => (v === undefined || v === null ? "–" : v.toFixed(dp));
+const fmtMin = (s: MetricSummary | undefined, dp: number) => (s ? s.min.toFixed(dp) : "–");
+const fmtMax = (s: MetricSummary | undefined, dp: number) => (s ? s.max.toFixed(dp) : "–");
 const fmtMs = (s: MetricSummary | undefined) => (s ? `${s.avg.toFixed(2)}ms` : "–");
 const num = (v: number | undefined) => (v === undefined || v === null ? "–" : String(v));
 const kfmt = (v: number | undefined) =>

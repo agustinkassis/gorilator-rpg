@@ -19,9 +19,9 @@ test("project status prints package versions", () => {
 
     assert.match(output, /Gorilator Status/);
     assert.match(output, /Package Versions/);
-    assert.match(output, /  app\s+: v1\.0\.0/);
-    assert.match(output, /  cli\s+: v9\.8\.7/);
-    assert.match(output, /  server\s+: v3\.2\.1/);
+    assert.match(output, / {2}app\s+: v1\.0\.0/);
+    assert.match(output, / {2}cli\s+: v9\.8\.7/);
+    assert.match(output, / {2}server\s+: v3\.2\.1/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

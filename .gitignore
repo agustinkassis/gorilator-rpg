@@ -8,6 +8,15 @@ dist/
 .vite/
 packages/*/dist/
 
+# Build/test tooling caches and artefacts
+.turbo/
+*.tsbuildinfo
+coverage/
+.vite-cache/
+test-results/
+playwright-report/
+plugins/*/dist/
+
 # Realm-tracker lifetime stats (runtime state; mirrored to the Nostr event)
 .server-realms.json
 
@@ -26,11 +35,16 @@ packages/client/public/models/characters/
 
 # Shared agent/tooling config is committed so new developers get the same
 # startup flow. Local runtime state and machine-specific permissions stay out.
+# launch.json + worktrees-manifest.json are per-worktree GENERATED state
+# (pnpm bootstrap / pnpm wt:launch / pnpm wt) — never commit them.
 .claude/worktrees/
 .claude/worktrees.json
 .claude/cloud-worktrees.json
 .claude/settings.local.json
 .claude/**/*.local.json
+.claude/launch.json
+.claude/worktrees-manifest.json
+.claude/scheduled_tasks.lock
 .codex/worktrees/
 .codex/settings.local.json
 .codex/*.local.toml
@@ -41,3 +55,6 @@ packages/client/public/models/characters/
 
 # Per-issue git worktrees created by scripts/worktree-manager.mjs (local checkouts)
 worktrees/
+
+# Cached Nostr realm packs (kind-30333 data plugins; re-fetched on boot)
+.gorilator-packs/

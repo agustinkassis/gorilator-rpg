@@ -1,15 +1,15 @@
 import {
-  Scene,
-  AssetContainer,
+  type Scene,
+  type AssetContainer,
   SceneLoader,
   TransformNode,
-  AbstractMesh,
-  AnimationGroup,
+  type AbstractMesh,
+  type AnimationGroup,
   PBRMaterial,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
-import { AnimState } from "@rpg/shared";
-import { AnimationController, AnimGroups, AnimSpeeds } from "./AnimationController";
+import type { AnimState, CharacterStatsConfig, CommunityProvenance } from "@rpg/shared";
+import { AnimationController, type AnimGroups, type AnimSpeeds } from "./AnimationController";
 import { bounds } from "../scene/props";
 
 /**
@@ -34,11 +34,13 @@ export interface CharacterDef {
   id: string;
   name: string;
   category?: string;
+  description?: string; // free-text shown in the Library + community profile pages
   baseModel: string; // url under /models
   anims: Partial<Record<CharAction, CharAnim>>;
   yaw: number; // base orientation (radians)
   scale: number;
-  stats?: Record<string, number>; // default placeholders (driven by behaviors in a later phase)
+  stats?: CharacterStatsConfig; // combat tuning (maxHp/attack/armor/critChance/moveSpeed/throwPower/level/xp)
+  community?: CommunityProvenance; // set once published to / imported from the community
 }
 
 export interface AssembledCharacter {

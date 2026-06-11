@@ -3,8 +3,8 @@ import { randomBytes, createHmac, timingSafeEqual } from "node:crypto";
 import { verifyEvent } from "nostr-tools";
 import { getServerIdentity } from "./nostrIdentity";
 import {
-  PlayerSave,
-  InventorySlot,
+  type PlayerSave,
+  type InventorySlot,
   WORLD_SIZE,
   INV_SLOTS,
   MAX_STACK,

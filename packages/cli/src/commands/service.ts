@@ -1,7 +1,8 @@
 // `gorilator start|stop|restart|status|logs` — drive the OS service.
+import { startTunnelService } from "../lib/cloudflare.js";
 import { loadConfig } from "../lib/config.js";
-import type { RuntimeContext } from "../lib/context.js";
-import { probeHealth } from "../lib/health.js";
+import { describeTarget, gitWorktreeName, type RuntimeContext } from "../lib/context.js";
+import { probeHealth, waitForHealth } from "../lib/health.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
 import { defaultAppDir } from "../lib/paths.js";
@@ -28,6 +29,7 @@ import {
   printSection,
   readEnvInfo,
 } from "../lib/summary.js";
+import { Stepper, type StepPlan } from "../lib/progress.js";
 import { fetchUpdateStatus } from "../lib/updateStatus.js";
 
 export async function startCmd(ctx?: RuntimeContext, opts?: Options): Promise<void> {
@@ -35,13 +37,42 @@ export async function startCmd(ctx?: RuntimeContext, opts?: Options): Promise<vo
     await startProjectDev(ctx, requireOptions(opts));
     return;
   }
-  startService();
-  log.ok("Started.");
-  // Show where it now listens so the user knows what to point a tunnel/browser at.
+  await bringUpSystemServices(false);
+}
+
+/** Start (or restart) the system services behind a live per-service spinner: the
+ *  game daemon (waits for /healthz) and, when configured, the Cloudflare tunnel.
+ *  Each tracks live and surfaces its error inline if it doesn't come up. */
+async function bringUpSystemServices(restart: boolean): Promise<void> {
   const cfg = loadConfig();
   const appDir = cfg?.appDir ?? defaultAppDir();
   const info = readEnvInfo(appDir, cfg?.port ?? 2567, cfg?.clientPort);
-  printPorts(info);
+  const tunnelConfigured = Boolean(info.serverHost || info.clientHost);
+
+  const steps: StepPlan[] = [
+    { key: "daemon", label: `Game daemon :${info.port}`, estimateMs: restart ? 6_000 : 8_000 },
+    ...(tunnelConfigured ? [{ key: "tunnel", label: "Cloudflare tunnel", estimateMs: 4_000 }] : []),
+  ];
+  const ui = new Stepper(restart ? "Restarting services" : "Starting services", steps);
+  ui.start();
+  let healthy = false;
+  try {
+    healthy = await ui.run("daemon", async () => {
+      if (restart) restartService();
+      else startService();
+      return waitForHealth(info.port);
+    });
+    if (!healthy) ui.fail("daemon", "no /healthz yet — check 'gorilator logs'");
+    if (tunnelConfigured) {
+      const ok = await ui.run("tunnel", () => startTunnelService());
+      if (!ok) ui.fail("tunnel", "could not start — run 'gorilator tunnel restart'");
+    }
+  } catch (e) {
+    ui.finish();
+    log.die(`${restart ? "Restart" : "Start"} failed: ${e instanceof Error ? e.message : e}`);
+  }
+  ui.finish();
+  printPorts(info, healthy);
   printPublic(info);
 }
 
@@ -59,8 +90,7 @@ export async function restartCmd(ctx?: RuntimeContext, opts?: Options): Promise<
     await restartProjectDev(ctx, requireOptions(opts));
     return;
   }
-  restartService();
-  log.ok("Restarted.");
+  await bringUpSystemServices(true);
 }
 
 export interface LogsFlags {
@@ -73,7 +103,10 @@ export interface LogsFlags {
 
 export function logsCmd(ctx?: RuntimeContext, flags: LogsFlags = {}): void {
   if (ctx?.kind === "project") {
-    logsProjectDev(ctx);
+    // Project logs follow by default (CLI `gorilator logs`), unless told not to
+    // (e.g. the Main Menu shows a recent, non-blocking snapshot).
+    const follow = !flags["no-follow"] && (flags.follow ?? true);
+    logsProjectDev(ctx, { follow });
     return;
   }
   const cfg = loadConfig();
@@ -115,6 +148,9 @@ export async function statusCmd(ctx?: RuntimeContext, opts?: Options): Promise<v
     const healthy = await probeHealth(info.port);
     printField("Files", cfg.appDir);
     printField("Ref", cfg.ref);
+    printField("Environment", info.dev ? "development (dev server)" : "production");
+    const wt = ctx ? describeTarget(ctx).worktree : gitWorktreeName(cfg.appDir);
+    if (wt) printField("Worktree", wt);
     process.stdout.write("\n");
     printSection("Local URLs");
     printPorts(info, healthy);
@@ -142,7 +178,10 @@ async function printUpdateLine(port: number): Promise<void> {
   const u = await fetchUpdateStatus(port);
   if (!u) return;
   if (u.updateAvailable && u.latest) {
-    printField("Update", `${log.yellow(`⬆ ${u.latest.tag} available`)} — run 'gorilator update'`);
+    // Show the installed version so it's clear the gap is this install's, not
+    // (e.g.) the repo you're standing in.
+    const installed = u.current?.version ? ` ${log.dim(`(installed ${u.current.version})`)}` : "";
+    printField("Update", `${log.yellow(`⬆ ${u.latest.tag} available`)}${installed} — run 'gorilator update'`);
     process.stdout.write(`  ${" ".repeat(11)}  ${log.dim(u.latest.url)}\n`);
   } else if (u.enabled) {
     printField("Update", u.error ? log.dim("(check failed)") : log.green("up to date"));

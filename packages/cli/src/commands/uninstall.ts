@@ -3,10 +3,11 @@ import { existsSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import {
+  removeQuickTunnelService,
   removeTunnelLocalConfig,
   uninstallTunnelService,
 } from "../lib/cloudflare.js";
-import { loadConfig } from "../lib/config.js";
+import { installId, loadConfig, type TunnelRecord } from "../lib/config.js";
 import { removeWrapperGlobalCommands } from "../lib/globalCommand.js";
 import * as log from "../lib/log.js";
 import type { Options } from "../lib/options.js";
@@ -30,7 +31,7 @@ export function uninstall(opts: Options): void {
   }
 
   removeDaemon();
-  if (!opts.keepTunnel) removeTunnel();
+  if (!opts.keepTunnel) removeTunnel(cfg?.tunnel, appDir);
   removeInstallRecord();
   if (!opts.keepCommand) removeGlobalCommand();
   if (!opts.keepFiles) removeInstalledFiles(appDir);
@@ -52,11 +53,24 @@ function removeDaemon(): void {
   }
 }
 
-function removeTunnel(): void {
-  if (uninstallTunnelService()) log.ok("cloudflared service stopped/removed.");
+// Tear down ONLY what this install owns. A temporary install removes just its
+// per-install quick service (keyed by id); a permanent install removes the
+// shared `cloudflared` service + local config. A legacy install with no tracked
+// record cleans up both (the quick-service path also removes the pre-per-install
+// fixed-name unit). Another install's per-install quick service is never touched.
+function removeTunnel(record: TunnelRecord | undefined, appDir: string): void {
+  const id = installId({ appDir });
+  let removed = false;
+  if (!record || record.mode === "temporary") {
+    removed = removeQuickTunnelService(id) || removed;
+  }
+  if (!record || record.mode === "permanent") {
+    removed = uninstallTunnelService() || removed;
+    removeTunnelLocalConfig();
+    log.ok("Local cloudflared config/credentials removed.");
+  }
+  if (removed) log.ok("cloudflared service stopped/removed.");
   else log.warn("No local cloudflared service was removed.");
-  removeTunnelLocalConfig();
-  log.ok("Local cloudflared config/credentials removed.");
 }
 
 function removeInstallRecord(): void {

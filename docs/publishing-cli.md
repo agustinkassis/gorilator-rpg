@@ -14,8 +14,8 @@ The workflow lives at [`.github/workflows/publish-cli.yml`](../.github/workflows
    `workflow_dispatch` so it can be run manually from the **Actions** tab as a fallback.
 2. **Version gate** — the job first checks `npm view gorilator@<version>`. If that exact
    CLI version is **already on npm, it skips** build/test/publish (the job still passes).
-   So it publishes **only when the CLI version changed** — a release that bumps just the
-   app umbrella version (or doesn't touch the CLI) is a clean no-op here.
+   This lets app/client/server/shared/landing releases publish GitHub Release assets
+   without forcing a new CLI package version.
 3. **Build & test** — in `packages/cli`: `npm install`, `npm run build` (tsc), `npm test`.
 4. **Publish** — `npm publish`. No `NODE_AUTH_TOKEN`; the runner authenticates to npm
    via OIDC. Provenance is attached automatically (the job has `id-token: write`).
@@ -40,14 +40,15 @@ Two things had to be configured once; they're in place and don't need redoing:
 
 ## Versioning
 
-Each workspace package keeps its **own** version. The root `package.json` version is
-the project-wide **umbrella ("app") version** — it advances by the same semver level
-whenever any package is bumped. Always bump with the helper so the two move together:
+The root `package.json` version is the project-wide **app release version**.
+GitHub Release tags use that version. Package versions are independent, including
+the npm `gorilator` package. Always bump package versions with the helper so the
+changed package and app release move together:
 
 ```
 pnpm bump <cli|client|server|shared|landing> <major|minor|patch>
-# e.g. pnpm bump cli minor   →  cli 1.4.0→1.5.0  AND  app 0.3.0→0.4.0
-pnpm bump app <level>        # bump only the umbrella version (catch-up)
+# e.g. pnpm bump cli minor   →  cli 1.4.0→1.5.0  AND  app 1.4.0→1.5.0
+pnpm bump app <level>        # bump the app release version
 ```
 
 (See [`scripts/bump.mjs`](../scripts/bump.mjs). It rewrites just the `version` field,
@@ -55,19 +56,64 @@ so all other package.json formatting is preserved.)
 
 A PR CI check enforces this — [`version-guard.yml`](../.github/workflows/version-guard.yml)
 fails if a package version changed without the app version bumping by at least the same
-level. Run it locally with `pnpm version:check` (compares against `origin/main`).
+level.
+Run it locally with `pnpm version:check` (compares against `origin/main`).
 
 ## Releasing a new version
 
-1. **Bump the CLI:** `pnpm bump cli <major|minor|patch>` (this also bumps the app
-   umbrella version). Bumping the CLI is what makes CI actually publish (the version
-   gate skips when the CLI version is unchanged).
+1. Bump the changed package: `pnpm bump <cli|client|server|shared|landing> <major|minor|patch>`
+   (this also bumps the app release version). Use `pnpm bump cli <level>` only
+   when the CLI package itself should publish a new npm version.
 2. Commit and merge to `main`.
-3. Create a **GitHub Release** tagged with the **app (umbrella) version**, e.g.
+3. Create a **GitHub Release** tagged with the **app release version**, e.g.
    `vX.Y.Z` — the daemon auto-update compares the release tag's version against the
    app version (see [Auto-update check](#auto-update-check) below). Publishing the
    release fires CI.
-4. Watch the run in the **Actions** tab; on success the new CLI version is live on npm.
+4. Watch the run in the **Actions** tab. If the CLI package version is new, the
+   publish workflow builds/tests/publishes it; otherwise the workflow skips npm
+   publishing cleanly.
+
+Publishing a release also fires
+[`release-dist.yml`](../.github/workflows/release-dist.yml), which builds the game once
+and attaches a **prebuilt dist** asset (`gorilator-dist-<tag>.tar.gz` + `SHA256SUMS`) to
+the release. `gorilator install`/`update` download that instead of building locally — see
+[Prebuilt install](#prebuilt-install-fast-path) below.
+
+## Prebuilt install (fast path)
+
+`gorilator install`/`update` default to the **latest published release** (ref `latest`) and,
+for the standard same-origin deploy, **download the release's prebuilt dist** rather than
+running the ~45s client build. The daemon serves that prebuilt `packages/client/dist` and
+runs the server from source via `tsx`, so building the client on the box is unnecessary.
+
+- It still runs `pnpm install`, but **scoped to the server subtree** (`--filter @rpg/server...`)
+  — the server's runtime deps + `tsx` + `@rpg/shared`. The client's build-only deps (Babylon,
+  Vite) are skipped, since the daemon runs the server from source and serves the prebuilt client.
+- Falls back to **building from source** when there's no prebuilt asset — branch refs
+  (`--ref main`), forks without the asset, non-same-origin builds (`--server-url` / an explicit
+  `--client-port`), a checksum mismatch, or offline.
+- `gorilator update` re-resolves the newest release each run when installed on the `latest`
+  channel (stored in the install config); a pinned `--ref` updates to that ref.
+
+### Change-aware updates
+
+`gorilator update` compares **each package's version** (local vs incoming `package.json`) and
+applies only what changed:
+
+- **client** changed → refresh the client only; the daemon keeps running and serves the new
+  static assets with **no restart / no downtime**.
+- **server** changed → **restart the daemon** (and bounce the Cloudflare tunnel).
+- **cli** changed → rebuild the in-repo CLI only.
+- **shared** changed → it's foundational (server imports it, client bundles it, CLI uses it),
+  so it fans out to all of the above, including a server restart.
+- **app**/**landing** bumps alone → no daemon impact, nothing to apply.
+
+If nothing actionable changed, the update is a no-op. The prebuilt fast path downloads the
+release dist atomically (it already contains shared+client+cli `dist/`); the server-scoped
+`pnpm install` runs only when the server runtime actually changed.
+
+Build the artifact for an existing tag manually via **Actions → Release prebuilt dist → Run
+workflow** (`tag` input). The asset is **same-origin only**.
 
 ### Manual publish (fallback)
 

@@ -6,6 +6,8 @@ export class Tree extends Schema {
   @type("string") id = "";
   @type("number") x = 0;
   @type("number") z = 0;
+  @type("number") rotY = 0;
+  @type("number") scale = 1;
   @type("number") hp = TREE_HP;
   @type("number") maxHp = TREE_HP;
   @type("boolean") alive = true; // false = a stump waiting to regrow

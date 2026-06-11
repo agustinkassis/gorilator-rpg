@@ -1,15 +1,11 @@
 import {
-  GameState,
+  type GameState,
   Enemy,
-  Player,
-  House,
+  type Player,
+  type House,
   AnimState,
-  DamageEvent,
-  GOBLIN_MAX_HP,
+  type DamageEvent,
   GOBLIN_LEVEL,
-  GOBLIN_ATTACK,
-  GOBLIN_ARMOR,
-  GOBLIN_CRIT_CHANCE,
   GOBLIN_CHASE_SPEED,
   GOBLIN_PATROL_SPEED,
   GOBLIN_LEASH,
@@ -19,8 +15,8 @@ import {
   WAVE_SPAWN_ARC,
   ATTACK_VARIANCE,
   ARMOR_K,
-  statsForLevel,
   type BrainId,
+  type BrainWorld,
 } from "@rpg/shared";
 import { nearestFreeWorld, depenetrate } from "./pathfinding";
 import { applyDeathXpPenalty } from "./leveling";
@@ -29,6 +25,7 @@ import type { EmitKill } from "./combat";
 import { brainOf, configureEnemy } from "./enemyConfig";
 import { devTuning } from "./devTuning";
 import { customWave, type WaveEntry } from "./waves";
+import { serverPluginHost } from "./plugins/host";
 
 export type EmitDamage = (ev: DamageEvent) => void;
 
@@ -218,8 +215,13 @@ function liveWaveGoblins(state: GameState, waveNumber: number): number {
 function syncWaveState(state: GameState, clock: WaveClock) {
   state.waveNumber = clock.number;
   state.waveTimerMs = Math.max(0, clock.timer);
-  state.waveActive =
+  const active =
     clock.number > 0 && (clock.pending.length > 0 || liveWaveGoblins(state, clock.number) > 0);
+  // Plugin lifecycle events on the activity edge — the one chokepoint every wave
+  // path (waveSystem, forceNextWave) flows through.
+  if (active && !state.waveActive) serverPluginHost.fire("wave:start", { wave: clock.number }, state);
+  else if (!active && state.waveActive) serverPluginHost.fire("wave:end", { wave: clock.number }, state);
+  state.waveActive = active;
 }
 
 /** The rest after wave N — it grows so there's more time to rebuild as the siege
@@ -248,8 +250,9 @@ export function waveSystem(state: GameState, dt: number) {
   }
 
   const { alive } = playerLevelStats(state);
-  if (alive === 0) {
-    // nobody defending — hold the countdown in place (don't reset it to a grace)
+  if (alive === 0 || !state.wavesEnabled) {
+    // nobody defending, or an admin stopped the waves — hold the countdown in
+    // place (don't reset it to a grace); queued spawns stay queued too.
     syncWaveState(state, clock);
     return;
   }
@@ -352,7 +355,7 @@ function nearestPlayer(state: GameState, g: Enemy): { p: Player; d: number } | n
 
 function isDefendingHome(home: House | null, p: Player): boolean {
   if (!home) return true;
-  return Math.hypot(p.x - home.x, p.z - home.z) <= home.radius + GOBLIN_LEASH;
+  return Math.hypot(p.x - home.x, p.z - home.z) <= home.radius * (home.scale || 1) + GOBLIN_LEASH;
 }
 
 /**
@@ -366,6 +369,17 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
   const dtMs = dt * 1000;
   const remove: string[] = [];
   const home = homeOf(state);
+
+  // World helpers handed to plugin-registered brains (registerBrain) so custom
+  // AI reuses the same targeting/steering primitives as the builtins.
+  const world: BrainWorld = {
+    nearestPlayer: (g) => nearestPlayer(state, g),
+    home: () => {
+      const h = homeOf(state);
+      return h ? { id: h.id, x: h.x, z: h.z, radius: h.radius, scale: h.scale || 1 } : null;
+    },
+    stepToward: (g, x, z, speed, stepDt) => stepToward(g, x, z, speed, stepDt),
+  };
 
   state.enemies.forEach((g) => {
     const brain = brainOf(g);
@@ -394,6 +408,20 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
       g.stateTimer -= dtMs;
       if (g.stateTimer <= 0) {
         connectEnemyAttack(state, g, emitDamage, emitKill);
+        g.state = AnimState.IDLE;
+      }
+      return;
+    }
+
+    // Plugin-registered brains dispatch first (a plugin may also deliberately
+    // override a builtin id). The timed states above (DEAD/HIT/ATTACK) already
+    // ran, so a custom brain only steers — combat resolution stays host-owned.
+    const pluginBrain = serverPluginHost.brains.get(brain);
+    if (pluginBrain) {
+      try {
+        pluginBrain(g, dt, state, world);
+      } catch (err) {
+        console.error(`[plugins] brain "${brain}" failed:`, err);
         g.state = AnimState.IDLE;
       }
       return;
@@ -442,7 +470,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
 
     // ---- Priority 2: march on the home and attack it ----
     if (home) {
-      const reach = home.radius + tuning.enemyAttackRange;
+      const reach = home.radius * (home.scale || 1) + tuning.enemyAttackRange;
       const d = Math.hypot(home.x - g.x, home.z - g.z);
       if (d <= reach) {
         g.rotY = Math.atan2(home.x - g.x, home.z - g.z);
@@ -537,7 +565,7 @@ function connectGoblinHouseHit(state: GameState, g: Enemy, emitDamage: EmitDamag
   if (!house || !house.alive) return;
   if (house.maxHp <= 0) return; // dev-set HP 0 ⇒ indestructible: swing connects but deals no damage
   const d = Math.hypot(house.x - g.x, house.z - g.z);
-  if (d > house.radius + tuning.enemyAttackRange * 1.4) return; // shoved out of reach
+  if (d > house.radius * (house.scale || 1) + tuning.enemyAttackRange * 1.4) return; // shoved out of reach
   const dmg = g.houseDamage || tuning.goblinHouseDamage; // per-spawner override
   house.hp = Math.max(0, house.hp - dmg);
   emitDamage({ targetId: house.id, amount: dmg, crit: false });

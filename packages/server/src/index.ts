@@ -1,9 +1,9 @@
 import "./systems/webcrypto";
-import { createServer } from "http";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
-import { Server } from "@colyseus/core";
+import { matchMaker, Server } from "@colyseus/core";
 import { Encoder } from "@colyseus/schema";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { monitor } from "@colyseus/monitor";
@@ -17,6 +17,7 @@ import { updateChecker } from "./systems/updateCheck";
 import { adminCount, isAdmin, listAdminNpubs } from "./systems/admins";
 import { requireAdmin, verifyNip98, type AdminRequest } from "./systems/nip98";
 import { canSelfUpdate, startSelfUpdate } from "./systems/selfUpdate";
+import { createDevEditorRouter } from "./dev/editorApi";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -87,6 +88,28 @@ app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
 // docs/performance.md.
 app.get("/api/perf", (_req, res) => res.json(perfTracker.snapshot()));
 
+// Run a labelled server benchmark and return the BenchmarkResult JSON (it is
+// also written to perf-logs/bench-<label>-<ts>.json). This is how `pnpm bench`
+// captures scenarios. Body: { label?: string, durationMs?: number }.
+// Open in dev / GORILATOR_TEST runs; behind the monitor Basic-auth when
+// MONITOR_USER/PASS are set (same trust level as /colyseus).
+const benchHandler = async (req: Request, res: Response) => {
+  const label = String(req.body?.label ?? "adhoc").replace(/[^a-zA-Z0-9_.-]/g, "_");
+  // Capped under Node's default 300s requestTimeout — the response waits for the run.
+  const durationMs = Math.max(1_000, Math.min(120_000, Number(req.body?.durationMs) || 15_000));
+  if (perfTracker.isBenchmarking()) {
+    res.status(409).json({ error: "a benchmark is already running" });
+    return;
+  }
+  const result = await perfTracker.startBenchmark(label, durationMs);
+  res.json(result);
+};
+if (monitorUser && monitorPass) {
+  app.post("/api/bench", monitorAuth, benchHandler);
+} else {
+  app.post("/api/bench", benchHandler);
+}
+
 // Auto-update status: the daemon's cached verdict on whether a newer GitHub
 // release exists. The game splash polls this to show an "update available"
 // banner; the `gorilator` CLI surfaces it in `status`. See systems/updateCheck.
@@ -125,6 +148,17 @@ app.post("/api/admin/update", requireAdmin, (req: AdminRequest, res: Response) =
   console.log(`[admin] update triggered by ${req.adminPubkey?.slice(0, 12)}… from v${fromVersion}`);
   res.status(202).json({ started: true, fromVersion });
 });
+
+// Dev-mode in-game editor API: persists the Dev Mode editor's changes to the
+// content manifests (packages/client/public/*.json) so the editor works on a
+// single-port, built-client dev server (where Vite — and its `/__*/` endpoints —
+// isn't running). Mounted ONLY in development; every mutating route is NIP-98
+// admin-gated (see dev/editorApi). Must come BEFORE the SPA fallback so `/__*`
+// isn't shadowed by the index.html catch-all.
+if (process.env.NODE_ENV === "development") {
+  app.use(createDevEditorRouter());
+  console.log("[dev] in-game editor API mounted (/__*, admin-gated) — NODE_ENV=development");
+}
 
 // SPA fallback (single-service only): unmatched GETs return index.html so the
 // client renders, but never shadow the monitor or Colyseus matchmaking routes.
@@ -170,6 +204,14 @@ gameServer
     realmTracker.init(); // realm/stats tracking + Nostr discovery event + /api/* (see REALMS.md)
     perfTracker.init(); // CPU/memory/tick sampling + /api/perf (+ JSONL when PERF_LOG=1)
     updateChecker.init(); // periodic GitHub release check → /api/update (UPDATE_CHECK_HOURS)
+    if (process.env.GORILATOR_TEST === "1") {
+      // Test/bench mode: pre-create the room so the 20Hz simulation ticks (and
+      // POST /api/bench can sample it) without needing a client to join first.
+      matchMaker
+        .createRoom(ROOM_NAME, {})
+        .then(() => console.log("[server] GORILATOR_TEST=1 — room pre-created for bench/e2e"))
+        .catch((err) => console.error("[server] test room pre-create failed", err));
+    }
   })
   .catch((err) => {
     console.error("[server] failed to start", err);

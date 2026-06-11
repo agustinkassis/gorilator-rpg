@@ -64,5 +64,16 @@
       },
       "hp": 2000
     }
+  },
+  {
+    "id": "goblin_house_1780338969291-spawn-mq1b9ae2",
+    "ownerId": "/models/goblin_house.glb",
+    "type": "goblin",
+    "intervalMs": 230000,
+    "cap": 3,
+    "behavior": {
+      "brain": "attacks_home",
+      "stats": {}
+    }
   }
 ]

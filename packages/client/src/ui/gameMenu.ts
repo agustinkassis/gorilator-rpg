@@ -1,30 +1,65 @@
-import type { Engine, ShadowGenerator } from "@babylonjs/core";
+import type { Engine } from "@babylonjs/core";
 import type { AudioManager } from "../audio/AudioManager";
 import type { NetworkClient } from "../net/NetworkClient";
+import type { ShadowMode, ShadowRuntime } from "../scene/contactShadows";
 
-type View = "main" | "hotkeys" | "sound" | "graphics" | "developer";
+type View = "main" | "hotkeys" | "sound" | "graphics" | "developer" | "admin";
 type Quality = "low" | "medium" | "high";
 
 interface Settings {
   master: number; // 0..100
   music: number; // 0..100
   sfx: number; // 0..100
-  shadows: boolean;
+  shadowMode: ShadowMode;
   quality: Quality;
   devLabels: boolean;
 }
 
 const STORE = "gorilator-settings";
-const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadows: true, quality: "medium", devLabels: false };
+const SHADOW_MODE_SETTINGS_VERSION = 1;
+const DEFAULTS: Settings = { master: 80, music: 50, sfx: 90, shadowMode: "contact2d", quality: "medium", devLabels: false };
 // hardware scaling: >1 lower-res/faster, <1 super-sampled/sharper-slower.
 const QUALITY_SCALE: Record<Quality, number> = { low: 2.0, medium: 1.0, high: 0.66 };
+const SHADOW_LABELS: Record<ShadowMode, string> = {
+  off: "Off",
+  contact2d: "2D Optimized",
+  legacy3d: "Legacy 3D",
+};
+
+function isShadowMode(value: unknown): value is ShadowMode {
+  return value === "off" || value === "contact2d" || value === "legacy3d";
+}
+
+export function loadStoredShadowMode(): ShadowMode {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || "{}") as {
+      shadowMode?: unknown;
+      shadows?: unknown;
+    };
+    if (isShadowMode(saved.shadowMode)) return saved.shadowMode;
+    if (typeof saved.shadows === "boolean") return saved.shadows ? "contact2d" : "off";
+  } catch {
+    /* storage unavailable */
+  }
+  return DEFAULTS.shadowMode;
+}
+
+// One row of the admin spawner list — a light client-side mirror of the entries
+// in spawners.json (the server normalizes the same fields in normalizeSpawner).
+interface SpawnerEntry {
+  id: string;
+  label: string;
+  type: string;
+}
 
 export interface GameMenuDeps {
   net: NetworkClient;
   audio: AudioManager;
   engine: Engine;
-  shadow: ShadowGenerator;
+  shadows: ShadowRuntime;
   isNostrVerified: () => boolean;
+  /** True when the local player's server-vouched pubkey is an ADMIN_NPUBS admin. */
+  isAdmin: () => boolean;
   developerLabels?: {
     isEnabled: () => boolean;
     setEnabled: (on: boolean) => void;
@@ -89,15 +124,38 @@ export class GameMenu {
 
   private load(): Settings {
     try {
-      return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE) || "{}") };
+      const saved = JSON.parse(localStorage.getItem(STORE) || "{}") as Partial<Settings> & {
+        shadows?: unknown;
+      };
+      const settings = {
+        ...DEFAULTS,
+        ...saved,
+        shadowMode: isShadowMode(saved.shadowMode)
+          ? saved.shadowMode
+          : typeof saved.shadows === "boolean"
+            ? saved.shadows
+              ? "contact2d"
+              : "off"
+            : DEFAULTS.shadowMode,
+      } as Settings & { shadows?: unknown };
+      delete settings.shadows;
+      return settings;
     } catch {
       return { ...DEFAULTS };
     }
   }
   private save() {
     this.syncAudioSettings();
+    const persisted = { ...(this.settings as Settings & { shadows?: unknown }) };
+    delete persisted.shadows;
     try {
-      localStorage.setItem(STORE, JSON.stringify(this.settings));
+      localStorage.setItem(
+        STORE,
+        JSON.stringify({
+          ...persisted,
+          shadowModeSettingsVersion: SHADOW_MODE_SETTINGS_VERSION,
+        }),
+      );
     } catch {
       /* storage unavailable */
     }
@@ -112,13 +170,8 @@ export class GameMenu {
     this.deps.audio.setMasterVolume(s.master / 100);
     this.deps.audio.setMusicVolume(s.music / 100);
     this.deps.audio.setSfxVolume(s.sfx / 100);
-    this.setShadows(s.shadows);
     this.deps.engine.setHardwareScalingLevel(QUALITY_SCALE[s.quality]);
     this.deps.developerLabels?.setEnabled(s.devLabels);
-  }
-  private setShadows(on: boolean) {
-    const light = this.deps.shadow.getLight() as unknown as { shadowEnabled: boolean };
-    if (light) light.shadowEnabled = on;
   }
 
   // ---- views ----
@@ -128,6 +181,7 @@ export class GameMenu {
     else if (this.view === "sound") this.renderSound();
     else if (this.view === "graphics") this.renderGraphics();
     else if (this.view === "developer") this.renderDeveloper();
+    else if (this.view === "admin") this.renderAdmin();
     else this.renderMain();
   }
 
@@ -161,6 +215,7 @@ export class GameMenu {
       item("gmSound", "🔊", "Sound settings") +
       item("gmGraphics", "🖥️", "Graphics settings") +
       (this.deps.developerLabels ? item("gmDeveloper", "DEV", "Developer Settings") : "") +
+      (this.deps.isAdmin() ? item("gmAdmin", "🛡️", "Admin controls") : "") +
       (showNostr ? item("gmNostr", "⚡", "Login with Nostr") : "") +
       item("gmSuicide", "💀", "Kill yourself", "gmWarn") +
       item("gmExit", "🚪", "Exit game", "gmDanger") +
@@ -171,6 +226,7 @@ export class GameMenu {
     this.on("gmSound", () => this.openTo("sound"));
     this.on("gmGraphics", () => this.openTo("graphics"));
     this.on("gmDeveloper", () => this.openTo("developer"));
+    this.on("gmAdmin", () => this.openTo("admin"));
     // Nostr login + exit both return to the splash (the canonical entry); logging in
     // with Nostr there restores any saved character for that npub.
     this.on("gmNostr", () => window.location.reload());
@@ -248,22 +304,31 @@ export class GameMenu {
     const s = this.settings;
     const qBtn = (q: Quality, label: string) =>
       `<button class="gmQual${s.quality === q ? " gmQualOn" : ""}" data-q="${q}">${label}</button>`;
+    const shadowBtn = (mode: ShadowMode) =>
+      `<button class="gmShadowMode${s.shadowMode === mode ? " gmShadowModeOn" : ""}" data-shadow-mode="${mode}">${SHADOW_LABELS[mode]}</button>`;
     this.panel.innerHTML =
       this.head("Graphics", true) +
       `<div class="gmBody">` +
-      `<div class="gmRow"><label>🌑 Shadows</label><button id="gmShadows" class="gmToggle">${s.shadows ? "On" : "Off"}</button></div>` +
+      `<div class="gmRow gmShadowRow"><label>🌑 Shadows</label><div class="gmShadowModes">${shadowBtn("off")}${shadowBtn("contact2d")}${shadowBtn("legacy3d")}</div></div>` +
       `<div class="gmRow"><label>✨ Quality</label><div class="gmQuals">${qBtn("low", "Low")}${qBtn("medium", "Medium")}${qBtn("high", "High")}</div></div>` +
       `<div class="gmNote">Quality sets the render resolution — lower it if the game runs slow.</div>` +
       `</div>`;
     this.wireHead();
-    const sh = this.panel.querySelector<HTMLElement>("#gmShadows");
-    if (sh)
-      sh.onclick = () => {
-        this.settings.shadows = !this.settings.shadows;
-        this.setShadows(this.settings.shadows);
-        sh.textContent = this.settings.shadows ? "On" : "Off";
+    this.panel.querySelectorAll<HTMLElement>(".gmShadowMode").forEach((b) => {
+      b.onclick = () => {
+        const mode = b.dataset.shadowMode as ShadowMode;
+        if (!isShadowMode(mode) || mode === this.settings.shadowMode) return;
+        const current = SHADOW_LABELS[this.settings.shadowMode];
+        const next = SHADOW_LABELS[mode];
+        const reload = window.confirm(
+          `Switch shadows from ${current} to ${next}?\n\nThis requires reloading the game to rebuild the scene with only the selected shadow system active.`,
+        );
+        if (!reload) return;
+        this.settings.shadowMode = mode;
         this.save();
+        window.location.reload();
       };
+    });
     this.panel.querySelectorAll<HTMLElement>(".gmQual").forEach((b) => {
       b.onclick = () => {
         const q = b.dataset.q as Quality;
@@ -273,6 +338,87 @@ export class GameMenu {
         this.renderGraphics(); // refresh the active highlight
       };
     });
+  }
+
+  /** Admin controls (ADMIN_NPUBS only): stop/resume the wave clock and switch
+   *  individual spawners on/off. Reads live room state; the server re-checks
+   *  the admin allowlist on every message, so this UI is just a convenience. */
+  private renderAdmin() {
+    const state = this.deps.net.room?.state;
+    if (!this.deps.isAdmin() || !state) {
+      this.openTo("main");
+      return;
+    }
+    const wavesOn = state.wavesEnabled !== false;
+    this.panel.innerHTML =
+      this.head("Admin controls", true) +
+      `<div class="gmBody">` +
+      `<div class="gmAdminRow"><span class="gmAdminLabel">🌊 Goblin waves</span>${toggleHtml(`id="gmAdmWaves"`, wavesOn)}</div>` +
+      `<div class="gmNote">Off holds the wave clock in place (wave ${state.waveNumber}, next in ${Math.ceil(state.waveTimerMs / 1000)}s); On resumes the countdown where it stopped.</div>` +
+      `<div class="gmSection">Spawners</div>` +
+      `<div id="gmAdmSpawners"><div class="gmNote">Loading spawners…</div></div>` +
+      `</div>`;
+    this.wireHead();
+
+    let waves = wavesOn;
+    this.on("gmAdmWaves", () => {
+      waves = !waves;
+      this.deps.net.sendAdminWaves(waves);
+      setToggle(this.panel.querySelector("#gmAdmWaves"), waves);
+    });
+
+    void this.fetchSpawners().then((list) => {
+      if (this.view !== "admin") return; // navigated away while loading
+      const host = this.panel.querySelector<HTMLElement>("#gmAdmSpawners");
+      if (!host) return;
+      if (!list.length) {
+        host.innerHTML = `<div class="gmNote">No spawners configured (spawners.json).</div>`;
+        return;
+      }
+      const disabled = new Set<string>(this.deps.net.room?.state.disabledSpawnerIds ?? []);
+      host.innerHTML = list
+        .map(
+          (s) =>
+            `<div class="gmAdminRow"><span class="gmAdminLabel" title="${esc(s.id)}">${esc(s.label)}</span>` +
+            `<span class="gmTag">${esc(s.type)}</span>` +
+            toggleHtml(`data-spawner="${esc(s.id)}"`, !disabled.has(s.id)) +
+            `</div>`,
+        )
+        .join("");
+      host.querySelectorAll<HTMLElement>("button[data-spawner]").forEach((b) => {
+        b.onclick = () => {
+          const enable = b.classList.contains("gmToggleOff"); // currently off → enable
+          this.deps.net.sendAdminSpawner(b.dataset.spawner ?? "", enable);
+          setToggle(b, enable);
+        };
+      });
+    });
+  }
+
+  /** The spawner list for the admin view, read from the same manifest the
+   *  server watches (it lives in the client's public dir). Fetched fresh on
+   *  every open so dev-editor changes show up without a reload. */
+  private async fetchSpawners(): Promise<SpawnerEntry[]> {
+    try {
+      const res = await fetch("/spawners.json", { cache: "no-store" });
+      if (!res.ok) return [];
+      const arr: unknown = await res.json();
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === "object" && !!(s as Record<string, unknown>).id)
+        .map((s) => {
+          const behavior = (s.behavior ?? {}) as Record<string, unknown>;
+          const modelId = s.modelId || behavior.modelId;
+          return {
+            id: String(s.id),
+            label: String(s.label || behavior.label || s.id),
+            // same type fallback as the server's normalizeSpawner
+            type: String(s.type || s.spawnType || (modelId ? "npc" : "goblin")),
+          };
+        });
+    } catch {
+      return [];
+    }
   }
 
   private renderDeveloper() {
@@ -302,6 +448,24 @@ export class GameMenu {
 function volumeOpacity(v: number): number {
   const n = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
   return 0.2 + n * 0.8;
+}
+
+function esc(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+  );
+}
+
+function toggleHtml(attrs: string, on: boolean): string {
+  return `<button ${attrs} class="gmToggle ${on ? "gmToggleOn" : "gmToggleOff"}">${on ? "On" : "Off"}</button>`;
+}
+
+function setToggle(el: HTMLElement | null, on: boolean) {
+  if (!el) return;
+  el.textContent = on ? "On" : "Off";
+  el.classList.toggle("gmToggleOn", on);
+  el.classList.toggle("gmToggleOff", !on);
 }
 
 let injected = false;
@@ -352,9 +516,19 @@ function injectStyles() {
     #gameMenu .gmSlider { flex:1; }
     #gameMenu .gmVal { width:40px; text-align:right; font-size:12px; color:#9fb0c0; }
     #gameMenu .gmToggle { cursor:pointer; padding:5px 16px; background:#2a3242; color:#e8edf6; border:1px solid #4a5568; border-radius:6px; font-weight:600; }
+    #gameMenu .gmToggleOn { border-color:#a8d65a88; color:#cfe9a8; }
+    #gameMenu .gmToggleOff { border-color:#e0563f66; color:#ff9a8a; }
+    #gameMenu .gmSection { margin-top:6px; padding:4px; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#8a94a6; border-bottom:1px solid #232b39; }
+    #gameMenu .gmAdminRow { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px solid #232b39; }
+    #gameMenu .gmAdminLabel { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:#cdd3e0; }
+    #gameMenu .gmTag { flex:none; font:600 10px monospace; color:#9fb0c0; background:#11151d; border:1px solid #3a4456; border-radius:5px; padding:2px 6px; }
     #gameMenu .gmQuals { display:flex; gap:6px; flex:1; }
     #gameMenu .gmQual { flex:1; cursor:pointer; padding:6px 0; background:#222a38; color:#cdd3e0; border:1px solid #3a4456; border-radius:6px; font-size:12px; font-weight:600; }
     #gameMenu .gmQualOn { background:#c9a24a; color:#1a1207; border-color:#c9a24a; }
+    #gameMenu .gmShadowRow { align-items:flex-start; }
+    #gameMenu .gmShadowModes { display:flex; flex:1; gap:6px; flex-wrap:wrap; }
+    #gameMenu .gmShadowMode { flex:1 1 72px; min-height:30px; cursor:pointer; padding:6px 8px; background:#222a38; color:#cdd3e0; border:1px solid #3a4456; border-radius:6px; font-size:12px; font-weight:700; }
+    #gameMenu .gmShadowModeOn { background:#c9a24a; color:#1a1207; border-color:#c9a24a; }
     body.preGame #gameMenu { display: none !important; }
   `;
   const style = document.createElement("style");

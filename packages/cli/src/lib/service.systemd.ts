@@ -1,6 +1,7 @@
 // systemd backend (Linux). Installs a system unit that runs `gorilator serve`
 // as the install user and restarts on failure. Privileged steps use sudo.
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import * as log from "./log.js";
 import { SYSTEMD_UNIT, SYSTEMD_UNIT_PATH } from "./paths.js";
 import {
@@ -52,6 +53,10 @@ export function stop(): void {
 
 export function restart(): void {
   runPrivileged("systemctl", ["restart", SYSTEMD_UNIT]);
+}
+
+export function installed(): boolean {
+  return existsSync(SYSTEMD_UNIT_PATH);
 }
 
 export function status(): ServiceStatus {

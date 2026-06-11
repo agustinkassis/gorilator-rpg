@@ -1,5 +1,5 @@
 import {
-  GameState,
+  type GameState,
   AnimState,
   WORLD_SIZE,
   Tree,
@@ -16,7 +16,7 @@ import {
   ROCK_ARMOR,
   HOUSE_HP,
   HOUSE_COLLISION_RADIUS,
-  BrainId,
+  type BrainId,
 } from "@rpg/shared";
 import { entityHp } from "./entityFeatures";
 import { configureEnemy } from "./enemyConfig";
@@ -35,7 +35,8 @@ import { safeItemId, spawnCustomItem } from "./items";
  * the live Rock entities (see GameRoom). Crates remain static for now.
  */
 
-type EditableMap = { get(id: string): { x: number; z: number } | undefined; delete(id: string): boolean };
+type EditableEntity = { x: number; z: number; rotY?: number; scale?: number };
+type EditableMap = { get(id: string): EditableEntity | undefined; delete(id: string): boolean };
 
 /** The synced state map a dev-editable `kind` lives in (or null if not editable). */
 function mapFor(state: GameState, kind: string): EditableMap | null {
@@ -66,6 +67,25 @@ function mapFor(state: GameState, kind: string): EditableMap | null {
 const clamp = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
 const safeId = (kind: string, id: string) =>
   id && id.length <= 80 ? id : `dev-${kind}-${Date.now().toString(36)}`;
+const normalizedScale = (value: number | boolean | string) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0.05, Math.min(40, n)) : 1;
+};
+
+function setCommonTransform(obj: EditableEntity | undefined, field: string, value: number | boolean | string): boolean {
+  if (!obj) return false;
+  if (field === "rotY") {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return false;
+    obj.rotY = n;
+    return true;
+  }
+  if (field === "scale") {
+    obj.scale = normalizedScale(value);
+    return true;
+  }
+  return false;
+}
 
 export function devSpawn(
   state: GameState,
@@ -213,6 +233,7 @@ export function devSet(
   if (kind === "tree") {
     const t = state.trees.get(id);
     if (!t) return false;
+    if (setCommonTransform(t, field, value)) return true;
     if (field === "maxHp") {
       t.maxHp = Math.max(0, Number(value) || 0);
       t.hp = t.maxHp <= 0 ? 0 : Math.min(t.hp || t.maxHp, t.maxHp);
@@ -229,6 +250,7 @@ export function devSet(
   if (kind === "enemy") {
     const e = state.enemies.get(id);
     if (!e) return false;
+    if (setCommonTransform(e, field, value)) return true;
     if (field === "maxHp") {
       e.maxHp = Math.max(0, Number(value) || 0);
       e.hp = e.maxHp <= 0 ? 0 : Math.min(e.hp || e.maxHp, e.maxHp);
@@ -268,6 +290,7 @@ export function devSet(
   if (kind === "rock") {
     const r = state.rocks.get(id);
     if (!r) return false;
+    if (setCommonTransform(r, field, value)) return true;
     if (field === "maxHp") {
       r.maxHp = Math.max(0, Number(value) || 0);
       r.hp = r.maxHp <= 0 ? 0 : Math.min(r.hp || r.maxHp, r.maxHp);
@@ -283,6 +306,7 @@ export function devSet(
   if (kind === "player") {
     const p = state.players.get(id);
     if (!p) return false;
+    if (setCommonTransform(p, field, value)) return true;
     if (field === "maxHp") {
       p.maxHp = Math.max(0, Number(value) || 0);
       p.hp = p.maxHp <= 0 ? 0 : Math.min(p.hp || p.maxHp, p.maxHp);
@@ -307,6 +331,7 @@ export function devSet(
   if (kind === "house") {
     const h = state.houses.get(id);
     if (!h) return false;
+    if (setCommonTransform(h, field, value)) return true;
     if (field === "maxHp") {
       // A structure's HP. 0 ⇒ INDESTRUCTIBLE: damage is ignored server-side
       // (combat guards on maxHp), so the home never collapses.
@@ -328,6 +353,7 @@ export function devSet(
   if (kind === "structure") {
     const s = state.structures.get(id);
     if (!s) return false;
+    if (setCommonTransform(s, field, value)) return true;
     if (field === "maxHp") {
       const v = Math.max(0, Math.round(Number(value) || 0));
       s.maxHp = v;
@@ -342,5 +368,6 @@ export function devSet(
     }
     return false;
   }
-  return false;
+  const obj = mapFor(state, kind)?.get(id);
+  return setCommonTransform(obj, field, value);
 }

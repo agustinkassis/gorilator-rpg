@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_CLIENT_PORT = 5173;
 const DEFAULT_SERVER_PORT = 2567;
+const cliArgs = process.argv.slice(2);
+// --skip-shared: don't spawn the shared tsc watcher (another process already
+// watches it, e.g. a second `pnpm dev` in a sibling worktree sharing the tree).
+const skipShared = cliArgs.includes("--skip-shared");
 const isTty = Boolean(process.stdout.isTTY);
 const colors = {
   reset: isTty ? "\x1b[0m" : "",
@@ -79,6 +83,9 @@ const clientPort = await findFreePort(requestedClientPort);
 const serverPort = await findFreePort(requestedServerPort);
 const devEnv = {
   ...process.env,
+  // Explicitly a dev server: the server opens the dev_* (Dev Mode editor)
+  // messages to every client only when NODE_ENV says so (systems/devAuth.ts).
+  NODE_ENV: process.env.NODE_ENV ?? "development",
   CLIENT_PORT: String(clientPort),
   GAME_SERVER_PORT: String(serverPort),
   VITE_SERVER_PORT: String(serverPort),
@@ -94,11 +101,18 @@ writeGorilatorState({
   startedAt: new Date().toISOString(),
 });
 
-console.log("[dev] building shared package");
-const build = runPnpm(["--filter", "@rpg/shared", "build"], { env: devEnv });
-if (build.status !== 0) process.exit(build.status ?? 1);
+// Cold start only: build shared once when its dist/ has never been produced.
+// On every other start the previous run's dist/ (or the Turbo cache) is already
+// resolvable, so the server (tsx) and client (Vite) boot instantly while the
+// watcher refreshes dist/ in the background.
+const sharedDist = join(root, "packages/shared/dist/index.js");
+if (!existsSync(sharedDist)) {
+  console.log("[dev] shared dist missing; building @rpg/shared once (cold start)");
+  const build = runPnpm(["--filter", "@rpg/shared", "build"], { env: devEnv });
+  if (build.status !== 0) process.exit(build.status ?? 1);
+}
 
-console.log("[dev] starting shared watcher, game server, and Vite client");
+console.log("[dev] starting shared watcher, game server, and Vite client (in parallel)");
 if (clientPort !== requestedClientPort) {
   console.log(`[dev] client port ${requestedClientPort} is busy; using ${clientPort}`);
 }
@@ -151,37 +165,6 @@ function start(name, color, args, options = {}) {
   return child;
 }
 
-function waitForSharedReady() {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const settle = (fn, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      fn(value);
-    };
-    const timeout = setTimeout(
-      () => settle(reject, new Error("shared watcher did not become ready within 30 seconds")),
-      30_000,
-    );
-    const child = start("shared", colors.gray, ["--filter", "@rpg/shared", "dev"], {
-      onLine(line) {
-        if (/Found 0 errors\. Watching for file changes\./.test(line)) {
-          settle(resolve);
-        } else {
-          const foundErrors = line.match(/Found (\d+) errors?\./);
-          if (foundErrors && Number(foundErrors[1]) > 0) {
-            settle(reject, new Error(`shared watcher reported ${foundErrors[1]} errors`));
-          }
-        }
-      },
-    });
-    child.once("exit", (code, signal) => {
-      settle(reject, new Error(`shared watcher exited before ready (${signal ?? code ?? "unknown"})`));
-    });
-  });
-}
-
 function stopChildren() {
   for (const child of children) {
     if (!child.killed) child.kill("SIGINT");
@@ -198,14 +181,31 @@ process.on("SIGTERM", () => {
   stopChildren();
 });
 
-console.log("[dev] waiting for shared watcher");
-try {
-  await waitForSharedReady();
-} catch (err) {
-  shuttingDown = true;
-  console.error(`[dev] ${err instanceof Error ? err.message : err}`);
-  stopChildren();
-  process.exit(1);
+// All three spawn immediately — no readiness gate. The server and client resolve
+// @rpg/shared from the dist/ that already exists; the watcher only refreshes it.
+// A shared type error is logged red but never blocks the running stack (same as
+// a server or client compile error would behave).
+if (!skipShared) {
+  let sharedReady = false;
+  start("shared", colors.gray, ["--filter", "@rpg/shared", "dev"], {
+    onLine(line) {
+      if (/Found 0 errors\. Watching for file changes\./.test(line)) {
+        if (!sharedReady) {
+          sharedReady = true;
+          console.log(`${colors.green}[dev] shared watcher ready${colors.reset}`);
+        }
+      } else {
+        const foundErrors = line.match(/Found (\d+) errors?\./);
+        if (foundErrors && Number(foundErrors[1]) > 0) {
+          console.error(
+            `${colors.red}[dev] shared has ${foundErrors[1]} type error(s) — server/client keep running on the last good build${colors.reset}`,
+          );
+        }
+      }
+    },
+  });
+} else {
+  console.log("[dev] --skip-shared: not spawning the shared watcher");
 }
 start("server", colors.blue, ["--filter", "@rpg/server", "dev"]);
 start("client", colors.green, ["--filter", "@rpg/client", "dev"]);

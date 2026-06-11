@@ -9,12 +9,15 @@ anything else (`1.2`, `01.2.3`, `v1.2.3`, …).
 
 | | What it is | Examples here |
 | --- | --- | --- |
-| **Package versions** | Each workspace package versions itself independently. | `cli 1.4.0`, `server 0.2.1`, `client 0.2.0`, `shared 0.2.0`, `landing 0.4.0` |
-| **App (umbrella) version** | The root `package.json` version — the project-wide roll-up shown in the game footer (`v…`). | `app 0.3.0` |
+| **App release version** | The root `package.json` version — the project-wide version shown in the game footer (`v…`) and used for GitHub Release tags. | `app 1.5.0` |
+| **npm CLI version** | The published `gorilator` package version. It is independent from the app release version. | `cli 1.5.0` |
+| **Other package versions** | Internal workspace package versions. They still bump with SemVer when their package changes. | `server 0.2.1`, `client 0.2.0`, `shared 0.2.0`, `landing 0.4.0` |
 
-**The rule:** whenever a package is bumped, the **app** is bumped by **at least the
-same SemVer level**. The app is a monotonic “how much has the project moved overall”
-counter; it is *not* required to equal any single package's number.
+**The rule:** the **app** version is the release version. GitHub Release tags use
+the app version. Whenever any package is bumped, the app is bumped by at least
+the same SemVer level. Package versions are independent; the CLI only publishes
+to npm when `packages/cli/package.json` changes to a version that is not already
+published.
 
 What each level means (standard SemVer):
 
@@ -28,9 +31,9 @@ One command bumps a package **and** the app together, so they can't drift:
 
 ```bash
 pnpm bump <cli|client|server|shared|landing> <major|minor|patch>
-#  pnpm bump cli minor    → cli 1.4.0 → 1.5.0   AND  app 0.3.0 → 0.4.0
+#  pnpm bump cli minor    → cli 1.4.0 → 1.5.0   AND  app 1.4.0 → 1.5.0
 #  pnpm bump server patch → server 0.2.1 → 0.2.2 AND  app 0.4.0 → 0.4.1
-pnpm bump app <level>     # bump only the umbrella version (catch-up)
+pnpm bump app <level>     # bump the app release version
 ```
 
 If several packages change in one release, bump each (the app advances each time)
@@ -68,10 +71,12 @@ the guard, so it still requires an app bump.
 
 ## Releasing
 
-The CLI is the only package published (to npm). To cut a release:
+GitHub Releases are tagged with the app release version. To cut a release:
 
-1. `pnpm bump cli <level>` (this also moves the app umbrella version).
+1. Bump each changed package with `pnpm bump <package> <level>`; this also moves
+   the app release version. Use `pnpm bump app <level>` for app-only releases.
 2. Commit + merge to `main`.
-3. Create a **GitHub Release** → CI publishes the CLI to npm.
+3. Create a **GitHub Release** tagged with the app version. CI publishes the CLI
+   only if the CLI package version in that release is not already on npm.
 
 Full publish details: [publishing-cli.md](publishing-cli.md).

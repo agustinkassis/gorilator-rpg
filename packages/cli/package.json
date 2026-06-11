@@ -1,6 +1,6 @@
 {
   "name": "gorilator",
-  "version": "1.4.0",
+  "version": "1.9.0",
   "description": "One command to install, run, and supervise the Gorilator RPG game server natively (no Docker) as a systemd/launchd service, with an optional Cloudflare Tunnel setup.",
   "type": "module",
   "bin": {
@@ -14,10 +14,12 @@
     "node": ">=20.6"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "start": "tsx src/index.ts",
     "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

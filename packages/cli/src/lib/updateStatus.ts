@@ -19,7 +19,8 @@ export interface UpdateStatus {
 export function fetchUpdateStatus(port: number, timeoutMs = 1500): Promise<UpdateStatus | null> {
   return new Promise((resolve) => {
     const req = get(
-      { host: "127.0.0.1", port, path: "/api/update", timeout: timeoutMs },
+      // "localhost" so it works whether the daemon bound IPv4 or IPv6 ::1.
+      { host: "localhost", port, path: "/api/update", timeout: timeoutMs },
       (res) => {
         let body = "";
         res.on("data", (c) => (body += c));

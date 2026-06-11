@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { GameState, Item, WORLD_SIZE } from "@rpg/shared";
+import { type GameState, Item, WORLD_SIZE } from "@rpg/shared";
 import { nearestFreeWorld } from "./pathfinding";
 
 export interface ItemDef {

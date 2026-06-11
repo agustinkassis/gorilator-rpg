@@ -1,4 +1,4 @@
-import { InventorySlot, ItemType, INV_SLOTS, MAX_STACK } from "@rpg/shared";
+import { type InventorySlot, type ItemType, INV_SLOTS, MAX_STACK } from "@rpg/shared";
 import { itemDefs } from "./items";
 
 function stackLimit(type: ItemType | ""): number {

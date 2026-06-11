@@ -1,5 +1,5 @@
 import {
-  GameState,
+  type GameState,
   Potion,
   POTION_COUNT,
   POTION_HEAL,

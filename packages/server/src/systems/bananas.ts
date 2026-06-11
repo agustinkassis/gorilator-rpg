@@ -1,15 +1,15 @@
 import {
-  GameState,
+  type GameState,
   Banana,
-  Player,
-  Enemy,
-  Tree,
-  Rock,
-  House,
+  type Player,
+  type Enemy,
+  type Tree,
+  type Rock,
+  type House,
   AnimState,
-  DamageEvent,
-  HealEvent,
-  BananaThrowEvent,
+  type DamageEvent,
+  type HealEvent,
+  type BananaThrowEvent,
   BANANA_MAX,
   BANANA_RESPAWN_MS,
   BANANA_SPAWN_RANGE,
@@ -35,7 +35,7 @@ import {
   ROCK_COLLISION_SCALE,
 } from "@rpg/shared";
 import { nearestFreeWorld, allObstacles } from "./pathfinding";
-import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
+import { grantXp, killXp, applyDeathXpPenalty, type EmitXp } from "./leveling";
 import {
   applyDamageDrops,
   dropEntityLoot,
@@ -154,7 +154,7 @@ function firstObstacleHit(
   });
   // Standing houses block too — a throw stops at the wall (and gets damaged there).
   state.houses.forEach((h) => {
-    if (h.alive) consider(h.x, h.z, h.radius);
+    if (h.alive) consider(h.x, h.z, h.radius * (h.scale || 1));
   });
   if (bestT === Infinity) return null;
   return { x: ox + dx * bestT, z: oz + dz * bestT };
@@ -438,11 +438,11 @@ function nearestStructureHit(state: GameState, f: InFlight): StructureHit | unde
 
   // Preserve the old banana behavior: bananas can chip houses. Stones also damage
   // the synced concrete/resource structures they visibly collide with.
-  state.houses.forEach((target) => consider({ kind: "house", target }, target.radius));
+  state.houses.forEach((target) => consider({ kind: "house", target }, target.radius * (target.scale || 1)));
   if (f.item === "stone") {
     state.trees.forEach((target) => consider({ kind: "tree", target }, TREE_RADIUS));
     state.rocks.forEach((target) =>
-      consider({ kind: "rock", target }, Math.max(0.1, target.radius * ROCK_COLLISION_SCALE)),
+      consider({ kind: "rock", target }, Math.max(0.1, target.radius * (target.scale || 1) * ROCK_COLLISION_SCALE)),
     );
   }
   return hit;

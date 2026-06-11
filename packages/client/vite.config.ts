@@ -1,5 +1,5 @@
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
-import type { IncomingMessage, ServerResponse } from "http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   writeFileSync,
   readFileSync,
@@ -11,18 +11,21 @@ import {
   unlinkSync,
   statSync,
   createReadStream,
-} from "fs";
-import { basename, dirname, extname, relative, resolve } from "path";
-import { execFileSync } from "child_process";
-import { fileURLToPath } from "url";
+} from "node:fs";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { pluginBundler } from "./config/pluginBundler";
+import type { CommunityEntity } from "@rpg/shared";
 
 const configDir = dirname(fileURLToPath(import.meta.url));
 
-/** The app version shown in-game (the tiny footer tag), read from this package's
- *  package.json. Falls back to 0.0.0 if it can't be read. */
+/** The app version shown in-game (the tiny footer tag), read from the workspace
+ *  root package.json. Falls back to 0.0.0 if it can't be read. */
 function appVersion(): string {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(configDir, "package.json"), "utf8")) as {
+    const pkg = JSON.parse(readFileSync(resolve(configDir, "..", "..", "package.json"), "utf8")) as {
       version?: string;
     };
     return pkg.version ?? "0.0.0";
@@ -961,6 +964,13 @@ const fail = (res: ServerResponse, code: number, msg: string) => {
   res.end(msg);
 };
 
+// In-memory LRU-ish cache for the /__asset-cache image proxy (process lifetime). The browser's
+// HTTP cache (immutable headers below) is the real persistence across reloads; this just avoids
+// re-hitting the upstream host when the browser cache is cold but the dev server is still up.
+const ASSET_CACHE_MAX_BYTES = 16 * 1024 * 1024; // don't memory-cache pathologically large blobs
+const ASSET_CACHE_MAX_ENTRIES = 256;
+const assetCache = new Map<string, { buf: Buffer; ct: string }>();
+
 const DEV_TUNING_CONSTANTS: Record<string, { name: string; min: number; max: number; integer?: boolean }> = {
   waveFirstDelayMs: { name: "WAVE_FIRST_DELAY_MS", min: 0, max: 600_000, integer: true },
   waveIntervalBaseMs: { name: "WAVE_INTERVAL_BASE_MS", min: 0, max: 900_000, integer: true },
@@ -1043,15 +1053,25 @@ interface CharAnim {
   speed?: number;
   yawFix?: number; // radians, per-clip facing correction
 }
+// Local bookkeeping for defs that have been published to / imported from the
+// community (Nostr kind 30333). Mirrors @rpg/shared CommunityProvenance.
+interface CommunityProvenance {
+  pubkey: string;
+  d: string;
+  ts: number;
+  imported?: boolean;
+}
 interface CharacterDef {
   id: string;
   name: string;
   category?: string;
+  description?: string;
   baseModel: string; // url under /models
   anims: Partial<Record<CharAction, CharAnim>>;
   yaw: number; // base orientation (radians)
   scale: number;
-  stats?: Record<string, number>; // default placeholders (Phase 2 drives them)
+  stats?: CharacterStatsConfig;
+  community?: CommunityProvenance;
 }
 interface Placement {
   id: string;
@@ -1059,6 +1079,7 @@ interface Placement {
   x: number;
   z: number;
   rotationY: number;
+  scale?: number;
   brain?: BrainId;
   stats?: CharacterStatsConfig;
 }
@@ -1072,6 +1093,7 @@ const structuresPathFor = (root: string) => resolve(root, "public/structures.jso
 const entityFeaturesPathFor = (root: string) => resolve(root, "public/entity-features.json");
 const itemsPathFor = (root: string) => resolve(root, "public/items.json");
 const itemAssetsDirFor = (root: string) => resolve(root, "public/items");
+const structuresLibPathFor = (root: string) => resolve(root, "public/structures-lib.json");
 
 // Per-structure-kind loot table: a list of {item, amount, probability} rolled
 // independently when the structure is destroyed. Read live by the server.
@@ -1109,10 +1131,27 @@ function sanitizeStructureMask(raw: unknown): StructureMask | undefined {
 interface ItemDef {
   id: string;
   name: string;
+  description?: string;
   icon?: string;
   model?: string;
   stack?: number;
   worldScale?: number;
+  community?: CommunityProvenance;
+}
+
+// A creator-authored structure: a single .glb prop with placement physics +
+// optional destructible HP. Stored in public/structures-lib.json (the "structure"
+// half of the Library), distinct from props.json placements.
+interface StructureDef {
+  id: string;
+  name: string;
+  description?: string;
+  model: string; // url under /models
+  scale: number;
+  collisionRadius?: number;
+  hp?: number;
+  stats?: CharacterStatsConfig;
+  community?: CommunityProvenance;
 }
 
 // Per-resource-kind drop config: which item a tree/rock yields, how many, on hit
@@ -1213,17 +1252,107 @@ interface EntityFeatureManifest {
 }
 const charDirFor = (root: string) => resolve(root, "public/models/characters");
 
+// In-memory memo of parsed content files, keyed by path + invalidated by mtime —
+// a server-side cache so the Library's defs endpoints don't re-read/parse from disk
+// on every poll. A write bumps the file's mtime, so the next read re-parses.
+const jsonMemo = new Map<string, { mtimeMs: number; data: unknown[] }>();
 function readJsonArray<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) {
+    jsonMemo.delete(path);
+    return [];
+  }
   try {
+    const mtimeMs = statSync(path).mtimeMs;
+    const hit = jsonMemo.get(path);
+    if (hit && hit.mtimeMs === mtimeMs) return hit.data as T[];
     const arr = JSON.parse(readFileSync(path, "utf8"));
-    return Array.isArray(arr) ? arr : [];
+    const data = Array.isArray(arr) ? arr : [];
+    jsonMemo.set(path, { mtimeMs, data });
+    return data as T[];
   } catch {
     return [];
   }
 }
-const writeJsonArray = (path: string, arr: unknown[]) =>
+const writeJsonArray = (path: string, arr: unknown[]) => {
   writeFileSync(path, JSON.stringify(arr, null, 2));
+  // Refresh the memo immediately so a read right after a write is consistent
+  // (fs mtime resolution can be coarse on some platforms).
+  try {
+    jsonMemo.set(path, { mtimeMs: statSync(path).mtimeMs, data: Array.isArray(arr) ? arr : [] });
+  } catch {
+    jsonMemo.delete(path);
+  }
+};
+
+/** Run git, returning stdout or null if git fails / this isn't a repo. */
+function gitText(cwd: string, args: string[]): string | null {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return null;
+  }
+}
+
+interface PendingResult {
+  characters: string[];
+  structures: string[];
+  items: string[];
+}
+
+/**
+ * Compute which Library entities are *pending* (not yet committed to git). An entity
+ * is pending if its def is new/changed vs HEAD's content JSON, or if any asset file
+ * it references is untracked/modified in the working tree. Defensive: returns empty
+ * sets when this isn't a git repo so the Library simply shows nothing as pending.
+ */
+function computePending(root: string): PendingResult {
+  const empty: PendingResult = { characters: [], structures: [], items: [] };
+  const repoRoot = gitText(root, ["rev-parse", "--show-toplevel"])?.trim();
+  if (!repoRoot) return empty;
+  const publicRel = relative(repoRoot, resolve(root, "public")).split(sep).join("/");
+
+  // Files under public/models + public/items that are untracked or modified.
+  const status = gitText(repoRoot, ["status", "--porcelain", "--", `${publicRel}/models`, `${publicRel}/items`]) ?? "";
+  const dirtyAssets = new Set<string>();
+  for (const line of status.split("\n")) {
+    const p = line.slice(3).trim(); // "XY <path>" → path (repo-root-relative)
+    if (!p) continue;
+    const url = p.startsWith(publicRel + "/") ? p.slice(publicRel.length) : null; // → "/models/…" | "/items/…"
+    if (url) dirtyAssets.add(url);
+  }
+
+  const idsFor = <T extends { id: string }>(file: string, assetUrls: (d: T) => string[]): string[] => {
+    const current = readJsonArray<T>(file);
+    if (!current.length) return [];
+    const headRaw = gitText(repoRoot, ["show", `HEAD:${publicRel}/${basename(file)}`]);
+    let head: T[] = [];
+    if (headRaw) {
+      try {
+        const parsed = JSON.parse(headRaw);
+        if (Array.isArray(parsed)) head = parsed;
+      } catch {
+        /* committed file unparsable → treat everything as pending */
+      }
+    }
+    const headById = new Map(head.map((d) => [d.id, JSON.stringify(d)]));
+    return current
+      .filter((d) => {
+        const prev = headById.get(d.id);
+        if (prev === undefined || prev !== JSON.stringify(d)) return true; // new or changed
+        return assetUrls(d).some((u) => u && dirtyAssets.has(u)); // committed def, dirty asset
+      })
+      .map((d) => d.id);
+  };
+
+  return {
+    characters: idsFor<CharacterDef>(charsPathFor(root), (d) => [
+      d.baseModel,
+      ...Object.values(d.anims ?? {}).map((a) => a?.file ?? ""),
+    ]),
+    structures: idsFor<StructureDef>(structuresLibPathFor(root), (d) => [d.model]),
+    items: idsFor<ItemDef>(itemsPathFor(root), (d) => [d.icon ?? "", d.model ?? ""]),
+  };
+}
 
 /** Classify an unzipped glb: the base mesh vs a single-animation file, deriving a
  *  clip label from the Meshy naming "..._Animation_<Clip>_withSkin.glb". */
@@ -1288,7 +1417,7 @@ function modelImporter(): Plugin {
           try {
             const meta = JSON.parse(buf.toString("utf8") || "{}");
             const model = String(meta.model || "");
-            if (!/^\/models\/[\w.\-]+\.glb$/i.test(model)) return fail(res, 400, "bad model");
+            if (!/^\/models\/[\w.-]+\.glb$/i.test(model)) return fail(res, 400, "bad model");
             const id = `${slug(String(meta.name || model.split("/").pop()))}_${Date.now()}`;
             const props = readProps(root);
             const entry = entryFromMeta(meta, model, id);
@@ -1463,7 +1592,8 @@ function modelImporter(): Plugin {
               x: Number(b.x) || 0,
               z: Number(b.z) || 0,
               rotationY: Number(b.rotationY) || 0,
-              ...(b.brain ? { brain: String(b.brain) } : {}),
+              scale: Math.max(0.05, Number(b.scale) || 1),
+              ...(b.brain ? { brain: String(b.brain) as BrainId } : {}),
               ...(b.stats && typeof b.stats === "object" ? { stats: b.stats } : {}),
             };
             const npcs = readJsonArray<Placement>(npcsPathFor(root));
@@ -1526,8 +1656,10 @@ function modelImporter(): Plugin {
               stack: Math.max(1, Math.min(999, Math.round(Number(raw.stack) || 99))),
               worldScale: Math.max(0.05, Math.min(20, Number(raw.worldScale) || 1.2)),
             };
+            if (raw.description) entry.description = String(raw.description).slice(0, 500);
             if (raw.icon) entry.icon = String(raw.icon);
             if (raw.model) entry.model = String(raw.model);
+            if (raw.community && typeof raw.community === "object") entry.community = raw.community;
             const items = readJsonArray<ItemDef>(itemsPathFor(root));
             const i = items.findIndex((x) => x.id === id);
             if (i >= 0) items[i] = entry;
@@ -1554,6 +1686,279 @@ function modelImporter(): Plugin {
         });
       });
 
+      // ======== Structure-library defs (creator-authored .glb structures) ========
+      // A "structure" library entry: a single model + placement physics, stored in
+      // public/structures-lib.json. The model file lives under public/models.
+      server.middlewares.use("/__structures/defs", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        sendJson(res, readJsonArray<StructureDef>(structuresLibPathFor(root)));
+      });
+      // Write a .glb under public/models WITHOUT placing it (creator step 2).
+      server.middlewares.use("/__structures/upload", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        const url = new URL(req.url || "", "http://localhost");
+        const base = slug(url.searchParams.get("name") || "structure");
+        void collectBody(req).then((buf) => {
+          try {
+            if (!buf.length) return fail(res, 400, "empty body");
+            const dir = modelsDirFor(root);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            const file = `${base}_${Date.now()}.glb`;
+            writeFileSync(resolve(dir, file), buf);
+            sendJson(res, { ok: true, model: `/models/${file}` });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__structures/save", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const def = JSON.parse(buf.toString("utf8") || "{}") as StructureDef;
+            if (!def.id || !def.model) return fail(res, 400, "missing id/model");
+            const defs = readJsonArray<StructureDef>(structuresLibPathFor(root));
+            const i = defs.findIndex((d) => d.id === def.id);
+            if (i >= 0) defs[i] = def;
+            else defs.push(def);
+            writeJsonArray(structuresLibPathFor(root), defs);
+            sendJson(res, { ok: true, id: def.id });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__structures/delete", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}");
+            const id = String(b.id || "");
+            const defs = readJsonArray<StructureDef>(structuresLibPathFor(root));
+            const gone = defs.find((d) => d.id === id);
+            writeJsonArray(structuresLibPathFor(root), defs.filter((d) => d.id !== id));
+            if (b.deleteFiles && gone?.model?.startsWith("/models/")) {
+              const f = resolve(root, "public", gone.model.replace(/^\//, ""));
+              if (existsSync(f) && relative(modelsDirFor(root), f).startsWith("..") === false) unlinkSync(f);
+            }
+            sendJson(res, { ok: true });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
+      // ======== Pending (git-tracked) state + char def delete ========
+      // Which Library entities are not yet committed to git (→ "pending" badge).
+      server.middlewares.use("/__content/pending", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        try {
+          sendJson(res, computePending(root));
+        } catch (e) {
+          fail(res, 500, String(e));
+        }
+      });
+
+      // asset-cache: proxy a remote (e.g. Blossom) image through our own origin so the browser
+      // HTTP-caches it with immutable headers. Blossom sends no cache-control AND its CDN blocks
+      // cross-origin fetch via CORS, so a raw <img src> re-fetches on every Library reopen (the
+      // flash) and a client-side blob cache is impossible. Fetching server-side (no CORS) once and
+      // serving with immutable headers makes every reopen a same-origin disk-cache hit. Dev-only;
+      // mirrors the import-remote "download server-side to avoid browser CORS" approach.
+      server.middlewares.use("/__asset-cache", (req, res) => {
+        if (req.method !== "GET") return fail(res, 405, "GET only");
+        void (async () => {
+          try {
+            const u = new URL(req.url || "", "http://localhost").searchParams.get("u") || "";
+            if (!/^https?:\/\//i.test(u)) return fail(res, 400, "u must be an http(s) URL");
+            const key = createHash("sha256").update(u).digest("hex");
+            const serve = (buf: Buffer, ct: string) => {
+              res.statusCode = 200;
+              res.setHeader("content-type", ct);
+              res.setHeader("cache-control", "public, max-age=31536000, immutable");
+              res.setHeader("access-control-allow-origin", "*");
+              res.end(buf);
+            };
+            const hit = assetCache.get(key);
+            if (hit) return serve(hit.buf, hit.ct);
+            const ac = new AbortController();
+            const timer = setTimeout(() => ac.abort(), 15_000);
+            const r = await fetch(u, { redirect: "follow", signal: ac.signal }).finally(() => clearTimeout(timer));
+            if (!r.ok) return fail(res, 502, `upstream ${r.status}`);
+            const declared = Number(r.headers.get("content-length") || 0);
+            if (declared > ASSET_CACHE_MAX_BYTES) return fail(res, 413, "upstream too large");
+            const ct = r.headers.get("content-type") || "application/octet-stream";
+            const buf = Buffer.from(await r.arrayBuffer());
+            if (buf.byteLength <= ASSET_CACHE_MAX_BYTES) {
+              assetCache.set(key, { buf, ct });
+              while (assetCache.size > ASSET_CACHE_MAX_ENTRIES) {
+                const oldest = assetCache.keys().next().value;
+                if (oldest === undefined) break;
+                assetCache.delete(oldest);
+              }
+            }
+            serve(buf, ct);
+          } catch (e) {
+            fail(res, 502, String(e));
+          }
+        })();
+      });
+      // Remove a character def from the library (Library "Remove" on a pending card).
+      server.middlewares.use("/__char/def-delete", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}");
+            const id = String(b.id || "");
+            if (!id) return fail(res, 400, "missing id");
+            const defs = readJsonArray<CharacterDef>(charsPathFor(root));
+            writeJsonArray(charsPathFor(root), defs.filter((d) => d.id !== id));
+            // Delete the character's model dir if asked (public/models/characters/<id>).
+            if (b.deleteFiles) {
+              const dir = resolve(charDirFor(root), id);
+              if (existsSync(dir) && relative(charDirFor(root), dir).startsWith("..") === false) {
+                rmSync(dir, { recursive: true, force: true });
+              }
+            }
+            sendJson(res, { ok: true });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+
+      // import-remote: copy a community entity (kind-30333) into the LOCAL library.
+      // Downloads each Blossom asset server-side (avoids browser CORS), rewrites the
+      // def with local paths, and stamps community provenance (imported = true) so the
+      // Library shows it as a pending, owner-attributed import.
+      server.middlewares.use("/__content/import-remote", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          void (async () => {
+            try {
+              const body = JSON.parse(buf.toString("utf8") || "{}") as {
+                type?: string;
+                author?: string;
+                entity?: CommunityEntity;
+              };
+              const { type, entity } = body;
+              if (!entity || !type) return fail(res, 400, "missing type/entity");
+              const provenance: CommunityProvenance = {
+                pubkey: String(body.author || ""),
+                d: `gorilator-entity-v1:${entity.id}`, // matches @rpg/shared entityDTag(entity.id)
+                ts: Date.now(),
+                imported: true,
+              };
+              const download = async (url: string, abs: string) => {
+                const r = await fetch(url);
+                if (!r.ok) throw new Error(`download ${url} → ${r.status}`);
+                writeFileSync(abs, Buffer.from(await r.arrayBuffer()));
+              };
+
+              if (type === "character" && entity.character) {
+                const c = entity.character;
+                const existing = new Set(readJsonArray<CharacterDef>(charsPathFor(root)).map((d) => d.id));
+                const id = existing.has(entity.id) ? `${entity.id}_${Date.now()}` : entity.id;
+                const dir = resolve(charDirFor(root), id);
+                mkdirSync(dir, { recursive: true });
+                await download(c.baseModel.url, resolve(dir, "base.glb"));
+                const anims: CharacterDef["anims"] = {};
+                for (const [action, a] of Object.entries(c.anims)) {
+                  if (!a?.asset?.url) continue;
+                  const file = `${action.toLowerCase()}.glb`;
+                  await download(a.asset.url, resolve(dir, file));
+                  (anims as Record<string, unknown>)[action] = {
+                    file: `/models/characters/${id}/${file}`,
+                    ...(a.speed ? { speed: a.speed } : {}),
+                    ...(a.yawFix ? { yawFix: a.yawFix } : {}),
+                  };
+                }
+                const def: CharacterDef = {
+                  id,
+                  name: entity.name,
+                  category: "Characters",
+                  description: entity.description || undefined,
+                  baseModel: `/models/characters/${id}/base.glb`,
+                  anims,
+                  yaw: c.yaw || 0,
+                  scale: c.scale || 1,
+                  stats: entity.stats,
+                  community: provenance,
+                };
+                const defs = readJsonArray<CharacterDef>(charsPathFor(root));
+                defs.push(def);
+                writeJsonArray(charsPathFor(root), defs);
+                return sendJson(res, { ok: true, id, type });
+              }
+
+              if (type === "structure" && entity.structure) {
+                const s = entity.structure;
+                const dir = modelsDirFor(root);
+                if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+                const file = `${slug(entity.name)}_${Date.now()}.glb`;
+                await download(s.model.url, resolve(dir, file));
+                const def: StructureDef = {
+                  id: `struct_${Date.now()}`,
+                  name: entity.name,
+                  description: entity.description || undefined,
+                  model: `/models/${file}`,
+                  scale: s.scale || 1,
+                  collisionRadius: s.collisionRadius,
+                  hp: s.hp,
+                  stats: entity.stats,
+                  community: provenance,
+                };
+                const defs = readJsonArray<StructureDef>(structuresLibPathFor(root));
+                defs.push(def);
+                writeJsonArray(structuresLibPathFor(root), defs);
+                return sendJson(res, { ok: true, id: def.id, type });
+              }
+
+              if (type === "item" && entity.item) {
+                const it = entity.item;
+                const dir = itemAssetsDirFor(root);
+                if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+                const base = slug(entity.name) || "item";
+                const stamp = Date.now();
+                const extOf = (url: string) => (url.match(/\.[a-z0-9]+(?:$|\?)/i)?.[0] || ".png").replace(/\?$/, "");
+                let icon: string | undefined;
+                let model: string | undefined;
+                if (it.icon?.url) {
+                  const f = `${base}_icon_${stamp}${extOf(it.icon.url)}`;
+                  await download(it.icon.url, resolve(dir, f));
+                  icon = `/items/${f}`;
+                }
+                if (it.model?.url) {
+                  const f = `${base}_model_${stamp}.glb`;
+                  await download(it.model.url, resolve(dir, f));
+                  model = `/items/${f}`;
+                }
+                const existing = new Set(readJsonArray<ItemDef>(itemsPathFor(root)).map((d) => d.id));
+                const id = existing.has(slug(entity.name)) ? `${slug(entity.name)}_${stamp}` : slug(entity.name) || `item_${stamp}`;
+                const def: ItemDef = {
+                  id,
+                  name: entity.name,
+                  description: entity.description || undefined,
+                  icon,
+                  model,
+                  stack: it.stack ?? 99,
+                  worldScale: it.worldScale ?? 1.2,
+                  community: provenance,
+                };
+                const items = readJsonArray<ItemDef>(itemsPathFor(root));
+                items.push(def);
+                writeJsonArray(itemsPathFor(root), items);
+                return sendJson(res, { ok: true, id, type });
+              }
+
+              return fail(res, 400, "unsupported entity payload");
+            } catch (e) {
+              fail(res, 500, String(e));
+            }
+          })();
+        });
+      });
+
       // placement-update: patch x/z/rotationY of a placement
       server.middlewares.use("/__char/placement-update", (req, res) => {
         if (req.method !== "POST") return fail(res, 405, "POST only");
@@ -1563,10 +1968,10 @@ function modelImporter(): Plugin {
             const npcs = readJsonArray<Placement>(npcsPathFor(root));
             const p = npcs.find((n) => n.id === String(patch.id ?? ""));
             if (!p) return fail(res, 404, "no such placement");
-            for (const f of ["x", "z", "rotationY"] as const)
+            for (const f of ["x", "z", "rotationY", "scale"] as const)
               if (patch[f] !== undefined) p[f] = Number(patch[f]);
-            if (patch.brain !== undefined) (p as Record<string, unknown>).brain = String(patch.brain);
-            if (patch.stats && typeof patch.stats === "object") (p as Record<string, unknown>).stats = patch.stats;
+            if (patch.brain !== undefined) p.brain = String(patch.brain) as BrainId;
+            if (patch.stats && typeof patch.stats === "object") p.stats = patch.stats;
             writeJsonArray(npcsPathFor(root), npcs);
             sendJson(res, { ok: true });
           } catch (e) {
@@ -1651,6 +2056,28 @@ function modelImporter(): Plugin {
               : { ...(manifest.defaults ?? {}) };
             const next = sanitizeFeature((b.config && typeof b.config === "object" ? b.config : b) as Record<string, unknown>);
             bucket[key] = next;
+            if (scope === "instances") manifest.instances = bucket;
+            else manifest.defaults = bucket;
+            writeFeatures(manifest);
+            sendJson(res, { ok: true, scope, key });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+      server.middlewares.use("/__features/delete", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const b = JSON.parse(buf.toString("utf8") || "{}") as Record<string, unknown>;
+            const scope = b.scope === "instance" ? "instances" : "defaults";
+            const key = String(b.key || "");
+            if (!key) return fail(res, 400, "missing key");
+            const manifest = readFeatures();
+            const bucket = scope === "instances"
+              ? { ...(manifest.instances ?? {}) }
+              : { ...(manifest.defaults ?? {}) };
+            delete bucket[key];
             if (scope === "instances") manifest.instances = bucket;
             else manifest.defaults = bucket;
             writeFeatures(manifest);
@@ -1962,8 +2389,8 @@ function worktreeTagger(): Plugin {
         void collectBody(req).then((buf) => {
           try {
             const body = JSON.parse(buf.toString("utf8") || "{}") as { name?: unknown; targetBranch?: unknown };
-            const hasName = Object.prototype.hasOwnProperty.call(body, "name");
-            const hasTarget = Object.prototype.hasOwnProperty.call(body, "targetBranch");
+            const hasName = Object.hasOwn(body, "name");
+            const hasTarget = Object.hasOwn(body, "targetBranch");
             const name = hasName ? writeWorktreeName(info.root, body.name) : readWorktreeName(info.root);
             if (hasTarget) writeTargetBranch(info.root, body.targetBranch);
             sendJson(res, { ok: true, ...formatWorktreeInfo(info.root, name) });
@@ -1982,6 +2409,18 @@ function worktreeTagger(): Plugin {
 export default defineConfig(({ command }) => {
   const worktree = command === "serve" ? worktreeInfo() : emptyWorktreeInfo();
   return {
+    // Explicit cache dir (predictable invalidation, survives worktree switches).
+    cacheDir: ".vite-cache",
+    // Pre-bundle the heavy Babylon entrypoints once instead of re-discovering
+    // them on every cold dev start.
+    optimizeDeps: {
+      include: ["@babylonjs/core", "@babylonjs/gui", "@babylonjs/loaders"],
+    },
+    build: {
+      // External source maps so deployed-realm stack traces and F3 slowdown
+      // snapshots map back to source.
+      sourcemap: true,
+    },
     // Inject local build metadata for the always-visible footer tags.
     define: {
       __APP_VERSION__: JSON.stringify(appVersion()),
@@ -1989,10 +2428,21 @@ export default defineConfig(({ command }) => {
       __WORKTREE_LABEL__: JSON.stringify(worktree.label),
       __WORKTREE_FULL_LABEL__: JSON.stringify(worktree.fullLabel),
     },
-    plugins: [modelImporter(), perfLogs(), worktreeTagger()],
+    plugins: [modelImporter(), perfLogs(), worktreeTagger(), pluginBundler(resolve(configDir, "..", ".."))],
     server: {
       port: Number(process.env.CLIENT_PORT) || 5173,
       strictPort: true,
+      // Allow the dev server to be reached through a Cloudflare tunnel
+      // (`gorilator setup → Tunnel (Cloudflare)`), which sends a Host header Vite
+      // would otherwise reject: quick tunnels are `*.trycloudflare.com`; a
+      // permanent tunnel's own hostnames arrive via VITE_ALLOWED_HOSTS.
+      allowedHosts: [
+        ".trycloudflare.com",
+        ...(process.env.VITE_ALLOWED_HOSTS ?? "")
+          .split(",")
+          .map((h) => h.trim())
+          .filter(Boolean),
+      ],
     },
   };
 });

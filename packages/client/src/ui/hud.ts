@@ -1,12 +1,12 @@
 import {
-  Scene,
-  Mesh,
+  type Scene,
+  type Mesh,
   MeshBuilder,
   StandardMaterial,
   Color3,
   Vector3,
   Matrix,
-  TransformNode,
+  type TransformNode,
 } from "@babylonjs/core";
 import {
   AdvancedDynamicTexture,
@@ -15,7 +15,7 @@ import {
   TextBlock,
   Control,
 } from "@babylonjs/gui";
-import { Entity } from "../entities/Entity";
+import type { Entity } from "../entities/Entity";
 import type { KillEvent } from "@rpg/shared";
 
 const BAR_WIDTH = 56;

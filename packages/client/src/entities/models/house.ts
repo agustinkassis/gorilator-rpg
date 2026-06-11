@@ -1,13 +1,12 @@
 import {
-  Scene,
+  type Scene,
   SceneLoader,
-  ShadowGenerator,
   PBRMaterial,
-  AbstractMesh,
+  type AbstractMesh,
   Vector3,
-  MeshBuilder,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
+import type { ShadowHandle, ShadowRuntime } from "../../scene/contactShadows";
 
 const HOUSE_URL = "/models/house.glb";
 const HOUSE_SIZE = 11; // footprint matches the centre cross (its arms span 11 units)
@@ -27,14 +26,16 @@ function hierarchyBounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 }
 }
 
 export interface HouseModel {
-  /** Collapse the house: hide the model and its shadow proxy. */
+  /** Collapse the house: hide the model and its contact shadow. */
   hide(): void;
-  /** Rebuild the house: re-show the model and its shadow proxy (after a wipe). */
+  /** Rebuild the house: re-show the model and its contact shadow (after a wipe). */
   show(): void;
   /** Toggle picking on the house model geometry. */
   setPickable(on: boolean): void;
   /** Move the visible model to the synced house centre. */
   moveTo(x: number, z: number): void;
+  /** Apply the full Dev Mode transform to the visible model. */
+  transformTo(x: number, z: number, rotY: number, scale: number): void;
 }
 
 /**
@@ -45,7 +46,7 @@ export interface HouseModel {
  */
 export async function loadHouse(
   scene: Scene,
-  shadow: ShadowGenerator,
+  shadows: ShadowRuntime,
 ): Promise<HouseModel | null> {
   // HEAD probe so a missing file doesn't crash the client.
   try {
@@ -74,8 +75,8 @@ export async function loadHouse(
         mat.backFaceCulling = true;
         mat.twoSidedLighting = false;
       }
-      // Receive shadows (cheap shader flag) but do NOT cast — this model is ~6M
-      // verts, and rendering it into the shadow map every frame would be brutal.
+      // Contact shadows handle visible grounding; keep the receiver flag harmlessly
+      // true for materials that already expect it.
       mesh.receiveShadows = true;
     }
 
@@ -101,50 +102,51 @@ export async function loadHouse(
       m.metadata = { entityId: "house-0", kind: "house" };
     });
 
-    // Shadow: the real house is ~6M verts — far too heavy to render into the shadow
-    // map every frame. Instead an invisible box that matches its footprint casts a
-    // clean house-shaped shadow at ~zero cost (a shadow-only mesh isn't drawn by the
-    // camera, only into the shadow map).
+    // Contact shadow: the real house is far too heavy for a live shadow map. A soft
+    // projected footprint grounds it visually without rendering the GLB from the sun.
     b = hierarchyBounds(r.meshes);
-    const proxy = MeshBuilder.CreateBox(
-      "houseShadowProxy",
-      { width: b.max.x - b.min.x, height: b.max.y - b.min.y, depth: b.max.z - b.min.z },
-      scene,
-    );
-    proxy.position.set((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
-    proxy.isVisible = false; // not drawn by the camera...
-    proxy.isPickable = false;
-    shadow.addShadowCaster(proxy); // ...but it still casts a shadow
-
+    const contactShadow: ShadowHandle = shadows.addProjected({
+      name: "houseContactShadow",
+      shape: "structure",
+      root,
+      casters: r.meshes,
+      x: root.position.x,
+      z: root.position.z,
+      width: Math.max(4, b.max.x - b.min.x),
+      depth: Math.max(4, b.max.z - b.min.z),
+      opacity: 0.42,
+    });
     const rootBaseX = root.position.x;
     const rootBaseZ = root.position.z;
-    const proxyBaseX = proxy.position.x;
-    const proxyBaseZ = proxy.position.z;
-    const moveTo = (x: number, z: number) => {
+    const rootBaseScale = root.scaling.clone();
+    const transformTo = (x: number, z: number, rotY: number, scaleMult: number) => {
+      const s = Number.isFinite(scaleMult) ? Math.max(0.05, scaleMult) : 1;
       root.position.x = rootBaseX + x;
       root.position.z = rootBaseZ + z;
-      proxy.position.x = proxyBaseX + x;
-      proxy.position.z = proxyBaseZ + z;
+      root.rotation.y = rotY;
+      root.scaling.set(rootBaseScale.x * s, rootBaseScale.y * s, rootBaseScale.z * s);
+      contactShadow.setPosition(root.position.x, root.position.z, 0);
+      contactShadow.refresh();
     };
+    const moveTo = (x: number, z: number) => transformTo(x, z, 0, 1);
 
-    console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + shadow proxy`);
+    console.log(`[assets] placed house at origin (footprint ${HOUSE_SIZE}u) + contact shadow`);
 
     return {
       hide: () => {
         root.setEnabled(false); // collapse: hide the whole model...
-        proxy.setEnabled(false);
-        shadow.removeShadowCaster(proxy); // ...and stop it casting a shadow
+        contactShadow.setEnabled(false);
       },
       show: () => {
         root.setEnabled(true); // rebuilt after a wipe: show it again...
-        proxy.setEnabled(true);
-        shadow.addShadowCaster(proxy); // ...and resume its shadow
+        contactShadow.setEnabled(true);
       },
       setPickable: (on: boolean) => {
         root.isPickable = on;
         for (const mesh of r.meshes) mesh.isPickable = on;
       },
       moveTo,
+      transformTo,
     };
   } catch (e) {
     console.warn(`[assets] failed to load ${HOUSE_URL}`, e);

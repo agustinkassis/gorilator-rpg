@@ -1,4 +1,4 @@
-import { GameState, Structure, STRUCTURE_HP } from "@rpg/shared";
+import { type GameState, Structure, STRUCTURE_HP } from "@rpg/shared";
 import { concreteProps } from "./props";
 import { entityHp } from "./entityFeatures";
 
@@ -31,6 +31,8 @@ export function applyStructures(state: GameState): void {
     }
     s.x = p.x;
     s.z = p.z;
+    s.rotY = p.rotY;
+    s.scale = 1;
     s.radius = p.radius;
     s.modelId = p.model ?? "";
     s.maxHp = maxHp;

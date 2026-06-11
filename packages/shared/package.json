@@ -1,6 +1,6 @@
 {
   "name": "@rpg/shared",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -13,7 +13,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput"
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "biome lint .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@colyseus/schema": "^3.0.42"

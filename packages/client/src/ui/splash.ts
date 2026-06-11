@@ -1,5 +1,5 @@
 import {
-  Engine,
+  type Engine,
   Scene,
   ArcRotateCamera,
   Vector3,
@@ -9,30 +9,32 @@ import {
   DirectionalLight,
   PointLight,
   MeshBuilder,
-  Mesh,
+  type Mesh,
   StandardMaterial,
   DynamicTexture,
   ParticleSystem,
   ShadowGenerator,
-  AnimationGroup,
+  type AnimationGroup,
 } from "@babylonjs/core";
 import { AnimState } from "@rpg/shared";
-import { SpawnedCharacter } from "../entities/types";
+import type { SpawnedCharacter } from "../entities/types";
 import { CharacterFactory } from "../entities/CharacterFactory";
 import { AnimationController } from "../entities/AnimationController";
-import {
-  nostrLogin,
-  hasNostrExtension,
-  nip98AuthHeader,
-  NostrCredentials,
-  NostrPhase,
-} from "../net/nostr";
+import { anyPackageBehind, localPackageVersions } from "../util/version";
+import { hasNostrExtension, nip98AuthHeader, type NostrIdentity, type NostrPhase } from "../net/nostr";
+import { clearSession } from "../net/nostrSession";
+import { clearActiveSession, getActiveBunkerClient } from "../net/nostrSigner";
+import { NostrLoginModal, completeLogin } from "./nostrLoginModal";
 
-/** What the player commits at the splash: a name, optionally a verified Nostr id
- *  (the full credentials — main.ts derives the server join payload from them). */
+/** What the player commits at the splash: a name, optionally a verified Nostr id.
+ *  The kind-22242 auth is signed fresh at join (main.ts), not carried here. */
 export interface SplashCredentials {
   name: string;
-  nostr?: NostrCredentials;
+  nostr?: NostrIdentity;
+}
+
+export interface SplashScreenOptions {
+  onBootProgress?: (pct: number, label?: string) => void;
 }
 
 /** Passed to CharacterFactory.spawn; ignored by the textured glb (and dummy). */
@@ -58,6 +60,8 @@ const IMPACT_FX_MS = 520;
 export class SplashScreen {
   /** The splash's own scene. The main render loop draws it while `active`. */
   readonly scene: Scene;
+  /** Resolves once the splash-only scene/hero assets are ready to reveal. */
+  readonly ready: Promise<void>;
   /** True until the launch flash has masked the swap to the live game scene. */
   active = true;
 
@@ -98,7 +102,7 @@ export class SplashScreen {
   private assetShownPct = 0;
 
   /** A verified Nostr identity once the player connects one (else anonymous). */
-  private nostr?: NostrCredentials;
+  private nostr?: NostrIdentity;
   /** Times the level-reveal → profile-card hand-off in the logged-in reframe. */
   private revealTimer?: number;
 
@@ -116,7 +120,11 @@ export class SplashScreen {
   private drainResolvers: Array<() => void> = [];
   private relayTicker?: number;
 
-  constructor(engine: Engine) {
+  constructor(engine: Engine, opts: SplashScreenOptions = {}) {
+    const setBootProgress = (pct: number, label?: string) =>
+      opts.onBootProgress?.(Math.max(0, Math.min(100, pct)), label);
+    setBootProgress(8, "lighting the black box");
+
     const scene = new Scene(engine);
     scene.clearColor = new Color4(0.03, 0.03, 0.05, 1);
     scene.ambientColor = new Color3(0.26, 0.22, 0.28);
@@ -165,14 +173,22 @@ export class SplashScreen {
     this.shadow.darkness = 0.35;
 
     this.buildStage();
+    setBootProgress(34, "polishing the boss entrance");
     try {
       this.embers = this.buildEmbers();
     } catch {
       /* particles are non-essential eye-candy — ignore any failure */
     }
+    setBootProgress(44, "teaching sparks to flirt");
     // Load the in-game rigged gorilla glb onto the pedestal; the stage + embers
-    // show immediately and the hero pops in when it's ready.
-    void this.loadHero();
+    // are kept behind the bootstrap loader until the hero is ready.
+    this.ready = this.loadHero(setBootProgress)
+      .catch((err) => {
+        console.warn("[splash] hero load failed", err);
+      })
+      .finally(() => {
+        setBootProgress(72, "model signed the release waiver");
+      });
 
     // This is a *secondary* scene on a shared engine. The engine delivers its
     // parallel-shader-compile "ready" callbacks to the primary/active scene, so
@@ -218,12 +234,26 @@ export class SplashScreen {
       if (!res.ok) return;
       const s = (await res.json()) as {
         updateAvailable?: boolean;
-        latest?: { tag?: string; name?: string; url?: string } | null;
+        current?: { version?: string } | null;
+        latest?: { tag?: string; name?: string; url?: string; packages?: Record<string, string> } | null;
       };
-      if (!s.updateAvailable || !s.latest) return;
+      if (!s.latest) return;
+      // Compare the running game's own versions (baked at build) against the
+      // release's per-package versions: a newer app OR any newer package counts.
+      // Falls back to the server's verdict for older servers that don't report
+      // per-package versions.
+      const remotePackages = s.latest.packages ?? {};
+      const updateNeeded =
+        Object.keys(remotePackages).length > 0
+          ? anyPackageBehind(localPackageVersions(), remotePackages)
+          : Boolean(s.updateAvailable);
+      if (!updateNeeded) return;
 
       const text = document.getElementById("updateBannerText");
-      if (text) text.textContent = `Update available — ${s.latest.tag ?? "new release"}`;
+      // Name the running server's version too, so it's clear the gap is the
+      // server you're connected to — not (e.g.) the checkout you're developing in.
+      const installed = s.current?.version ? ` (server on ${s.current.version})` : "";
+      if (text) text.textContent = `Update available — ${s.latest.tag ?? "new release"}${installed}`;
       // The banner links straight to the GitHub release page for this update.
       const link = document.getElementById("updateBannerLink") as HTMLAnchorElement | null;
       if (link && s.latest.url) link.href = s.latest.url;
@@ -432,9 +462,16 @@ export class SplashScreen {
     this.clearImpactFx();
     this.input.disabled = false;
     this.assetLoadEl.classList.remove("joining", "ready");
-    this.assetStatusEl.textContent = "server offline";
+    // A sign-in/signer failure isn't a server outage — label it honestly.
+    this.assetStatusEl.textContent = /sign|signer|nostr/i.test(message) ? "sign-in failed" : "server offline";
     const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
-    if (joinBtn) joinBtn.disabled = false;
+    // Un-morph the spinner button + re-enable so the player can retry.
+    this.enterBtn.classList.remove("btnSpin");
+    this.enterBtn.disabled = false;
+    if (joinBtn) {
+      joinBtn.classList.remove("btnSpin");
+      joinBtn.disabled = false;
+    }
     const status = document.getElementById("nostrStatus") as HTMLElement | null;
     if (status) status.textContent = message;
     this.syncEnter();
@@ -548,16 +585,15 @@ export class SplashScreen {
    * the game uses) onto the pedestal. If the glb is absent the factory hands
    * back the straw-dummy fallback, which still poses fine.
    */
-  private async loadHero() {
-    try {
-      const factory = new CharacterFactory(this.scene);
-      await factory.preload({ playerOnly: true, includeAttack: true });
-      if (!this.active) return; // already launched / disposed
-      // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
-      this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
-    } catch (err) {
-      console.warn("[splash] hero load failed", err);
-    }
+  private async loadHero(progress?: (pct: number, label?: string) => void) {
+    progress?.(52);
+    const factory = new CharacterFactory(this.scene);
+    await factory.preload({ playerOnly: true, includeAttack: true });
+    progress?.(64);
+    if (!this.active) return; // already launched / disposed
+    // Show the hero bigger than its in-game size (the gameplay gorilla is 1×).
+    this.setHero(factory.spawn("player", HERO_ACCENT, SPLASH_HERO_SCALE), factory);
+    progress?.(70);
   }
 
   // ---- launch animation ----------------------------------------------------
@@ -589,7 +625,7 @@ export class SplashScreen {
     const impactAge = t - this.launchImpactAt;
     const tremble =
       impactAge > 0 && impactAge < 0.48
-        ? Math.pow(1 - impactAge / 0.48, 1.35)
+        ? (1 - impactAge / 0.48) ** 1.35
         : 0;
     const punchT = Math.min(1, t / Math.max(0.65, this.launchImpactAt + 0.2));
     let radius = this.baseRadius + (5.15 - this.baseRadius) * easeOut(punchT);
@@ -757,16 +793,17 @@ export class SplashScreen {
     this.enterBtn.disabled = this.input.value.trim().length === 0 && !this.nostr;
   }
 
-  /** Run the NIP-07 login behind a terminal-style progress log, then reframe. */
+  /** Open the unified tabbed login modal (Extension / Remote signer), then
+   *  establish + persist identity behind the terminal-style progress log. */
   private async connectNostr() {
     const status = document.getElementById("nostrStatus") as HTMLElement;
-    if (!hasNostrExtension()) {
-      status.textContent = "No Nostr extension found — install Alby or nos2x.";
-      return;
-    }
+    const result = await new NostrLoginModal().open();
+    if (!result) return; // cancelled
     this.startProgress();
     try {
-      const creds = await nostrLogin((phase, detail) => this.onNostrPhase(phase, detail));
+      // completeLogin mounts the signer, establishes identity, and persists the
+      // session (so it's remembered + re-verified on refresh).
+      const creds = await completeLogin(result, { onPhase: (phase, detail) => this.onNostrPhase(phase, detail) });
       this.stopRelayTicker();
       this.npLog("✓ identity verified", "ok", 100);
       await this.whenDrained();
@@ -904,7 +941,15 @@ export class SplashScreen {
   /** Reframe the splash into the logged-in layout. The gorilla's current level
    *  flashes up FIRST; a beat later the profile card (avatar + name + level) and
    *  the big JOIN button rise into place. */
-  private showNostrProfile(creds: NostrCredentials) {
+  /** Restore a persisted Nostr identity onto the splash (no connect flow) — the
+   *  signer was re-verified at startup; the player just clicks JOIN. */
+  restoreNostr(identity: NostrIdentity) {
+    this.nostr = identity;
+    this.showNostrProfile(identity);
+    this.syncEnter();
+  }
+
+  private showNostrProfile(creds: NostrIdentity) {
     const nameText = document.getElementById("nhNameText") as HTMLElement;
     const img = document.getElementById("nhAvatarImg") as HTMLImageElement;
     nameText.textContent =
@@ -936,6 +981,15 @@ export class SplashScreen {
 
   private clearNostr() {
     this.nostr = undefined;
+    // Fully disconnect: drop the persisted session + runtime identity, and close
+    // the live bunker client — otherwise "use a name instead" would leave a stale
+    // identity that silently re-logs-in on reload. Only unmount window.nostr when
+    // it's OUR bunker shim (a real extension's window.nostr must stay, since there's
+    // no reload here to re-inject it).
+    const wasBunker = !!getActiveBunkerClient();
+    clearSession();
+    clearActiveSession();
+    if (wasBunker && typeof window !== "undefined") delete window.nostr;
     window.clearTimeout(this.revealTimer);
     this.el.classList.remove("nostr", "revealing");
     // Back to anonymous → revert any admin button to the CLI hint.
@@ -971,6 +1025,8 @@ export class SplashScreen {
     this.input.disabled = true;
     const joinBtn = document.getElementById("nhJoin") as HTMLButtonElement | null;
     if (joinBtn) joinBtn.disabled = true;
+    // Morph the button the player actually pressed into a circular loading spinner.
+    (this.nostr ? joinBtn : this.enterBtn)?.classList.add("btnSpin");
     this.assetLoadEl.classList.add("joining");
     const resolve = this.resolveCreds;
     this.resolveCreds = undefined;
@@ -997,7 +1053,7 @@ function wait(ms: number): Promise<void> {
 }
 
 function easeOut(x: number): number {
-  return 1 - Math.pow(1 - x, 3);
+  return 1 - (1 - x) ** 3;
 }
 
 function animationDurationSeconds(group: AnimationGroup | undefined, speed: number): number | undefined {

@@ -10,7 +10,7 @@ import {
   type AbstractMesh,
   type TransformNode,
 } from "@babylonjs/core";
-import { NetworkClient } from "../net/NetworkClient";
+import type { NetworkClient } from "../net/NetworkClient";
 import { buildBanana } from "../entities/models/banana";
 import { buildBerserkerPotion } from "../entities/models/berserkerPotion";
 import { buildDummy } from "../entities/models/dummy";
@@ -20,9 +20,20 @@ import { buildRock } from "../entities/models/rock";
 import { buildStone } from "../entities/models/stone";
 import { buildTree } from "../entities/models/tree";
 import { bounds, importModel } from "../scene/props";
-import { PropManager } from "./PropManager";
+import type { PropManager } from "./PropManager";
 import { loadItemDefs } from "../items/itemRegistry";
 import type { CharacterDef } from "../entities/characterDef";
+import type { CommunityEntityType, CharacterStatsConfig, CommunityProvenance } from "@rpg/shared";
+import { publishCharacter, publishStructure, publishItem } from "./communityPublish";
+import {
+  fetchCommunityEntities,
+  fetchProfiles,
+  importCommunityEntity,
+  type CommunityCard,
+  type OwnerProfile,
+} from "./communityBrowse";
+import { ensureNostrLogin } from "../ui/nostrLoginModal";
+import { readCache, writeCache, CACHE_LOCAL, CACHE_COMMUNITY } from "./libraryCache";
 
 /**
  * Dev Mode "Entity Library" — the main editor catalog. It has two top-level tabs:
@@ -42,7 +53,45 @@ export interface LibraryExplorerDeps {
   placeModel: (model: string, name: string) => void;
   uploadModel: (file: File, name: string) => void;
   openItemLibrary: () => void;
-  addCharacter: () => void;
+  /** Open the stepped creator wizard for a given entity type. */
+  createEntity: (type: CommunityEntityType) => void;
+  /** Grant a custom item to the player's inventory (Library "＋ Add" on items). */
+  giveItem: (id: string, label: string) => void;
+}
+
+/** A creator-authored structure def (mirrors vite StructureDef / structures-lib.json). */
+interface StructureDef {
+  id: string;
+  name: string;
+  description?: string;
+  model: string;
+  scale: number;
+  collisionRadius?: number;
+  hp?: number;
+  stats?: CharacterStatsConfig;
+  community?: CommunityProvenance;
+}
+
+/** A custom item def (mirrors vite ItemDef / items.json). */
+interface ItemDefLite {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  model?: string;
+  stack?: number;
+  worldScale?: number;
+  community?: CommunityProvenance;
+}
+
+/** The full set of Local-library lists fetched from the dev server (cached for SWR). */
+interface LocalLists {
+  allModels: ModelEntry[];
+  defs: CharacterDef[];
+  placements: PlacementLite[];
+  structDefs: StructureDef[];
+  itemDefs: ItemDefLite[];
+  pending: { characters: string[]; structures: string[]; items: string[] };
 }
 
 interface ModelEntry {
@@ -54,7 +103,8 @@ interface ModelEntry {
 type BuiltinThumb = "tree" | "rock" | "log" | "stone" | "potion" | "banana" | "berserker_potion" | "dummy";
 type ThumbSource =
   | { type: "model"; model: string; token?: string | number }
-  | { type: "builtin"; id: BuiltinThumb; token?: string | number };
+  | { type: "builtin"; id: BuiltinThumb; token?: string | number }
+  | { type: "image"; url: string };
 
 interface TemplateEntry {
   label: string;
@@ -112,7 +162,10 @@ export class LibraryExplorer {
   private open = false;
   private compact = false;
   private activeTab: LibraryTab = "character";
-  private previewDisposers: Array<() => void> = [];
+  private source: "local" | "community" = "local";
+  private localBtn!: HTMLButtonElement;
+  private communityBtn!: HTMLButtonElement;
+  private renderToken = 0; // guards against overlapping async renders
 
   constructor(private deps: LibraryExplorerDeps) {
     this.panel = document.createElement("div");
@@ -159,9 +212,20 @@ export class LibraryExplorer {
     controls.append(refresh, close);
     head.append(this.compactBtn, titleBox, controls);
 
+    // Local ⇆ Community source toggle (segmented control).
+    const sourceToggle = document.createElement("div");
+    sourceToggle.style.cssText = "display:flex; gap:0; border:1px solid #35445e; border-radius:7px; overflow:hidden;";
+    this.localBtn = document.createElement("button");
+    this.localBtn.textContent = "Local";
+    this.localBtn.onclick = () => this.setSource("local");
+    this.communityBtn = document.createElement("button");
+    this.communityBtn.textContent = "Community";
+    this.communityBtn.onclick = () => this.setSource("community");
+    sourceToggle.append(this.localBtn, this.communityBtn);
+
     const toolbar = document.createElement("div");
     toolbar.style.cssText =
-      "display:grid; grid-template-columns:minmax(160px, 1fr) auto; gap:8px; align-items:center;" +
+      "display:grid; grid-template-columns:auto minmax(140px, 1fr) auto; gap:8px; align-items:center;" +
       "padding:10px 14px; background:#111720; border-bottom:1px solid #263245;";
     this.searchEl = document.createElement("input");
     this.searchEl.type = "search";
@@ -187,7 +251,7 @@ export class LibraryExplorer {
     this.addBtn = document.createElement("button");
     this.addBtn.style.cssText = smallButtonCss("#26362c", "#dff5df");
     this.addBtn.onclick = () => this.onAddClick();
-    toolbar.append(this.searchEl, this.addBtn, this.uploadEl);
+    toolbar.append(sourceToggle, this.searchEl, this.addBtn, this.uploadEl);
 
     const categoryTabs = document.createElement("div");
     categoryTabs.style.cssText =
@@ -230,7 +294,6 @@ export class LibraryExplorer {
   close() {
     this.open = false;
     this.panel.style.display = "none";
-    this.disposePreviews();
     this.deps.clearFocus();
   }
 
@@ -265,13 +328,23 @@ export class LibraryExplorer {
       item: "➕ Add Item",
     };
     this.addBtn.textContent = addLabel[this.activeTab];
+    // Source toggle styling + "Add" only makes sense for the Local library.
+    this.localBtn.style.cssText = sourceBtnCss(this.source === "local");
+    this.communityBtn.style.cssText = sourceBtnCss(this.source === "community");
+    this.addBtn.style.display = this.source === "local" ? "" : "none";
   }
 
-  /** The per-tab "Add <Type>" action: open that type's authoring tool. */
+  /** The per-tab "Add <Type>" action opens the stepped creator wizard.
+   *  (LibraryTab values match CommunityEntityType one-to-one.) */
   private onAddClick() {
-    if (this.activeTab === "character") this.deps.addCharacter();
-    else if (this.activeTab === "structure") this.uploadEl.click();
-    else this.deps.openItemLibrary();
+    this.deps.createEntity(this.activeTab);
+  }
+
+  private setSource(source: "local" | "community") {
+    if (this.source === source) return;
+    this.source = source;
+    this.refreshChrome();
+    void this.render();
   }
 
   private setActiveTab(tab: LibraryTab) {
@@ -280,20 +353,60 @@ export class LibraryExplorer {
     void this.render();
   }
 
+  /** Open the Library focused on a tab + refresh (e.g. after the creator adds one). */
+  showTab(tab: LibraryTab) {
+    this.activeTab = tab;
+    if (!this.open) this.openPanel();
+    else {
+      this.refreshChrome();
+      void this.render();
+    }
+  }
+
   /** Single unified view: every entity type for the active tab as an identical
    *  card showing its thumbnail, name, live "N in map" count, and an Add action. */
   private async render() {
     if (!this.open) return;
-    this.disposePreviews();
-    this.gridEl.textContent = "loading...";
-    const [allModels, defs, placements] = await Promise.all([
+    // A single render epoch across BOTH local + community renders: switching tabs
+    // (or source) bumps it, so a slow in-flight render — e.g. the community relay
+    // fetch — bails instead of clobbering the grid the new render just drew.
+    const token = ++this.renderToken;
+    if (this.source === "community") return this.renderCommunity(token);
+    // SWR: paint the cached lists instantly, then always revalidate + repaint.
+    const cached = readCache<LocalLists>(CACHE_LOCAL);
+    if (cached) this.paintLocal(cached, token);
+    else this.gridEl.textContent = "loading...";
+    const lists = await this.fetchLocalLists();
+    if (token !== this.renderToken || !this.open) return;
+    writeCache(CACHE_LOCAL, lists);
+    this.paintLocal(lists, token);
+  }
+
+  /** Fetch every Local-library list (defs + placements + git-pending) from the dev server. */
+  private async fetchLocalLists(): Promise<LocalLists> {
+    const [allModels, defs, placements, structDefs, itemDefs, pending] = await Promise.all([
       this.fetchJson<ModelEntry[]>("/__props/models"),
       this.fetchJson<CharacterDef[]>("/__char/defs"),
       this.fetchJson<PlacementLite[]>("/__char/placements"),
+      this.fetchJson<StructureDef[]>("/__structures/defs"),
+      this.fetchJson<ItemDefLite[]>("/__items/defs"),
+      this.fetchPending(),
     ]);
     await loadItemDefs().catch(() => undefined);
-    if (!this.open) return;
-    const models = allModels.filter((m) => !runtimeAssetInfo(m.model));
+    return { allModels, defs, placements, structDefs, itemDefs, pending };
+  }
+
+  /** Render the Local grid from already-fetched lists (live "in map" counts + search filter). */
+  private paintLocal(lists: LocalLists, token: number) {
+    if (token !== this.renderToken || !this.open) return;
+    const { allModels, defs, placements, structDefs, itemDefs, pending } = lists;
+    const pendingChars = new Set(pending.characters);
+    const pendingStructs = new Set(pending.structures);
+    const pendingItems = new Set(pending.items);
+    // Models referenced by a structure def are shown as that def's card instead of
+    // a bare "Object" — avoid listing the same .glb twice.
+    const structModels = new Set(structDefs.map((s) => s.model));
+    const models = allModels.filter((m) => !runtimeAssetInfo(m.model) && !structModels.has(m.model));
     const placed = this.deps.propManager.all();
     this.titleEl.textContent = "Library";
     const q = normalized(this.searchEl.value);
@@ -323,15 +436,16 @@ export class LibraryExplorer {
       );
     }
 
-    // Custom characters (imported Meshy defs).
+    // Custom characters (creator/imported Meshy defs).
     for (const d of defs) {
-      if (!matches(d.name || d.id, "Custom character", "characters")) continue;
+      const meta = d.description || "Custom character";
+      if (!matches(d.name || d.id, meta, "characters")) continue;
       const ids = placements.filter((p) => p.defId === d.id).map((p) => p.id);
       inMap += ids.length;
       cards.push(
         this.entityCard({
           name: d.name || d.id,
-          meta: "Custom character",
+          meta,
           thumb: { type: "model", model: d.baseModel },
           count: ids.length,
           onAdd: () => {
@@ -339,11 +453,62 @@ export class LibraryExplorer {
             this.deps.placeCharacter(d);
           },
           onFocus: () => this.browse("enemy", ids, d.name || d.id),
+          pending: pendingChars.has(d.id),
+          onRemove: () => void this.removeEntity("character", d.id, d.name || d.id),
+          onPublish: d.community?.imported ? undefined : () => void this.publishEntity("character", d),
+          published: !!d.community && !d.community.imported,
         }),
       );
     }
 
-    // Imported .glb object models (e.g. meshy_ai_timberstone).
+    // Creator-authored structures (structures-lib.json).
+    for (const s of structDefs) {
+      const meta = s.description || "Custom structure";
+      if (!matches(s.name || s.id, meta, "structures")) continue;
+      const ids = placed.filter((p) => p.def.model === s.model).map((p) => p.id);
+      inMap += ids.length;
+      cards.push(
+        this.entityCard({
+          name: s.name || s.id,
+          meta,
+          thumb: { type: "model", model: s.model },
+          count: ids.length,
+          onAdd: () => {
+            this.setStatus(`placing ${s.name || s.id}...`);
+            this.deps.placeModel(s.model, s.name || s.id);
+          },
+          onFocus: () => this.browse("prop", ids, s.name || s.id),
+          pending: pendingStructs.has(s.id),
+          onRemove: () => void this.removeEntity("structure", s.id, s.name || s.id),
+          onPublish: s.community?.imported ? undefined : () => void this.publishEntity("structure", s),
+          published: !!s.community && !s.community.imported,
+        }),
+      );
+    }
+
+    // Creator-authored items (items.json).
+    for (const it of itemDefs) {
+      const meta = it.description || "Custom item";
+      if (!matches(it.name || it.id, meta, "items")) continue;
+      cards.push(
+        this.entityCard({
+          name: it.name || it.id,
+          meta,
+          thumb: it.icon ? { type: "image", url: it.icon } : it.model ? { type: "model", model: it.model } : undefined,
+          count: 0,
+          onAdd: () => {
+            this.setStatus(`giving ${it.name || it.id}...`);
+            this.deps.giveItem(it.id, it.name || it.id);
+          },
+          pending: pendingItems.has(it.id),
+          onRemove: () => void this.removeEntity("item", it.id, it.name || it.id),
+          onPublish: it.community?.imported ? undefined : () => void this.publishEntity("item", it),
+          published: !!it.community && !it.community.imported,
+        }),
+      );
+    }
+
+    // Imported .glb object models (e.g. meshy_ai_timberstone) not tied to a def.
     for (const m of models) {
       if (!matches(m.name, "Object", "objects")) continue;
       const ids = placed.filter((p) => p.def.model === m.model).map((p) => p.id);
@@ -363,7 +528,7 @@ export class LibraryExplorer {
       );
     }
 
-    if (!this.open) return;
+    if (token !== this.renderToken || !this.open) return;
     this.summaryEl.textContent = `${tabLabel(this.activeTab)} · ${cards.length} types · ${inMap} in map`;
     this.gridEl.innerHTML = "";
     if (!cards.length) {
@@ -372,6 +537,86 @@ export class LibraryExplorer {
     }
     for (const c of cards) this.gridEl.appendChild(c);
     this.setStatus("＋ Add places a new one. Click a count badge to focus existing instances.");
+  }
+
+  /** Community view: published kind-30333 entities of the active type, each card
+   *  carrying its owner's avatar; "＋ Add" imports it into the Local library. The
+   *  render epoch `token` is owned by render() so a tab/source switch cancels this. */
+  private async renderCommunity(token: number) {
+    // SWR: paint the cached community cards instantly, then always revalidate
+    // (server cache → relays) + repaint. Cache holds ALL types; paint filters.
+    const cached = readCache<{ cards: CommunityCard[]; profiles: Record<string, OwnerProfile> }>(CACHE_COMMUNITY);
+    if (cached) {
+      this.paintCommunity(cached.cards, cached.profiles, token);
+    } else {
+      this.titleEl.textContent = "Community Library";
+      this.summaryEl.textContent = "browsing community entities…";
+      this.gridEl.innerHTML = "";
+      this.gridEl.textContent = "searching…";
+    }
+
+    let cards: CommunityCard[] = [];
+    try {
+      cards = await fetchCommunityEntities();
+    } catch {
+      cards = [];
+    }
+    if (token !== this.renderToken || !this.open) return;
+    const profiles = await fetchProfiles(cards.map((c) => c.author));
+    if (token !== this.renderToken || !this.open) return;
+    writeCache(CACHE_COMMUNITY, { cards, profiles });
+    this.paintCommunity(cards, profiles, token);
+  }
+
+  /** Render the Community grid from already-fetched cards (filtered by active tab + search). */
+  private paintCommunity(cards: CommunityCard[], profiles: Record<string, OwnerProfile>, token: number) {
+    if (token !== this.renderToken || !this.open) return;
+    this.titleEl.textContent = "Community Library";
+    const q = normalized(this.searchEl.value);
+    const matched = cards.filter(
+      (c) =>
+        c.entity.type === this.activeTab &&
+        (!q || normalized(`${c.entity.name} ${c.entity.description ?? ""}`).includes(q)),
+    );
+    this.summaryEl.textContent = `Community · ${tabLabel(this.activeTab)} · ${matched.length} published`;
+    this.gridEl.innerHTML = "";
+    if (!matched.length) {
+      this.gridEl.textContent = "no community entities found";
+      this.setStatus("Publish one from your Local library, or check back later.");
+      return;
+    }
+    for (const c of matched) {
+      const owner = profiles[c.author];
+      // Community cards render the published preview image (no in-browser .glb render).
+      const thumb: ThumbSource | undefined = c.entity.preview?.url
+        ? { type: "image", url: c.entity.preview.url }
+        : undefined;
+      this.gridEl.appendChild(
+        this.entityCard({
+          name: c.entity.name,
+          meta: c.entity.description || `Community ${c.entity.type}`,
+          thumb,
+          count: 0,
+          owner: { name: owner?.name, picture: owner?.picture, pubkey: c.author },
+          onAdd: () => void this.importCommunity(c),
+        }),
+      );
+    }
+    this.setStatus("＋ Add copies a community entity into your Local library (pending).");
+  }
+
+  /** Import a community entity → Local library (pending), then jump to Local. */
+  private async importCommunity(card: CommunityCard) {
+    this.setStatus(`importing "${card.entity.name}"…`);
+    try {
+      await importCommunityEntity(card);
+      this.source = "local";
+      this.refreshChrome();
+      await this.render();
+      this.setStatus(`✓ imported "${card.entity.name}" — pending in your Local library`);
+    } catch (e) {
+      this.setStatus("import failed: " + (e as Error).message);
+    }
   }
 
   private matchesActiveTab(category: ExistingCategory): boolean {
@@ -405,6 +650,11 @@ export class LibraryExplorer {
     count: number;
     onAdd: () => void;
     onFocus?: () => void;
+    pending?: boolean; // not yet committed to git → amber badge + Remove
+    onRemove?: () => void;
+    onPublish?: () => void; // publish this entity to the community
+    published?: boolean; // already has a community event → "Update" instead of "Publish"
+    owner?: { name?: string; picture?: string; pubkey: string }; // community card → owner avatar
   }): HTMLElement {
     const card = document.createElement("div");
     card.style.cssText =
@@ -438,6 +688,41 @@ export class LibraryExplorer {
     };
     previewWrap.appendChild(badge);
 
+    // Owner avatar (top-left) for community cards.
+    if (opts.owner) {
+      const av = document.createElement("div");
+      const short = `${opts.owner.pubkey.slice(0, 8)}…`;
+      av.title = opts.owner.name ? `${opts.owner.name} (${short})` : short;
+      av.style.cssText =
+        "position:absolute; top:6px; left:6px; width:26px; height:26px; border-radius:50%; overflow:hidden;" +
+        "border:1px solid #4a9a52; background:#223149; display:grid; place-items:center; color:#d9ffe0; font:700 10px system-ui;";
+      if (opts.owner.picture) {
+        const img = document.createElement("img");
+        img.src = opts.owner.picture;
+        img.referrerPolicy = "no-referrer";
+        img.style.cssText = "width:100%; height:100%; object-fit:cover;";
+        img.onerror = () => {
+          img.remove();
+          av.textContent = initials(opts.owner!.name || short);
+        };
+        av.appendChild(img);
+      } else {
+        av.textContent = initials(opts.owner.name || short);
+      }
+      previewWrap.appendChild(av);
+    }
+
+    // "pending" badge (top-left) for entities not yet committed to git.
+    if (opts.pending) {
+      const pend = document.createElement("div");
+      pend.textContent = "pending";
+      pend.title = "Not committed to git yet — commit it to keep it, or Remove it.";
+      pend.style.cssText =
+        "position:absolute; top:6px; left:6px; border:1px solid #b9821f; border-radius:6px; padding:2px 7px;" +
+        "background:#3a2c0de8; color:#f3c969; font:700 11px system-ui,sans-serif;";
+      previewWrap.appendChild(pend);
+    }
+
     const body = document.createElement("div");
     body.style.cssText = "padding:9px; display:grid; gap:6px; min-width:0;";
     const name = document.createElement("div");
@@ -460,8 +745,100 @@ export class LibraryExplorer {
     };
     body.append(name, meta, add);
 
+    // Publish (or update) this entity to the community.
+    if (opts.onPublish) {
+      const pub = document.createElement("button");
+      pub.textContent = opts.published ? "📡 Update community" : "📡 Publish to community";
+      pub.title = "Upload assets to Blossom and publish a community entity event";
+      pub.style.cssText =
+        "cursor:pointer; height:26px; border:1px solid #6a3fa0; border-radius:6px; color:#ecdcff;" +
+        "background:#2d2148; font:600 11px system-ui,sans-serif;";
+      pub.onmouseenter = () => (pub.style.background = "#3a2a5e");
+      pub.onmouseleave = () => (pub.style.background = "#2d2148");
+      pub.onclick = (e) => {
+        e.stopPropagation();
+        opts.onPublish!();
+      };
+      body.appendChild(pub);
+    }
+
+    // Pending entities can be removed (deletes the def + its uncommitted files).
+    if (opts.pending && opts.onRemove) {
+      const remove = document.createElement("button");
+      remove.textContent = "🗑 Remove";
+      remove.title = "Delete this pending entity and its files";
+      remove.style.cssText =
+        "cursor:pointer; height:26px; border:1px solid #6a2f33; border-radius:6px; color:#ffd9d9;" +
+        "background:#3a1f22; font:600 11px system-ui,sans-serif;";
+      remove.onmouseenter = () => (remove.style.background = "#56282c");
+      remove.onmouseleave = () => (remove.style.background = "#3a1f22");
+      remove.onclick = (e) => {
+        e.stopPropagation();
+        opts.onRemove!();
+      };
+      body.appendChild(remove);
+    }
+
     card.append(previewWrap, body);
     return card;
+  }
+
+  /** Publish a Local entity to the community (Blossom upload + kind-30333 event),
+   *  then stamp the def with its provenance so the card shows "Update". */
+  private async publishEntity(
+    type: CommunityEntityType,
+    def: CharacterDef | StructureDef | ItemDefLite,
+  ): Promise<void> {
+    // Publishing signs with the user's key — require a Nostr login first. This
+    // logs in IN-GAME (extension / remote signer) and upgrades the server session.
+    try {
+      this.setStatus("checking Nostr login…");
+      const identity = await ensureNostrLogin(this.deps.net);
+      if (!identity) return this.setStatus("publish cancelled — sign in to publish.");
+    } catch (e) {
+      return this.setStatus("login failed: " + (e as Error).message);
+    }
+    this.setStatus(`publishing ${def.name || def.id}…`);
+    try {
+      const onProgress = (m: string) => this.setStatus(m);
+      const prov =
+        type === "character"
+          ? await publishCharacter(def as CharacterDef, onProgress)
+          : type === "structure"
+            ? await publishStructure(def as StructureDef, onProgress)
+            : await publishItem(def as ItemDefLite, onProgress);
+      const saveUrl =
+        type === "character" ? "/__char/save" : type === "structure" ? "/__structures/save" : "/__items/save";
+      await fetch(saveUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...def, community: prov }),
+      });
+      await this.render();
+      this.setStatus(`✓ published "${def.name || def.id}" to the community`);
+    } catch (e) {
+      this.setStatus("publish failed: " + (e as Error).message);
+    }
+  }
+
+  /** Delete a creator-authored entity (Library "Remove" on a pending card). */
+  private async removeEntity(type: CommunityEntityType, id: string, label: string) {
+    const url =
+      type === "character" ? "/__char/def-delete" : type === "structure" ? "/__structures/delete" : "/__items/delete";
+    this.setStatus(`removing ${label}…`);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, deleteFiles: true }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await loadItemDefs().catch(() => undefined);
+      await this.render();
+      this.setStatus(`removed ${label}`);
+    } catch (e) {
+      this.setStatus("remove failed: " + (e as Error).message);
+    }
   }
 
   private state(): Record<string, Coll | undefined> | null {
@@ -501,10 +878,6 @@ export class LibraryExplorer {
     if (img.complete && img.naturalWidth > 0) fallback.style.display = "none";
   }
 
-  private disposePreviews() {
-    for (const dispose of this.previewDisposers.splice(0)) dispose();
-  }
-
   private async fetchJson<T>(url: string): Promise<T> {
     try {
       const r = await fetch(url, { cache: "no-store" });
@@ -512,6 +885,17 @@ export class LibraryExplorer {
     } catch {
       return [] as unknown as T;
     }
+  }
+
+  /** Git-tracked "pending" ids per type (uncommitted creator/imported content). */
+  private async fetchPending(): Promise<{ characters: string[]; structures: string[]; items: string[] }> {
+    try {
+      const r = await fetch("/__content/pending", { cache: "no-store" });
+      if (r.ok) return (await r.json()) as { characters: string[]; structures: string[]; items: string[] };
+    } catch {
+      /* dev endpoint unavailable → nothing pending */
+    }
+    return { characters: [], structures: [], items: [] };
   }
 }
 
@@ -530,6 +914,17 @@ interface ThumbTarget {
 }
 
 async function getThumbUrl(source: ThumbSource): Promise<string | null> {
+  if (source.type === "image") {
+    if (!source.url) return null;
+    // Same-origin / relative / data: URLs load and cache fine as-is.
+    if (!/^https?:\/\//i.test(source.url)) return source.url;
+    // Remote previews (e.g. Blossom): route through the dev proxy so the browser HTTP-caches them
+    // under our own origin with immutable headers. Blossom sends no cache-control AND its CDN blocks
+    // cross-origin fetch via CORS — so a raw <img src> re-fetches on every Library reopen (the flash)
+    // and a client-side blob cache is impossible. The proxy fetches server-side (no CORS) once; every
+    // reopen is then a same-origin disk-cache hit. In prod builds (no dev proxy) fall back to the raw URL.
+    return import.meta.env.DEV ? `/__asset-cache?u=${encodeURIComponent(source.url)}` : source.url;
+  }
   const key = thumbKey(source);
   const cached = thumbUrls.get(key);
   if (cached) return cached;
@@ -587,6 +982,12 @@ async function writeThumbBlob(key: string, blob: Blob): Promise<void> {
 
 function thumbRequest(key: string): Request {
   return new Request(`${location.origin}/__entity-thumb-cache/${key}.webp`);
+}
+
+/** Render a 220×128 WebP thumbnail of a .glb model (reused by community publish to
+ *  attach a preview image to the entity event). Returns null if rendering fails. */
+export function renderModelThumb(model: string): Promise<Blob | null> {
+  return enqueueThumbRender({ type: "model", model });
 }
 
 async function renderThumbBlob(source: ThumbSource): Promise<Blob | null> {
@@ -651,6 +1052,8 @@ function enqueueThumbRender(source: ThumbSource): Promise<Blob | null> {
 }
 
 async function buildThumbTarget(scene: Scene, source: ThumbSource): Promise<ThumbTarget> {
+  // Image thumbs render directly via <img> and never reach the 3D thumb pipeline.
+  if (source.type === "image") throw new Error("image thumbnails have no 3D target");
   if (source.type === "model") {
     const loaded = await importModel(scene, source.model);
     for (const mesh of loaded.meshes) {
@@ -692,7 +1095,9 @@ function thumbKey(source: ThumbSource): string {
   const raw =
     source.type === "model"
       ? `model:${source.model}:${source.token ?? ""}:${THUMB_W}x${THUMB_H}`
-      : `builtin:${source.id}:${source.token ?? ""}:${THUMB_W}x${THUMB_H}`;
+      : source.type === "image"
+        ? `image:${source.url}`
+        : `builtin:${source.id}:${source.token ?? ""}:${THUMB_W}x${THUMB_H}`;
   return `${THUMB_CACHE_VERSION}-${hashString(raw)}`;
 }
 
@@ -745,6 +1150,10 @@ const tabButtonCss = (on: boolean) =>
   `cursor:pointer; background:${on ? "#3a7a40" : "#222a38"}; color:${on ? "#fff" : "#bcd"}; border:1px solid ${
     on ? "#7dd986" : "#3a4658"
   }; border-radius:6px; padding:6px 9px; font:12px system-ui,sans-serif;`;
+
+const sourceBtnCss = (on: boolean) =>
+  `cursor:pointer; height:32px; padding:0 12px; border:none; font:700 11px system-ui,sans-serif;` +
+  `background:${on ? "#2f6d37" : "#0b0f16"}; color:${on ? "#f3fff3" : "#9fb0c0"};`;
 
 const categoryTabCss = (on: boolean) =>
   "cursor:pointer; min-width:0; height:30px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" +

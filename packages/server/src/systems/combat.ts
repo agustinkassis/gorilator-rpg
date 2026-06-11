@@ -1,15 +1,15 @@
 import {
-  GameState,
-  Player,
-  Enemy,
-  Tree,
-  Rock,
+  type GameState,
+  type Player,
+  type Enemy,
+  type Tree,
+  type Rock,
   House,
   Structure,
   AnimState,
-  DamageEvent,
-  KillEvent,
-  HealEvent,
+  type DamageEvent,
+  type KillEvent,
+  type HealEvent,
   ATTACK_RANGE,
   ATTACK_VARIANCE,
   ARMOR_K,
@@ -35,10 +35,11 @@ import {
   dropEntityLoot,
   applyDamageDrops,
 } from "./resources";
-import { grantXp, killXp, applyDeathXpPenalty, EmitXp } from "./leveling";
+import { grantXp, killXp, applyDeathXpPenalty, type EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 import { devTuning } from "./devTuning";
 import { destroyPropObstacle } from "./props";
+import { serverPluginHost } from "./plugins/host";
 
 /** Anything that can be attacked or repaired by a player. */
 type Target = Player | Enemy | Tree | Rock | House | Structure;
@@ -91,10 +92,10 @@ function resolveTarget(state: GameState, id: string): Target | undefined {
  *  not the centre, so the reach must include it. Other targets are points. */
 function targetRadius(t: Target): number {
   const r = (t as { radius?: number }).radius;
-  if (t instanceof House || t instanceof Structure) return typeof r === "number" ? r : 0;
+  if (t instanceof House || t instanceof Structure) return typeof r === "number" ? r * ((t as { scale?: number }).scale || 1) : 0;
   // Rocks carry a radius; use a fraction of it so the player walks right up to
   // the boulder to mine it (and ends up amid the stones it drops).
-  return typeof r === "number" ? r * ROCK_COLLISION_SCALE : 0;
+  return typeof r === "number" ? r * ((t as { scale?: number }).scale || 1) * ROCK_COLLISION_SCALE : 0;
 }
 
 /** How close to a target's centre you can land a hit (its surface + melee reach). */
@@ -285,6 +286,11 @@ function connectHit(
       dropEntityLoot(state, "structure", targetId, structure.modelId, structure.x, structure.z, 1.5); // kill-drop loot
       grantXp(attacker, killXp(state, targetId), emitXp);
       destroyPropObstacle(targetId); // rubble is walkable
+      serverPluginHost.fire(
+        "structure:destroyed",
+        { structureId: targetId, modelId: structure.modelId, x: structure.x, z: structure.z, byId: attacker.id },
+        state,
+      );
       state.structures.delete(targetId);
     }
     return;

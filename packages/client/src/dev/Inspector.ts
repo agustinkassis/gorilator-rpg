@@ -7,6 +7,8 @@
 
 type FieldMeta = { section?: string };
 
+const PINNED_SECTION = "Property Source";
+
 export type Field = FieldMeta &
   (
     | { kind: "readonly"; label: string; value: string }
@@ -31,6 +33,13 @@ export type Field = FieldMeta &
       }
     | { kind: "checkbox"; label: string; value: boolean; onChange: (v: boolean) => void }
     | {
+        kind: "scopeToggle";
+        label: string;
+        value: string;
+        options: { value: string; label: string; description: string }[];
+        onChange: (v: string) => void;
+      }
+    | {
         kind: "select";
         label: string;
         value: string;
@@ -50,6 +59,7 @@ export class Inspector {
   private titleEl: HTMLElement;
   private subtitleEl: HTMLElement;
   private pillEl: HTMLElement;
+  private pinnedEl: HTMLElement;
   private scrollEl: HTMLElement;
   private bodyEl: HTMLElement;
   private actionsEl: HTMLElement;
@@ -69,6 +79,7 @@ export class Inspector {
         </div>
         <div id="inspPill" style="display:none; max-width:118px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#bdf1c4; background:#1f3f2b; border:1px solid #4a9a52; border-radius:999px; padding:3px 8px; font-weight:700;"></div>
       </div>
+      <div id="inspPinned" style="flex:0 0 auto; display:none; padding:9px 10px 10px; background:#101824f5; border-bottom:1px solid #253348;"></div>
       <div id="inspScroll" style="flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain;">
         <div id="inspBody" style="padding:10px; display:grid; gap:10px;"></div>
         <div id="inspActions" style="position:sticky; bottom:0; padding:10px; display:flex; gap:7px; flex-wrap:wrap; background:linear-gradient(180deg,#0b101800,#0b1018 30%); border-top:1px solid #253348;"></div>
@@ -82,6 +93,7 @@ export class Inspector {
     this.titleEl = panel.querySelector("#inspTitle") as HTMLElement;
     this.subtitleEl = panel.querySelector("#inspSubtitle") as HTMLElement;
     this.pillEl = panel.querySelector("#inspPill") as HTMLElement;
+    this.pinnedEl = panel.querySelector("#inspPinned") as HTMLElement;
     this.scrollEl = panel.querySelector("#inspScroll") as HTMLElement;
     this.bodyEl = panel.querySelector("#inspBody") as HTMLElement;
     this.actionsEl = panel.querySelector("#inspActions") as HTMLElement;
@@ -90,10 +102,12 @@ export class Inspector {
 
   /** Render a selection. Pass null to show the "nothing selected" hint. */
   setSelection(title: string | null, fields: Field[] = [], actions: Action[] = []) {
+    this.pinnedEl.innerHTML = "";
     this.bodyEl.innerHTML = "";
     this.actionsEl.innerHTML = "";
     const empty = title === null;
     this.emptyEl.style.display = empty ? "block" : "none";
+    this.pinnedEl.style.display = "none";
     this.bodyEl.style.display = empty ? "none" : "grid";
     this.actionsEl.style.display = empty || !actions.length ? "none" : "flex";
     this.scrollEl.scrollTop = 0;
@@ -111,7 +125,14 @@ export class Inspector {
     this.pillEl.textContent = parsed.kind;
     this.pillEl.style.display = parsed.kind ? "block" : "none";
 
-    for (const section of groupFields(fields)) this.bodyEl.appendChild(this.sectionEl(section));
+    const pinnedFields = fields.filter((f) => f.section === PINNED_SECTION);
+    const bodyFields = fields.filter((f) => f.section !== PINNED_SECTION);
+    if (pinnedFields.length) {
+      this.pinnedEl.style.display = "block";
+      for (const section of groupFields(pinnedFields)) this.pinnedEl.appendChild(this.sectionEl(section));
+    }
+
+    for (const section of groupFields(bodyFields)) this.bodyEl.appendChild(this.sectionEl(section));
     for (const a of actions) this.actionsEl.appendChild(this.actionBtn(a));
   }
 
@@ -149,6 +170,8 @@ export class Inspector {
   }
 
   private fieldRow(f: Field): HTMLElement {
+    if (f.kind === "scopeToggle") return this.scopeToggle(f);
+
     const row = document.createElement("label");
     row.style.cssText =
       "display:grid; grid-template-columns:minmax(88px,.85fr) minmax(0,1fr); align-items:center; gap:8px; min-height:32px; padding:4px 5px; border-radius:6px;";
@@ -249,6 +272,40 @@ export class Inspector {
     };
     row.appendChild(input);
     return row;
+  }
+
+  private scopeToggle(f: Extract<Field, { kind: "scopeToggle" }>): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:grid; gap:7px; padding:4px 5px 6px;";
+
+    const title = document.createElement("div");
+    title.textContent = f.label;
+    title.style.cssText = "color:#dce8f4; font:800 11px system-ui,sans-serif; text-transform:uppercase; letter-spacing:.06em;";
+
+    const controls = document.createElement("div");
+    controls.style.cssText = "display:grid; grid-template-columns:1fr 1fr; gap:6px;";
+
+    for (const opt of f.options) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.title = opt.description;
+      const selected = opt.value === f.value;
+      btn.style.cssText =
+        "min-width:0; cursor:pointer; text-align:left; border:1px solid; border-radius:6px; padding:7px 8px; font:700 11px system-ui,sans-serif;" +
+        (selected
+          ? "background:#244e34; border-color:#57b66a; color:#eaffee;"
+          : "background:#0b111a; border-color:#35445e; color:#aebdd0;");
+      btn.innerHTML =
+        `<span style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(opt.label)}</span>` +
+        `<span style="display:block; margin-top:2px; color:${selected ? "#bdeec7" : "#7f91a7"}; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(opt.description)}</span>`;
+      btn.onclick = () => {
+        if (opt.value !== f.value) f.onChange(opt.value);
+      };
+      controls.appendChild(btn);
+    }
+
+    wrap.append(title, controls);
+    return wrap;
   }
 
   private toggleInput(value: boolean, onChange: (v: boolean) => void): HTMLElement {
@@ -362,6 +419,8 @@ function parseTitle(title: string): { kind: string; name: string } {
 
 const labelText = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const trim = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 
 const controlCss = () =>
   "min-width:0; width:100%; height:30px; box-sizing:border-box; border:1px solid #35445e; border-radius:6px; background:#0b111a; color:#eef4fb; padding:0 8px; font:12px system-ui,sans-serif; outline:none;";
