@@ -2,7 +2,7 @@
 // Cloudflare path still wires one public hostname to the game port; the menu
 // also exposes server ports, Nostr identity, monitor auth, and supported env.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { buildClient, pnpmInstall } from "../lib/build.js";
+import { buildClient } from "../lib/build.js";
 import { logsCmd } from "./service.js";
 import { installId, loadConfig, updateConfig, type InstallConfig } from "../lib/config.js";
 import type { RuntimeContext } from "../lib/context.js";
@@ -173,14 +173,15 @@ async function generalSettingsMenu(opts: Options): Promise<void> {
 }
 
 /** Developer tools. Currently a single toggle: when ON, `gorilator serve` runs
- *  the live dev server (Vite HMR + tsx, in-game Dev Mode editor) instead of the
- *  production build — see commands/serve.ts. Mock Nostr login stays disabled. */
+ *  the daemon with NODE_ENV=development — same single-port build + tunnel as
+ *  production, just the development environment (see commands/serve.ts). Mock
+ *  Nostr login stays disabled. */
 async function developerMenu(opts: Options): Promise<void> {
   for (;;) {
     const ctx = requireInstall(opts);
     const on = ctx.env.GORILATOR_DEV === "1";
     const choice = await selectMenu(`Developer\n  Dev mode is ${on ? "ON" : "off"}\n`, [
-      { label: on ? "Turn dev mode OFF" : "Turn dev mode ON", hint: on ? "back to production build" : "live dev server (Vite + tsx)" },
+      { label: on ? "Turn dev mode OFF" : "Turn dev mode ON", hint: on ? "back to production env" : "dev env (single port, NODE_ENV=development)" },
       { label: "Back" },
     ]);
     if (choice === 0) toggleDevMode(opts, !on);
@@ -188,27 +189,20 @@ async function developerMenu(opts: Options): Promise<void> {
   }
 }
 
-/** Switch the system install between the production build and the development
- *  environment (live dev server). Exported so the Main Menu can offer it too. */
+/** Switch the system install between the production and development environments.
+ *  Both serve the built client on one port behind one tunnel — dev mode only sets
+ *  NODE_ENV=development. Exported so the Main Menu can offer it too. */
 export function toggleDevMode(opts: Options, on: boolean): void {
   const ctx = requireInstall(opts);
-  if (on && !confirm("Run this server in DEVELOPMENT mode (Vite HMR + tsx, in-game Dev Mode editor)? Heavier to run; not for a public production host.")) {
+  if (on && !confirm("Run this server in DEVELOPMENT mode (NODE_ENV=development)? Same single port + tunnel as production.")) {
     return;
-  }
-  if (on) {
-    // The dev server runs `pnpm dev` (Vite), whose build-only deps a prebuilt
-    // (slim) install skips. Ensure the full dependency set is present first.
-    log.info("Ensuring developer dependencies are installed (Vite + build tools)…");
-    try {
-      pnpmInstall(ctx.appDir);
-    } catch (e) {
-      log.warn(`Could not install dev dependencies: ${(e as Error).message}`);
-    }
   }
   writeEnvPatch(
     ctx,
     { GORILATOR_DEV: on ? "1" : "" },
-    on ? "Dev mode ON — the daemon will run the live dev server." : "Dev mode off — back to the production build.",
+    on
+      ? "Dev mode ON — the daemon runs in the development environment (single port)."
+      : "Dev mode off — back to the production environment.",
   );
   restartDaemon();
   pause();
