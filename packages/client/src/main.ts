@@ -11,8 +11,14 @@ import { PropManager } from "./dev/PropManager";
 import { CharacterManager } from "./dev/CharacterManager";
 import { EntityCreator } from "./dev/EntityCreator";
 import { AnimationTester } from "./dev/AnimationTester";
+// Dev Mode editor + component labels + the editor's NIP-98 save shim. These are
+// referenced only behind the build-time `DEV_TOOLS` constant below, so a production
+// build (DEV_TOOLS === false) tree-shakes ALL of this code — and its heavy subtree
+// (LibraryExplorer, EntityCreator, importers) — out of the bundle entirely. Verified
+// by build: a prod bundle contains none of the editor's code or strings.
 import { DevMode } from "./dev/DevMode";
 import { DeveloperLabels } from "./dev/DeveloperLabels";
+import { installDevEditorAuth } from "./dev/devEditorAuth";
 import { PropImporter } from "./ui/propImporter";
 import { HUD } from "./ui/hud";
 import { HealthGlobe } from "./ui/healthGlobe";
@@ -1259,7 +1265,11 @@ const inventory = new InventoryUI(
 const hotkeyBar = new HotkeyBar((slot) => net.sendUseItem(slot));
 const minimap = new Minimap(net); // top-left radar + hold TAB / Map button for the big map
 const chat = new ChatLog((text) => net.sendChat(text)); // Enter to chat (right-side log)
-const developerLabels = import.meta.env.DEV ? new DeveloperLabels(scene) : null;
+// Dev tools (in-game editor + component labels) compile in for a local Vite dev
+// server (import.meta.env.DEV) OR a deployed dev-tools build (VITE_DEV_TOOLS=1 —
+// the `gorilator` dev server). On the deployed build the editor is admin-gated below.
+const DEV_TOOLS = import.meta.env.DEV || import.meta.env.VITE_DEV_TOOLS === "1";
+const developerLabels = DEV_TOOLS ? new DeveloperLabels(scene) : null;
 // Esc menu: resume, hotkeys, sound/graphics settings, login-with-Nostr, kill-yourself, exit.
 new GameMenu({
   net,
@@ -1283,10 +1293,17 @@ game.setStructureProps(propManager); // destroyed structures hide their prop vis
 // Placed custom characters (imported Meshy zips) — loads npcs.json + renders them.
 const characterManager = new CharacterManager(scene, shadows);
 minimap.setProps(propManager); // so the map can icon imported trees/rocks/concrete props
-const devMode = import.meta.env.DEV ? new DevMode(scene, ground, net, propManager) : null;
+const devMode = DEV_TOOLS ? new DevMode(scene, ground, net, propManager) : null;
 devMode?.setCharacterManager(characterManager); // placed characters are selectable/draggable in Dev Mode
 devMode?.setGame(game); // library explorer can select + camera-focus world entities
 devMode?.setInventoryUI(inventory); // Dev Mode: click an inventory slot to set its item/qty
+// Deployed dev server (a VITE_DEV_TOOLS build, NOT a local Vite dev): the page is
+// public, so gate the editor behind the local player's admin status and sign its
+// `/__*` saves with NIP-98 (the server also enforces admin on every write).
+if (devMode && !import.meta.env.DEV && import.meta.env.VITE_DEV_TOOLS === "1") {
+  devMode.setAdminGate(() => !!(game.localId && net.room?.state.players.get(game.localId)?.isAdmin));
+  installDevEditorAuth();
+}
 if (developerLabels)
   devMode?.setDeveloperLabels({
     isEnabled: () => developerLabels.isEnabled(),

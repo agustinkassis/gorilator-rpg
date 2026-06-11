@@ -114,8 +114,11 @@ export async function update(ctx?: RuntimeContext, opts?: Options): Promise<void
   }
 
   // Same-origin installs can pull the release's prebuilt dist; legacy split-host
-  // (VITE_SERVER_URL) and direct-client-port installs build from source.
-  const prebuilt = slug && env.VITE_SAME_ORIGIN === "1" ? { slug, tag: ref } : null;
+  // (VITE_SERVER_URL) and direct-client-port installs build from source. A dev-mode
+  // install also source-builds: the prebuilt release dist is a production client
+  // without the in-game Dev Mode editor (which buildPlan bakes in via VITE_DEV_TOOLS).
+  const prebuilt =
+    slug && env.VITE_SAME_ORIGIN === "1" && env.GORILATOR_DEV !== "1" ? { slug, tag: ref } : null;
   const plan = buildPlan(cfg.appDir, { ...buildOpts, prebuilt, actions });
   const restart = actions.restartServer;
 
