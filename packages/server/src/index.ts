@@ -17,6 +17,7 @@ import { updateChecker } from "./systems/updateCheck";
 import { adminCount, isAdmin, listAdminNpubs } from "./systems/admins";
 import { requireAdmin, verifyNip98, type AdminRequest } from "./systems/nip98";
 import { canSelfUpdate, startSelfUpdate } from "./systems/selfUpdate";
+import { createDevEditorRouter } from "./dev/editorApi";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -147,6 +148,17 @@ app.post("/api/admin/update", requireAdmin, (req: AdminRequest, res: Response) =
   console.log(`[admin] update triggered by ${req.adminPubkey?.slice(0, 12)}… from v${fromVersion}`);
   res.status(202).json({ started: true, fromVersion });
 });
+
+// Dev-mode in-game editor API: persists the Dev Mode editor's changes to the
+// content manifests (packages/client/public/*.json) so the editor works on a
+// single-port, built-client dev server (where Vite — and its `/__*/` endpoints —
+// isn't running). Mounted ONLY in development; every mutating route is NIP-98
+// admin-gated (see dev/editorApi). Must come BEFORE the SPA fallback so `/__*`
+// isn't shadowed by the index.html catch-all.
+if (process.env.NODE_ENV === "development") {
+  app.use(createDevEditorRouter());
+  console.log("[dev] in-game editor API mounted (/__*, admin-gated) — NODE_ENV=development");
+}
 
 // SPA fallback (single-service only): unmatched GETs return index.html so the
 // client renders, but never shadow the monitor or Colyseus matchmaking routes.
