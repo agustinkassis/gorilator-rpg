@@ -27,6 +27,8 @@ packages/client/public/models/characters/
 # Shared agent/tooling config is committed so new developers get the same
 # startup flow. Local runtime state and machine-specific permissions stay out.
 .claude/worktrees/
+.claude/worktrees.json
+.claude/cloud-worktrees.json
 .claude/settings.local.json
 .claude/**/*.local.json
 .codex/worktrees/
@@ -36,3 +38,6 @@ packages/client/public/models/characters/
 
 # Local Gorilator CLI project settings, process state, and logs
 .gorilator/
+
+# Per-issue git worktrees created by scripts/worktree-manager.mjs (local checkouts)
+worktrees/
