@@ -38,6 +38,8 @@ packages/client/public/models/characters/
 # launch.json + worktrees-manifest.json are per-worktree GENERATED state
 # (pnpm bootstrap / pnpm wt:launch / pnpm wt) — never commit them.
 .claude/worktrees/
+.claude/worktrees.json
+.claude/cloud-worktrees.json
 .claude/settings.local.json
 .claude/**/*.local.json
 .claude/launch.json
@@ -50,6 +52,9 @@ packages/client/public/models/characters/
 
 # Local Gorilator CLI project settings, process state, and logs
 .gorilator/
+
+# Per-issue git worktrees created by scripts/worktree-manager.mjs (local checkouts)
+worktrees/
 
 # Cached Nostr realm packs (kind-30333 data plugins; re-fetched on boot)
 .gorilator-packs/
