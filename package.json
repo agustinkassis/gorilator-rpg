@@ -15,6 +15,7 @@
     "build": "pnpm --filter @rpg/shared build && pnpm --filter @rpg/client build && pnpm --filter @gorilator/landing build",
     "build:landing": "pnpm --filter @gorilator/landing build",
     "perf": "node scripts/perf-analyze.mjs",
+    "bot:survive": "node scripts/survival-bot.mjs",
     "bump": "node scripts/bump.mjs",
     "version:check": "node scripts/check-versions.mjs",
     "deploy": "node packages/cli/gorilator.cjs install",

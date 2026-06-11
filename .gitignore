@@ -36,3 +36,6 @@ packages/client/public/models/characters/
 
 # Local Gorilator CLI project settings, process state, and logs
 .gorilator/
+
+# Local screenshots, bot runs, and generated verification artifacts
+test-artifacts/

@@ -36,6 +36,8 @@ players (level 1, fresh inventory), rebuilds the house, and starts the next real
 | [versioning.md](versioning.md) | SemVer policy: per-package versions + the umbrella **app** version, the `pnpm bump` tool, and the CI version guard |
 | [publishing-cli.md](publishing-cli.md) | How the `gorilator` CLI is auto-published to npm on each GitHub Release via CI (OIDC Trusted Publishing, no token), plus the release checklist |
 | [admin.md](admin.md) | The admin list (`ADMIN_NPUBS`) + NIP-98-protected `/api/admin/*` API, and the admin "Update now" self-update button on the splash |
+| [vision-mmorpg.md](vision-mmorpg.md) | Product vision for the rebrand/refactor into an open-source Nostr MMORPG sandbox with crafting, quests, server migration, collaborative creation, and optional tower-defense events |
+| [survival-brain.md](survival-brain.md) | Headless survival bot notes, run results, and the strategy loop for defending La Crypta across waves |
 
 Related top-level docs: [`../README.md`](../README.md) (quick start + stack),
 [`../REALMS.md`](../REALMS.md) (realm/discovery spec for external apps),
