@@ -9,12 +9,18 @@ small **HTTP API**.
 
 - **Server** — one running Gorilator backend, identified by its **Nostr public
   key** (`NOSTR_NSEC` → pubkey). It has a name and a play URL.
-- **Realm** — one game. A new game is a new realm. A realm **starts** when a player
-  is in the room and alive (and no realm is active), and **ends** when **La Crypta
-  (the home) falls** (which also wipes every player back to level 1) **or the room
-  empties**. The server numbers them and counts them for life.
+- **Realm** — one **event/world cycle**, not the whole game identity. A realm
+  **starts** when a player is in the room and alive (and no realm is active), and
+  **ends** when **La Crypta (the home) falls** (which resets the world; by default
+  character progression — level/XP — **persists** across the reset, per the
+  `realm.json` `policy` block, with the legacy full-wipe configurable) **or the
+  room empties**. The server numbers them and counts them for life.
 - **Round / wave** — within a realm, the goblin horde attacks in escalating waves.
   `maxRounds` is the highest wave ever reached on this server (its record).
+
+**Leaderboard semantics under persistent progression:** a player's **best level**
+is a **lifetime metric** — the character outlives any single realm. **Best wave**
+(`maxRounds`) stays the **per-event metric** — the record of one realm's siege.
 
 Lifetime totals (`totalRealms`, `maxRounds`) persist in a local file
 (`SERVER_STATS_FILE`, default `./.server-realms.json`) and are **mirrored into the
@@ -153,8 +159,9 @@ Relays published to: `relay.damus.io`, `nos.lol`, `relay.nostr.band`, `relay.pri
 room empty ──player joins & alive──▶ REALM STARTED (totalRealms++)
    ▲                                      │  accumulates: wave (→maxRounds), joined npubs, peak players
    │                                      ▼
-   └──────── REALM ENDED ◀── La Crypta falls (home-fell, wipes everyone)  OR  room empties (abandoned)
+   └──────── REALM ENDED ◀── La Crypta falls (home-fell, resets the world)  OR  room empties (abandoned)
 ```
 
-A wipe ends the realm and a fresh one begins as the players respawn — so each
-"survive as long as you can" run is one realm.
+A wipe ends the realm and a fresh one begins as the players respawn — keeping
+their progression under the default policy — so each "survive as long as you
+can" run is one realm.

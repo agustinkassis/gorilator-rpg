@@ -179,10 +179,23 @@ model as the kind-30333 community entities in `docs/community-entities` spec).
 {
   "name": "my-realm",
   "plugins": { "disabled": ["example-arena"] },
-  "tuning": { "waveSizeBase": 8, "playerMaxHp": 150 }
+  "tuning": { "waveSizeBase": 8, "playerMaxHp": 150 },
+  "policy": {
+    "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
+    "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+  }
 }
 ```
 
 `tuning` accepts every live Gameplay-Options knob (`DevTuningKey` — wave pacing,
 player/enemy stats, damage divisor…), seeding it at room create. Absent file =
 stock behavior.
+
+`policy` sets the realm's death/progression rules (`packages/server/src/systems/policy.ts`):
+
+- `death.mode`: `"xp-penalty"` (default — lose `xpPenalty` of total XP, de-leveling
+  across boundaries), `"none"` (death costs nothing), or `"hardcore"` (back to level 1).
+- `progression.persistAcrossWipes` (default `true`): level/XP/stats survive a realm
+  reset (La Crypta falling). Set `false` for the legacy full wipe.
+- `progression.keepInventoryOnWipe` (default `true`): inventories survive the reset
+  too (only applies while `persistAcrossWipes` is on).

@@ -4,7 +4,7 @@
 
 ### Defend La Crypta.
 
-**An open-source online multiplayer RPG tower-defense — with the game-dev SDK built right into the game.**
+**An open-source Nostr MMORPG sandbox — anyone can run a world, create content, and players carry identity and progress across compatible servers.**
 
 [![Open Source](https://img.shields.io/badge/100%25-Open%20Source-ffcc33?style=flat-square)](https://github.com/agustinkassis/gorilator-rpg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](#license)
@@ -22,7 +22,9 @@
 
 ## What is Gorilator?
 
-Gorilator is a **multiplayer isometric RPG tower defense**. Pick a warrior, drop into a shared realm with other players, and hold **La Crypta** against waves of enemies — looting, crafting, and leveling as you go. Open two tabs (or invite friends to your server) and you'll see everyone move and fight in real time.
+Gorilator is an **open-source Nostr MMORPG sandbox** where anyone can run a world, create content, and let players carry identity and progress across compatible servers. Log in with your Nostr key and your character is *yours* — saved to public relays, not locked in one server's database.
+
+Today's gameplay is the sandbox's first **event module — "La Crypta Defense"**: pick a warrior, drop into a shared realm with other players, and hold **La Crypta** against waves of enemies — looting, crafting, and leveling as you go. Open two tabs (or invite friends to your server) and you'll see everyone move and fight in real time. Where the sandbox is headed — player-crafted gear, classes from wearables, trinity combat, survival & farming, quests, and cross-server federation — lives in **[the vision](docs/vision.md)** and **[the roadmap](ROADMAP.md)**.
 
 But the twist is what's *inside* the game: Gorilator ships a **developer SDK and world editor baked into the running client**. You don't clone a separate tool — you flip on Dev Mode, place props, import 3D models from the UI, define new items and entities, and **commit your changes from within the game itself**. Building the game and playing the game happen in the same window.
 
@@ -100,7 +102,7 @@ This makes content creation approachable: artists and designers can contribute m
 
 ## 🎮 Core systems
 
-- **Tower defense** — hold the house, break the waves.
+- **La Crypta Defense** — the first event module: hold the house, break the waves.
 - **RPG progression** — level up, loot, and craft.
 - **Online multiplayer** — server-authoritative Colyseus rooms with automatic state sync.
 - **Crafting & resource pickups** — gather and build.
@@ -166,6 +168,7 @@ The complete dev workflow (setup → verify → PR, fork rules, AI-assisted deve
 
 ## 📚 Documentation
 
+- [Vision](docs/vision.md) · [Roadmap](ROADMAP.md)
 - [Getting started](docs/getting-started.md) · [Contributing](CONTRIBUTING.md)
 - [Architecture & structure](docs/architecture.md)
 - [Plugins & extensibility](docs/plugins.md)

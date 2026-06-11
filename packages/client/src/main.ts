@@ -1726,7 +1726,7 @@ async function start() {
       inventory.setInventory(slots);
       hotkeyBar.setInventory(slots);
     },
-    onWipe: (ev) => topBar.flashDefeat(ev.wave), // La Crypta fell → defeat flash (stats/items reset via state)
+    onWipe: (ev) => topBar.flashDefeat(ev.wave, ev.persist), // La Crypta fell → defeat flash (state sync carries the reset)
     onError: (message) => {
       statusEl.textContent = message;
       console.warn("[net]", message);

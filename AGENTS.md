@@ -44,6 +44,7 @@
 | AI brains | `systems/goblins.ts` + plugin `registerBrain` (see `docs/plugins.md`) |
 | New synced field | `packages/shared/src/schema/*` → rebuild shared → client **hard reload** |
 | Game tuning constants | `packages/shared/src/constants.ts` (live knobs: Dev Mode tuning panel) |
+| Realm policy (death penalty / progression persistence) | `realm.json` `policy` block (`packages/server/src/systems/policy.ts`) |
 | Dev-editor HTTP endpoints | `packages/client/vite.config.ts` (`/__props/*`, `/__char/*`, `/__items/*`, …) |
 
 All `public/*.json` manifests live-reload on the server (watchFile) — no restart needed.
