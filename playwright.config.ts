@@ -4,7 +4,6 @@ import { defineConfig } from "@playwright/test";
 // worktree blocks) so test runs never collide with a live dev stack.
 export const E2E_SERVER_PORT = 14620;
 export const E2E_CLIENT_PORT = 14621;
-export const E2E_LANDING_PORT = 14622;
 
 // The game canvas is WebGL — headless Chromium needs a software GL backend.
 // RULE: assert on DOM / network / window.__perf, never on canvas pixels (the
@@ -16,11 +15,6 @@ export default defineConfig({
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   projects: [
     {
-      name: "landing",
-      testMatch: /landing\.spec\.ts/,
-      use: { baseURL: `http://localhost:${E2E_LANDING_PORT}` },
-    },
-    {
       name: "game",
       testMatch: /game-smoke\.spec\.ts/,
       use: {
@@ -31,15 +25,8 @@ export default defineConfig({
       },
     },
   ],
-  // All three servers boot for any project run (Playwright starts the whole list);
-  // the extra ones are cheap. GORILATOR_TEST=1 keeps the room reproducible (no waves).
+  // GORILATOR_TEST=1 keeps the room reproducible (no waves).
   webServer: [
-    {
-      command: `pnpm --filter @gorilator/landing exec vite --port ${E2E_LANDING_PORT} --strictPort`,
-      url: `http://localhost:${E2E_LANDING_PORT}`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 90_000,
-    },
     {
       command: `GORILATOR_TEST=1 GAME_SERVER_PORT=${E2E_SERVER_PORT} pnpm --filter @rpg/server dev`,
       url: `http://localhost:${E2E_SERVER_PORT}/healthz`,

@@ -14,7 +14,7 @@
 
 [**▶ Play now**](https://game.gorilator.io) · [Live servers](https://gorilator.io/stats.html) · [Docs](docs/README.md) · [Self-host](DEPLOY.md)
 
-![Gorilator splash screen](packages/landing/public/screenshots/screenshot-1-splash.png)
+![Gorilator splash screen](docs/assets/screenshots/screenshot-1-splash.png)
 
 </div>
 
@@ -32,7 +32,7 @@ It's early and under active development — and intentionally **easy to contribu
 
 <div align="center">
 
-![Gorilator multiplayer combat](packages/landing/public/screenshots/screenshot-2-multiplayer.png)
+![Gorilator multiplayer combat](docs/assets/screenshots/screenshot-2-multiplayer.png)
 
 *Isometric multiplayer combat — hold La Crypta against the waves with other players in real time.*
 
@@ -92,7 +92,7 @@ This makes content creation approachable: artists and designers can contribute m
 
 <div align="center">
 
-![Gorilator dev mode editor](packages/landing/public/screenshots/screenshot-3-dev.png)
+![Gorilator dev mode editor](docs/assets/screenshots/screenshot-3-dev.png)
 
 *Dev Mode: select an entity and edit identity, transform, physics, and spawners — live, in the running game.*
 
@@ -127,7 +127,6 @@ packages/
   shared/    @rpg/shared   — Colyseus schema + types + constants (client AND server)
   server/    @rpg/server   — authoritative game server (default port 2567)
   client/    @rpg/client   — Babylon.js + Vite browser client + in-game dev SDK
-  landing/   @gorilator/landing — marketing site + live server dashboard
   cli/       gorilator     — native installer / supervisor CLI
 ```
 

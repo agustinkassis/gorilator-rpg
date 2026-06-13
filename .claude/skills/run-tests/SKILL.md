@@ -8,10 +8,9 @@ description: Run the verification ladder before a PR — lint, typecheck, build,
 All tasks are Turbo-cached — unchanged packages are skipped, so run the full set freely:
 
 1. `pnpm exec turbo run lint typecheck build test` — Biome lint, tsc typecheck (all packages incl. client), builds, Vitest unit suites (shared + server) + CLI node:test. One DAG invocation.
-2. `pnpm e2e:landing` — Playwright DOM tests for the React landing (fast, no WebGL).
-3. `pnpm e2e:game` — headless full-stack smoke: real splash join → Colyseus WS → `/api/status` registers the player → `window.__perf` reports fps>0. Needs ~30s.
-4. `pnpm bench` — server tick benchmark vs `perf-baselines/`; fails on >25% tick-cost regression. Run when server systems changed.
-5. `pnpm version:check` — always before opening/updating a PR (version-guard mirrors it in CI).
+2. `pnpm e2e:game` — headless full-stack smoke: real splash join → Colyseus WS → `/api/status` registers the player → `window.__perf` reports fps>0. Needs ~30s.
+3. `pnpm bench` — server tick benchmark vs `perf-baselines/`; fails on >25% tick-cost regression. Run when server systems changed.
+4. `pnpm version:check` — always before opening/updating a PR (version-guard mirrors it in CI).
 
 Gotchas:
 - Unit tests that import the schema use the **compiled** `@rpg/shared` dist — Turbo's `^build` edge handles the ordering; running `vitest` directly in `packages/server` needs `pnpm build:shared` first.

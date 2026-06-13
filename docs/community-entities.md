@@ -35,7 +35,7 @@ IMPORT             Community card → ＋ Add → server downloads the Blossom a
 COMMIT             pending entities are committed with normal git; once in HEAD the
                    "pending" badge clears. Pending entities can also be Removed.
 
-SHOWCASE           landing /profile.html?npub=… lists a creator's published entities
+SHOWCASE           external profile app /profile.html?npub=… lists a creator's published entities
 ```
 
 "Pending" is **git-tracked state**: `GET /__content/pending` reports the ids whose def
@@ -168,7 +168,7 @@ the client at it via `VITE_COMMUNITY_CACHE_URL=http://localhost:4903`.
 | Client cache (localStorage SWR) | `packages/client/src/dev/libraryCache.ts` |
 | Server cache (warm relay sub + HTTP) | `packages/cache/` (`@rpg/cache`) |
 | Dev endpoints (`/__content/pending`, `/__char/def-delete`, `/__content/import-remote`, `/__structures/*`) | `packages/client/vite.config.ts` |
-| Creator profile page | `packages/landing/profile.html`, `…/src/profile.tsx`, `…/src/realms.ts` (`useAuthorEntities`) |
+| Creator profile page | External profile/landing app; the game links to it with `VITE_LANDING_URL` |
 
 > All local authoring + git + file writes go through **dev-only Vite middleware**, so the
 > Local library + creator only work under `pnpm dev`. Publishing/browsing (Nostr + Blossom)

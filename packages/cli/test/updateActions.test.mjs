@@ -13,8 +13,8 @@ test("no changes ⇒ nothing to do", () => {
   assert.equal(a.install, false);
 });
 
-test("app/landing bumps are ignored (no daemon impact)", () => {
-  const a = planUpdateActions(["app", "landing"]);
+test("app bumps are ignored (no daemon impact)", () => {
+  const a = planUpdateActions(["app"]);
   assert.equal(a.any, false);
   assert.equal(a.restartServer, false);
 });

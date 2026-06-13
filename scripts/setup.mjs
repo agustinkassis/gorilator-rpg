@@ -42,6 +42,5 @@ console.log("[setup] warming the @rpg/shared build cache");
 run("pnpm", ["exec", "turbo", "run", "build", "--filter=@rpg/shared"]);
 
 console.log("\n✓ setup complete");
-console.log(`    landing :${ports.landing}   game/client :${ports.client}   server :${ports.server}`);
+console.log(`    game/client :${ports.client}   server :${ports.server}`);
 console.log("\n  pnpm dev        # game (client + server + shared watcher)");
-console.log("  pnpm landing    # marketing site + live dashboard");

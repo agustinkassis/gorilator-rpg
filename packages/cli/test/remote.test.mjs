@@ -46,7 +46,6 @@ function makeRemoteFixture() {
     client: "1.0.0",
     server: "1.0.0",
     shared: "1.0.0",
-    landing: "1.0.0",
   });
   git(source, ["init"]);
   git(source, ["checkout", "-b", "main"]);
@@ -64,7 +63,6 @@ function makeRemoteFixture() {
     client: "1.0.0",
     server: "1.0.0",
     shared: "1.0.0",
-    landing: "1.0.0",
   });
   git(source, ["add", "."]);
   git(source, ["commit", "-m", "remote versions"]);
@@ -79,7 +77,6 @@ function writeProject(root, versions) {
   mkdirSync(join(root, "packages", "client"), { recursive: true });
   mkdirSync(join(root, "packages", "server"), { recursive: true });
   mkdirSync(join(root, "packages", "shared"), { recursive: true });
-  mkdirSync(join(root, "packages", "landing"), { recursive: true });
   writeFileSync(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "packages/*"\n');
   writeFileSync(
     join(root, "package.json"),
@@ -104,10 +101,6 @@ function writeProject(root, versions) {
   writeFileSync(
     join(root, "packages", "shared", "package.json"),
     JSON.stringify({ name: "@rpg/shared", version: versions.shared }) + "\n",
-  );
-  writeFileSync(
-    join(root, "packages", "landing", "package.json"),
-    JSON.stringify({ name: "@gorilator/landing", version: versions.landing }) + "\n",
   );
 }
 

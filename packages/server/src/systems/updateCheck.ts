@@ -25,7 +25,7 @@ export interface UpdateSnapshot {
   /** True when the latest release is ahead of the local code (app or any package). */
   updateAvailable: boolean;
   /** The running code's **app (umbrella)** version + short commit, plus the local
-   *  per-package versions (app/cli/client/server/shared/landing). */
+   *  per-package versions (app/cli/client/server/shared). */
   current: {
     version: string;
     sha: string | null;
@@ -186,10 +186,9 @@ const PACKAGE_PATHS: Array<[label: string, path: string]> = [
   ["client", "packages/client/package.json"],
   ["server", "packages/server/package.json"],
   ["shared", "packages/shared/package.json"],
-  ["landing", "packages/landing/package.json"],
 ];
 
-/** The local per-package versions (app/cli/client/server/shared/landing). */
+/** The local per-package versions (app/cli/client/server/shared). */
 function localPackages(): Record<string, string> {
   const root = git("rev-parse", "--show-toplevel");
   const out: Record<string, string> = {};

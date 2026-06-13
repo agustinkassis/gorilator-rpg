@@ -30,7 +30,6 @@ export const PACKAGE_VERSION_FILES: Array<{ label: string; path: string }> = [
   { label: "client", path: "packages/client/package.json" },
   { label: "server", path: "packages/server/package.json" },
   { label: "shared", path: "packages/shared/package.json" },
-  { label: "landing", path: "packages/landing/package.json" },
 ];
 
 function readPackageVersion(appDir: string, path: string): string | null {

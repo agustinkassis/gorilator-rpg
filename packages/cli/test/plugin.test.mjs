@@ -209,7 +209,6 @@ function makeTempProject() {
   mkdirSync(join(root, "packages", "client"), { recursive: true });
   mkdirSync(join(root, "packages", "server"), { recursive: true });
   mkdirSync(join(root, "packages", "shared"), { recursive: true });
-  mkdirSync(join(root, "packages", "landing"), { recursive: true });
   writeFileSync(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "packages/*"\n');
   writeFileSync(
     join(root, "package.json"),
@@ -230,10 +229,6 @@ function makeTempProject() {
   writeFileSync(
     join(root, "packages", "shared", "package.json"),
     '{"name":"@rpg/shared","version":"4.0.0"}\n',
-  );
-  writeFileSync(
-    join(root, "packages", "landing", "package.json"),
-    '{"name":"@gorilator/landing","version":"5.0.0"}\n',
   );
   return root;
 }

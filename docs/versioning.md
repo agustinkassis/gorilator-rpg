@@ -11,7 +11,7 @@ anything else (`1.2`, `01.2.3`, `v1.2.3`, …).
 | --- | --- | --- |
 | **App release version** | The root `package.json` version — the project-wide version shown in the game footer (`v…`) and used for GitHub Release tags. | `app 1.5.0` |
 | **npm CLI version** | The published `gorilator` package version. It is independent from the app release version. | `cli 1.5.0` |
-| **Other package versions** | Internal workspace package versions. They still bump with SemVer when their package changes. | `server 0.2.1`, `client 0.2.0`, `shared 0.2.0`, `landing 0.4.0` |
+| **Other package versions** | Internal workspace package versions. They still bump with SemVer when their package changes. | `server 0.2.1`, `client 0.2.0`, `shared 0.2.0` |
 
 **The rule:** the **app** version is the release version. GitHub Release tags use
 the app version. Whenever any package is bumped, the app is bumped by at least
@@ -30,7 +30,7 @@ What each level means (standard SemVer):
 One command bumps a package **and** the app together, so they can't drift:
 
 ```bash
-pnpm bump <cli|client|server|shared|landing> <major|minor|patch>
+pnpm bump <cli|client|server|shared> <major|minor|patch>
 #  pnpm bump cli minor    → cli 1.4.0 → 1.5.0   AND  app 1.4.0 → 1.5.0
 #  pnpm bump server patch → server 0.2.1 → 0.2.2 AND  app 0.4.0 → 0.4.1
 pnpm bump app <level>     # bump the app release version
