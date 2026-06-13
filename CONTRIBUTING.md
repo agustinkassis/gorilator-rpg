@@ -13,7 +13,6 @@ pnpm dev         # game: Babylon client + Colyseus server + shared watcher
 ```
 
 Open the printed client URL, type a name, hit ENTER — you're in the game.
-`pnpm landing` runs the marketing site + live stats dashboard instead.
 Requirements: Node ≥ 20, pnpm 10 (`corepack enable`).
 
 ## Repo layout (where to make your change)
@@ -30,8 +29,8 @@ Always prefer the lowest tier that can express your change. The
 **Core layout:** `@rpg/shared` (Colyseus schema + types + constants — tsc-built,
 both sides consume its `dist/`), `@rpg/server` (pure `(state, dt)` systems +
 the 20Hz `GameRoom` tick), `@rpg/client` (Babylon + Vite + the in-game Dev Mode
-editor), `@gorilator/landing` (React), `packages/cli` (the npm `gorilator`
-installer — its version is independent of the app release version).
+editor), `packages/cli` (the npm `gorilator` installer — its version is
+independent of the app release version).
 
 ## Day-to-day workflow
 
@@ -49,7 +48,6 @@ installer — its version is independent of the app release version).
 
 ```bash
 pnpm exec turbo run lint typecheck build test   # Biome + tsc + builds + unit tests (cached DAG)
-pnpm e2e:landing                                # Playwright DOM tests for the landing
 pnpm e2e:game                                   # headless full-stack smoke (join + WS + render loop)
 pnpm bench                                      # server tick regression gate (when server code changed)
 pnpm version:check                              # version topology (CI enforces it too)
@@ -69,8 +67,8 @@ don't). Full policy: [docs/versioning.md](docs/versioning.md).
 ## PRs
 
 1. Branch from `main`, keep PRs focused.
-2. Run the verification ladder; CI runs the same Turbo DAG + Playwright landing
-   suite + the version guard.
+2. Run the verification ladder; CI runs the same Turbo DAG + Playwright game
+   smoke + the version guard.
 3. The PR base is the `targetBranch` in `codex-workflow.json` (defaults to `main`).
 
 ## Forks & integrations

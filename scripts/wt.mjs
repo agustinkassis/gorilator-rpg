@@ -57,7 +57,7 @@ const root = mainRoot();
 if (args[0] === "list") {
   for (const dir of gitWorktrees()) {
     const p = portsFor(dir);
-    console.log(`${dir}\n    landing :${p.landing}   game/client :${p.client}   server :${p.server}`);
+    console.log(`${dir}\n    game/client :${p.client}   server :${p.server}`);
   }
   process.exit(0);
 }
@@ -117,6 +117,6 @@ const manifest = writeManifest(root);
 
 console.log(`\n✓ worktree ready: ${dir}`);
 console.log(`    branch  ${branch}`);
-console.log(`    landing :${ports.landing}   game/client :${ports.client}   server :${ports.server}`);
+console.log(`    game/client :${ports.client}   server :${ports.server}`);
 console.log(`    manifest ${manifest}`);
 console.log(`\n  cd ${dir} && pnpm dev`);

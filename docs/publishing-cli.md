@@ -14,7 +14,7 @@ The workflow lives at [`.github/workflows/publish-cli.yml`](../.github/workflows
    `workflow_dispatch` so it can be run manually from the **Actions** tab as a fallback.
 2. **Version gate** — the job first checks `npm view gorilator@<version>`. If that exact
    CLI version is **already on npm, it skips** build/test/publish (the job still passes).
-   This lets app/client/server/shared/landing releases publish GitHub Release assets
+   This lets app/client/server/shared releases publish GitHub Release assets
    without forcing a new CLI package version.
 3. **Build & test** — in `packages/cli`: `npm install`, `npm run build` (tsc), `npm test`.
 4. **Publish** — `npm publish`. No `NODE_AUTH_TOKEN`; the runner authenticates to npm
@@ -46,7 +46,7 @@ the npm `gorilator` package. Always bump package versions with the helper so the
 changed package and app release move together:
 
 ```
-pnpm bump <cli|client|server|shared|landing> <major|minor|patch>
+pnpm bump <cli|client|server|shared> <major|minor|patch>
 # e.g. pnpm bump cli minor   →  cli 1.4.0→1.5.0  AND  app 1.4.0→1.5.0
 pnpm bump app <level>        # bump the app release version
 ```
@@ -61,7 +61,7 @@ Run it locally with `pnpm version:check` (compares against `origin/main`).
 
 ## Releasing a new version
 
-1. Bump the changed package: `pnpm bump <cli|client|server|shared|landing> <major|minor|patch>`
+1. Bump the changed package: `pnpm bump <cli|client|server|shared> <major|minor|patch>`
    (this also bumps the app release version). Use `pnpm bump cli <level>` only
    when the CLI package itself should publish a new npm version.
 2. Commit and merge to `main`.
@@ -106,7 +106,7 @@ applies only what changed:
 - **cli** changed → rebuild the in-repo CLI only.
 - **shared** changed → it's foundational (server imports it, client bundles it, CLI uses it),
   so it fans out to all of the above, including a server restart.
-- **app**/**landing** bumps alone → no daemon impact, nothing to apply.
+- **app** bumps alone → no daemon impact, nothing to apply.
 
 If nothing actionable changed, the update is a no-op. The prebuilt fast path downloads the
 release dist atomically (it already contains shared+client+cli `dist/`); the server-scoped

@@ -27,9 +27,8 @@ pnpm --filter @rpg/server exec vitest   # watch mode for one package
 ## 2. E2E (Playwright)
 
 ```bash
-pnpm e2e:landing     # React landing: DOM-state assertions (fast, no WebGL)
 pnpm e2e:game        # full stack: real splash join → Colyseus WS → render loop
-pnpm e2e             # both
+pnpm e2e             # same game smoke through the default Playwright project set
 ```
 
 - Config: `playwright.config.ts`. Fixed ports 1462x (never collide with dev).
@@ -37,9 +36,9 @@ pnpm e2e             # both
   room: no goblin waves, room pre-created — and headless Chromium with
   swiftshader for software WebGL.
 - **The cardinal rule: assert on DOM / network / `window.__perf` — never canvas
-  pixels.** The Babylon frame is timing-dependent, the landing's scroll-reveal
-  animations race screenshots, and HMR used to stack `main.ts` instances (now
-  guarded by an `import.meta.hot.dispose` teardown, but the rule stands).
+  pixels.** The Babylon frame is timing-dependent, and HMR used to stack
+  `main.ts` instances (now guarded by an `import.meta.hot.dispose` teardown, but
+  the rule stands).
 - The game smoke proves: WS to the Colyseus port opens, `/api/status` registers
   the player, `__perf.latest().fps > 0` (the render loop is alive).
 
@@ -56,9 +55,8 @@ gate on the machine that recorded them; CI runs functional tests only.
 ## 4. CI
 
 `.github/workflows/test.yml` (every PR): one `turbo run lint typecheck build test`
-DAG invocation (pnpm-store + .turbo caches) + the landing e2e; the game smoke
-runs as a soft gate (WebGL-in-CI variance). `version-guard.yml` enforces the
-version topology.
+DAG invocation (pnpm-store + .turbo caches) + the game smoke as a soft gate
+(WebGL-in-CI variance). `version-guard.yml` enforces the version topology.
 
 ## Verifying by hand
 

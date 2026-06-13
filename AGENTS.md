@@ -15,7 +15,7 @@
 
 - **Never hand-edit a `version` field** in any `package.json`. Always bump with the tool.
 - The root `package.json` is the **app release version**. GitHub Release tags use this version. Package versions, including the npm `gorilator` CLI package, are independent.
-- To change a version: `pnpm bump <cli|client|server|shared|landing> <major|minor|patch>` — this bumps the package **and** the app together. Use `pnpm bump app <level>` for app release version bumps.
+- To change a version: `pnpm bump <cli|client|server|shared> <major|minor|patch>` — this bumps the package **and** the app together. Use `pnpm bump app <level>` for app release version bumps.
 - Increments follow SemVer 2.0.0 (major resets minor+patch, minor resets patch; prereleases finalize, e.g. `1.4.0-rc.1` + patch → `1.4.0`).
 - A PR check (`.github/workflows/version-guard.yml`) **fails** if a package version changed without the app bumping accordingly. Verify locally with `pnpm version:check` before opening/updating a PR.
 - To release the CLI: `pnpm bump cli <level>` → merge to `main` → create a GitHub Release tagged with the app version. CI publishes the CLI only when the CLI package version is not already on npm.
@@ -26,7 +26,6 @@
 - `@rpg/shared` (`packages/shared/src`) — Colyseus `@type` schema in `schema/`, `types.ts`, `constants.ts`, `entityFeatures.ts`, `perf.ts`, plugin API in `plugin/`. **tsc-built to `dist/`** (decorators) — client/server consume the compiled output.
 - `@rpg/server` (`packages/server/src`) — Express + Colyseus. Game logic = pure `(state, dt)` systems in `systems/`; the 20Hz tick lives in `rooms/GameRoom.ts`.
 - `@rpg/client` (`packages/client/src`) — Babylon + Vite. In-game Dev Mode editor in `dev/`, perf overlay in `perf/`. `vite.config.ts` (~2000 lines) holds all `/__*/` dev endpoints.
-- `@gorilator/landing` (`packages/landing`) — React marketing site + live stats dashboard.
 - `gorilator` CLI (`packages/cli`) — npm-published installer/daemon. Its version is independent of the app release version (CI publishes only when the CLI version isn't already on npm).
 
 ## Where things live (intent → file)
@@ -57,7 +56,7 @@ All `public/*.json` manifests live-reload on the server (watchFile) — no resta
 ## Dev workflow commands
 
 - `pnpm bootstrap` — clone-to-running setup (install, .env, ports, warm cache). Then `pnpm dev`.
-- `pnpm dev` / `pnpm landing` — game stack / landing site. Per-worktree ports: `.claude/launch.json` (regen: `pnpm wt:launch`).
+- `pnpm dev` — game stack. Per-worktree ports: `.claude/launch.json` (regen: `pnpm wt:launch`).
 - `pnpm wt <name>` / `pnpm wt rm <name>` / `pnpm wt list` — parallel worktrees with collision-free ports (manifest: `.claude/worktrees-manifest.json` in the main tree).
 - `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm e2e` · `pnpm bench` — the verification ladder; run typecheck+test before a PR, `pnpm version:check` too.
 - Verify in-browser via DOM/network/`window.__perf` evals — never canvas screenshots (see `docs/TESTING.md`).

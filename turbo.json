@@ -2,7 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   // Cached task DAG. `^build` = workspace dependencies build first, so
   // @rpg/shared (tsc, decorators) always lands in dist/ before client/server
-  // consume it; client + server + landing then build in parallel.
+  // consume it; client + server then build in parallel.
   //
   // Caveat: @rpg/client's vite build embeds git metadata (version panel) that
   // turbo cannot hash — a locally cache-replayed client build may carry a stale

@@ -8,8 +8,7 @@ rpg-online/
 │  ├─ shared/   @rpg/shared — schema + types + constants (built to dist/, imported by both)
 │  ├─ server/   @rpg/server — authoritative Colyseus server (Node, tsx)
 │  ├─ client/   @rpg/client — Babylon.js + Vite browser client
-│  ├─ cli/      gorilator — native installer / supervisor CLI + bootstrap scripts (gorilator, install.sh, gen-nsec.mjs)
-│  └─ landing/  @gorilator/landing — marketing site + live server dashboard
+│  └─ cli/      gorilator — native installer / supervisor CLI + bootstrap scripts (gorilator, install.sh, gen-nsec.mjs)
 ├─ docs/        this documentation
 ├─ REALMS.md    realm/server discovery spec (external apps)
 └─ DEPLOY.md / RAILWAY.md   hosting

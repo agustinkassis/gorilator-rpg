@@ -61,8 +61,8 @@ export function distAssetName(tag: string): string {
 }
 
 /**
- * Download + extract the prebuilt dist tarball for `tag` into `appDir` (landing
- * packages/{shared,client,cli}/dist). Verifies the SHA-256 against the release's
+ * Download + extract the prebuilt dist tarball for `tag` into `appDir`
+ * (packages/{shared,client,cli}/dist). Verifies the SHA-256 against the release's
  * SHA256SUMS when present. Returns true only when the client build is in place.
  * Any miss (no asset, bad checksum, no curl/tar) returns false → build instead.
  */

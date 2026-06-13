@@ -19,7 +19,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// 300 ten-port blocks: 4100..7090. landing=base, client=base+1, server=base+2.
+// 300 ten-port blocks: 4100..7090. base is reserved to keep existing worktree
+// game ports stable; client=base+1, server=base+2.
 const PORT_FLOOR = 4100;
 const BLOCKS = 300;
 const BLOCK_SIZE = 10;
@@ -33,26 +34,17 @@ const DEV_ADMIN_NPUBS = "npub19tv378w29hx4ljy7wgydreg9nu96czrs6clu8wkzr3af8z86rr
 export function portsFor(dir) {
   const h = parseInt(createHash("sha1").update(dir).digest("hex").slice(0, 8), 16);
   const base = PORT_FLOOR + (h % BLOCKS) * BLOCK_SIZE;
-  return { landing: base, client: base + 1, server: base + 2 };
+  return { client: base + 1, server: base + 2 };
 }
 
 export function configFor(dir) {
-  const { landing, client, server } = portsFor(dir);
+  const { client, server } = portsFor(dir);
   return {
     dir,
-    ports: { landing, client, server },
+    ports: { client, server },
     json: {
       version: "0.0.1",
       configurations: [
-        {
-          name: "landing",
-          runtimeExecutable: "sh",
-          runtimeArgs: [
-            "-c",
-            `pnpm --filter @gorilator/landing exec vite --host 0.0.0.0 --port ${landing} --strictPort`,
-          ],
-          port: landing,
-        },
         {
           name: "game",
           runtimeExecutable: "sh",
@@ -73,7 +65,7 @@ export function write(dir) {
   if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true });
   writeFileSync(join(claudeDir, "launch.json"), JSON.stringify(json, null, 2) + "\n");
   console.log(
-    `✓ ${dir}\n    landing :${ports.landing}   game/client :${ports.client}   server :${ports.server}`,
+    `✓ ${dir}\n    game/client :${ports.client}   server :${ports.server}`,
   );
   return ports;
 }

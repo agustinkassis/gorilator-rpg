@@ -1,7 +1,7 @@
 name: Test
 
 # PR gate: lint + typecheck + build + unit tests, scheduled by the Turbo DAG
-# (@rpg/shared builds once, then client/server/landing run in parallel; cache
+# (@rpg/shared builds once, then client/server run in parallel; cache
 # hits are skipped entirely). Docs-only PRs are filtered out.
 on:
   pull_request:
@@ -66,9 +66,6 @@ jobs:
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
-
-      - name: Landing e2e
-        run: pnpm e2e:landing
 
       # WebGL-in-CI (swiftshader) is best-effort until runner variance is known.
       - name: Game smoke e2e (soft gate)

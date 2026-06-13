@@ -393,7 +393,7 @@ function worktreePackageCategory(path: string): string {
 }
 
 function packageSortRank(name: string): number {
-  const order = ["server", "client", "cli", "landing", "shared"];
+  const order = ["server", "client", "cli", "shared"];
   const index = order.indexOf(name);
   return index === -1 ? order.length : index;
 }

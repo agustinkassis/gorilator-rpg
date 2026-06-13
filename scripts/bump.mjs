@@ -5,7 +5,7 @@
 //
 // Usage:
 //   node scripts/bump.mjs <package> <major|minor|patch>
-//     <package> ∈ cli | client | server | shared | landing
+//     <package> ∈ cli | client | server | shared
 //   node scripts/bump.mjs app <major|minor|patch>   # bump the app release
 //
 // Examples:
@@ -23,7 +23,6 @@ const PACKAGES = {
   client: "packages/client/package.json",
   server: "packages/server/package.json",
   shared: "packages/shared/package.json",
-  landing: "packages/landing/package.json",
 };
 const APP = "package.json";
 const LEVELS = ["major", "minor", "patch"];

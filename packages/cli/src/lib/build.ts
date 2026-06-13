@@ -250,10 +250,9 @@ export interface UpdateActions {
   any: boolean;
 }
 
-/** Map the set of changed package labels (app/cli/client/server/shared/landing)
- *  to the work an update must do. `app` is the umbrella version and `landing` is
- *  the standalone marketing site — neither affects the running game daemon, so
- *  both are ignored here. */
+/** Map the set of changed package labels (app/cli/client/server/shared)
+ *  to the work an update must do. `app` is the umbrella version and does not
+ *  affect the running game daemon, so it is ignored here. */
 export function planUpdateActions(changedLabels: Iterable<string>): UpdateActions {
   const changed = new Set(changedLabels);
   const shared = changed.has("shared");

@@ -44,7 +44,6 @@ function packageVersions(): Record<string, string> {
     ["server", "packages/server/package.json"],
     ["shared", "packages/shared/package.json"],
     ["cli", "packages/cli/package.json"],
-    ["landing", "packages/landing/package.json"],
   ];
   const out: Record<string, string> = {};
   for (const [label, rel] of files) {

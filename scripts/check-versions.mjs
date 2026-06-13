@@ -16,7 +16,6 @@ const PACKAGES = {
   client: "packages/client/package.json",
   server: "packages/server/package.json",
   shared: "packages/shared/package.json",
-  landing: "packages/landing/package.json",
 };
 const APP = "package.json";
 const RANK = { none: 0, patch: 1, minor: 2, major: 3 };
