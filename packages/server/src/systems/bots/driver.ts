@@ -162,6 +162,20 @@ export function clearBots(state: GameState, inventories: Map<string, InventorySl
   map.clear();
 }
 
+/** Remove ONE bot (admin kick). False when the id isn't a scripted bot. */
+export function removeBot(
+  state: GameState,
+  inventories: Map<string, InventorySlot[]>,
+  botId: string,
+): boolean {
+  const map = botsFor(state);
+  if (!map.has(botId)) return false;
+  map.delete(botId);
+  state.players.delete(botId);
+  inventories.delete(botId);
+  return true;
+}
+
 /** Restart every bot's program (bots survive a realm wipe like players do). */
 export function resetBotPrograms(state: GameState): void {
   for (const rec of botsFor(state).values()) {

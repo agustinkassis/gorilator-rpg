@@ -495,6 +495,11 @@ export class NetworkClient {
     this.room?.send("admin_waves", { enabled });
   }
 
+  /** Kick a player or scripted bot out of the realm (big map → player list). */
+  sendAdminKick(playerId: string) {
+    this.room?.send("admin_kick", { playerId });
+  }
+
   /** Switch one spawners.json spawner on/off at runtime. */
   sendAdminSpawner(id: string, enabled: boolean) {
     this.room?.send("admin_spawner", { id, enabled });

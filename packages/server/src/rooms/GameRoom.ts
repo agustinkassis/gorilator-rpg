@@ -25,6 +25,7 @@ import {
   type DevTuneMessage,
   type AdminWavesMessage,
   type AdminSpawnerMessage,
+  type AdminKickMessage,
   CHAT_MAX_LEN,
   INV_SLOTS,
   type InventorySlot,
@@ -108,6 +109,7 @@ import {
   botSystem,
   clearBots,
   isKnownBotBehavior,
+  removeBot,
   resetBotPrograms,
   spawnBot,
 } from "../systems/bots/driver";
@@ -400,6 +402,20 @@ export class GameRoom extends Room<GameState> {
       if (!p || !msg) return;
       this.state.wavesEnabled = !!msg.enabled;
       console.log(`[admin] ${p.name} ${this.state.wavesEnabled ? "resumed" : "stopped"} waves`);
+    });
+    // Kick a player or scripted bot (big map → player list ✕ button).
+    this.onMessage("admin_kick", (client, msg: AdminKickMessage) => {
+      const p = this.adminSender(client);
+      const targetId = String(msg?.playerId || "");
+      if (!p || !targetId || targetId === client.sessionId) return; // no self-kick
+      if (removeBot(this.state, this.inventories, targetId)) {
+        console.log(`[admin] ${p.name} kicked bot ${targetId}`);
+        return;
+      }
+      const target = this.clients.find((c) => c.sessionId === targetId);
+      if (!target) return;
+      console.log(`[admin] ${p.name} kicked ${this.state.players.get(targetId)?.name ?? targetId}`);
+      target.leave(); // same path as the kick_players dev action
     });
     this.onMessage("admin_spawner", (client, msg: AdminSpawnerMessage) => {
       const p = this.adminSender(client);

@@ -388,6 +388,12 @@ export interface AdminSpawnerMessage {
   enabled: boolean;
 }
 
+/** Admin-only (big map → player list): kick a player or scripted bot out of the
+ *  realm. Same ADMIN_NPUBS gate as AdminWavesMessage. */
+export interface AdminKickMessage {
+  playerId: string;
+}
+
 export type ClientMessages = {
   move: MoveMessage;
   attack: AttackMessage;
@@ -410,6 +416,7 @@ export type ClientMessages = {
   dev_bot: DevBotMessage;
   admin_waves: AdminWavesMessage;
   admin_spawner: AdminSpawnerMessage;
+  admin_kick: AdminKickMessage;
 };
 
 // Server -> client: emitted every time a hit lands, so clients can pop a
