@@ -5,6 +5,11 @@ export const ROOM_NAME = "game";
 export const TICK_RATE = 20; // server simulation ticks per second
 export const SERVER_PORT = 2567;
 
+/** Upper bound for state.timeScale (Dev Mode time control + scenario manifests).
+ *  At 20Hz a 16× tick is an 800ms dt — beyond that movement starts tunnelling
+ *  through collision; sub-stepping is the documented follow-up before raising it. */
+export const TIME_SCALE_MAX = 16;
+
 /** WebSocket close code: the server kicks an old session when the SAME nostr
  *  npub logs in again (the newest login wins). The client shows a tailored
  *  message for this code instead of the generic "disconnected". */

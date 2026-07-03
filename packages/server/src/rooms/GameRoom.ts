@@ -39,6 +39,7 @@ import {
   xpForLevel,
   REALM_RESTART_MS,
   TICK_RATE,
+  TIME_SCALE_MAX,
   NOSTR_TAKEOVER_CODE,
   type HealEvent,
   type PlayerSave,
@@ -319,7 +320,7 @@ export class GameRoom extends Room<GameState> {
     this.onMessage("dev_time", (client, msg: DevTimeMessage) => {
       if (!this.devSender(client)) return;
       const s = Number(msg?.scale);
-      this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(8, s)) : 1;
+      this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(TIME_SCALE_MAX, s)) : 1;
     });
     this.onMessage("dev_tune", (client, msg: DevTuneMessage) => {
       if (!msg || !this.devSender(client)) return;

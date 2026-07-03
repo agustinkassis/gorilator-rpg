@@ -412,6 +412,8 @@ export class DevMode {
       { label: "1×", scale: 1 },
       { label: "2×", scale: 2 },
       { label: "4×", scale: 4 },
+      { label: "8×", scale: 8 },
+      { label: "16×", scale: 16 }, // TIME_SCALE_MAX — accelerated scenario simulation
     ];
     this.timeButtons = SPEEDS.map((s) => {
       const b = document.createElement("button");

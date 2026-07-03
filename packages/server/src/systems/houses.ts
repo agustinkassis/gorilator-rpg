@@ -42,12 +42,15 @@ export function noteHouseDamage(state: GameState, timers: HouseRegenTimers, targ
   timers.set(targetId, freshRegenRecord());
 }
 
+/** `scaledMs` is the timeScale-scaled tick delta (#67): a paused world (0) never
+ *  regens, and accelerated simulation regens proportionally faster. */
 export function houseRegenSystem(
   state: GameState,
-  deltaMs: number,
+  scaledMs: number,
   timers: HouseRegenTimers,
   emitHeal: (ev: HealEvent) => void,
 ) {
+  const deltaMs = scaledMs;
   if (deltaMs <= 0) return;
 
   const seen = new Set<string>();
