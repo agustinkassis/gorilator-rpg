@@ -35,14 +35,18 @@
 | Entity stats / HP / drops / brain | `packages/client/public/entity-features.json` (server: `systems/entityFeatures.ts`) |
 | Props / collision | `public/props.json` (`systems/props.ts`) |
 | Spawners | `public/spawners.json` (`systems/spawners.ts`) |
-| Wave composition | `public/waves.json` (`systems/waves.ts`) |
+| Wave composition | `public/waves.json` (`systems/waves.ts`) — consumed by the la-crypta-defense event module |
+| The tower-defense game loop (waves/house/wipe) | `plugins/la-crypta-defense/` (event module, API 1.1) — realm.json `events` toggles it |
+| Feature Lab scenarios (isolated test maps) | `scenarios/<name>.json` (`systems/scenario.ts`) — run: `pnpm scenario <name>` |
+| Bot driver (scripted players + self-tests) | `packages/server/src/systems/bots/` + `testing/scenarioSim.ts` |
 | NPCs / character templates | `public/npcs.json` + `public/characters.json` (`systems/npcs.ts`) |
 | Items (defs + icons/models) | `public/items.json` (`systems/items.ts`, client `items/itemRegistry.ts`) |
 | Tree/rock drop tables | `public/resources.json` (`systems/resourceDrops.ts`) |
 | Damage formula / combat | `packages/server/src/systems/combat.ts` |
 | AI brains | `systems/goblins.ts` + plugin `registerBrain` (see `docs/plugins.md`) |
 | New synced field | `packages/shared/src/schema/*` → rebuild shared → client **hard reload** |
-| Game tuning constants | `packages/shared/src/constants.ts` (live knobs: Dev Mode tuning panel) |
+| Game tuning constants | `packages/shared/src/constants.ts` (live knobs: Dev Mode tuning panel; scenario manifests pin them as tweak knobs) |
+| Gameplay randomness | seeded streams via `systems/rng.ts` — NEVER `Math.random` (guard test enforces) |
 | Realm policy (death penalty / progression persistence) | `realm.json` `policy` block (`packages/server/src/systems/policy.ts`) |
 | Dev-editor HTTP endpoints | `packages/client/vite.config.ts` (`/__props/*`, `/__char/*`, `/__items/*`, …) |
 
@@ -57,6 +61,7 @@ All `public/*.json` manifests live-reload on the server (watchFile) — no resta
 ## Dev workflow commands
 
 - `pnpm bootstrap` — clone-to-running setup (install, .env, ports, warm cache). Then `pnpm dev`.
+- `pnpm scenario <name>` — boot the dev stack staged by `scenarios/<name>.json`; hand the user the printed `?scenario=` link (auto-joins; Dev Mode pins the manifest's tweak knobs).
 - `pnpm dev` — game stack. Per-worktree ports: `.claude/launch.json` (regen: `pnpm wt:launch`).
 - `pnpm wt <name>` / `pnpm wt rm <name>` / `pnpm wt list` — parallel worktrees with collision-free ports (manifest: `.claude/worktrees-manifest.json` in the main tree).
 - `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm e2e` · `pnpm bench` — the verification ladder; run typecheck+test before a PR, `pnpm version:check` too.
@@ -69,5 +74,5 @@ All `public/*.json` manifests live-reload on the server (watchFile) — no resta
 
 ## Agent helpers
 
-- Skills live in `.claude/skills/` (dev-up, add-entity, add-system, add-plugin, run-tests, bench, release, merge-target, perf-triage); subagents in `.claude/agents/`; cached deep references in `.claude/context/` — read those fragments lazily, only when the task touches that area.
+- Skills live in `.claude/skills/` (dev-up, add-entity, add-system, add-plugin, **feature-dev** — the issue→scenario→bot-test→playable-link pipeline, run-tests, bench, release, merge-target, perf-triage); subagents in `.claude/agents/`; cached deep references in `.claude/context/` — read those fragments lazily, only when the task touches that area.
 - Parallel worktree fan-out: only for independent, non-overlapping work (e.g. content JSON in one tree, a server system in another). Never edit the shared schema in two trees at once — every shared change forces a rebuild for all.
