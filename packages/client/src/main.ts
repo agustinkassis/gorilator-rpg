@@ -1726,6 +1726,8 @@ async function start() {
       inventory.setInventory(slots);
       hotkeyBar.setInventory(slots);
     },
+    // Feature Lab: pin the scenario's tweak knobs in the Dev Mode gameplay panel.
+    onScenario: (info) => devMode?.setScenario(info),
     onWipe: (ev) => topBar.flashDefeat(ev.wave, ev.persist), // La Crypta fell → defeat flash (state sync carries the reset)
     onError: (message) => {
       statusEl.textContent = message;

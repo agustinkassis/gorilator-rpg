@@ -44,6 +44,7 @@ import {
   NOSTR_TAKEOVER_CODE,
   type EventOutcome,
   type HealEvent,
+  type ScenarioInfoMessage,
   type ScenarioManifest,
   type PlayerSave,
 } from "@rpg/shared";
@@ -1069,6 +1070,15 @@ export class GameRoom extends Room<GameState> {
     if (this.scenario && !restore) applyScenarioPlayer(p, inv, this.scenario);
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
+    // Announce the active scenario so Dev Mode pins its tweak knobs (#69).
+    if (this.scenario) {
+      const info: ScenarioInfoMessage = {
+        name: this.scenario.name,
+        description: this.scenario.description,
+        tuning: this.scenario.tuning ?? {},
+      };
+      client.send("scenario", info);
+    }
 
     // Track this Nostr player's level/death watermark so the tick can persist a
     // save the moment they level up or die.
