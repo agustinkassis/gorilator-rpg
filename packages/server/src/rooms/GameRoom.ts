@@ -21,6 +21,7 @@ import {
   type DevSetSlotMessage,
   type DevTimeMessage,
   type DevActionMessage,
+  type DevBotMessage,
   type DevTuneMessage,
   type AdminWavesMessage,
   type AdminSpawnerMessage,
@@ -101,6 +102,15 @@ import {
   getActiveScenario,
   setActiveScenario,
 } from "../systems/scenario";
+import {
+  type BotIO,
+  botSystem,
+  clearBots,
+  isKnownBotBehavior,
+  resetBotPrograms,
+  spawnBot,
+} from "../systems/bots/driver";
+import { registerBuiltinBotBehaviors } from "../systems/bots/behaviors";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
 
@@ -229,6 +239,13 @@ export class GameRoom extends Room<GameState> {
     // la-crypta-defense) and announce the fresh cycle to plugin listeners.
     this.startRealmEvent();
     serverPluginHost.fire("realm:start", { eventId: eventRuntime.activeId() }, this.state);
+
+    // Scripted players (#68): the scenario's bots[] block auto-spawns them.
+    registerBuiltinBotBehaviors();
+    for (const spec of this.scenario?.bots ?? []) {
+      const count = Math.max(1, Math.min(8, Math.round(Number(spec.count) || 1)));
+      for (let i = 0; i < count; i++) spawnBot(this.state, this.inventories, spec);
+    }
 
     this.onMessage("move", (client, msg: MoveMessage) => {
       const p = this.state.players.get(client.sessionId);
@@ -360,6 +377,18 @@ export class GameRoom extends Room<GameState> {
     this.onMessage("dev_action", (client, msg: DevActionMessage) => {
       if (!msg || !this.devSender(client)) return;
       this.handleDevAction(client, msg.action);
+    });
+    // Scripted-player control (#68): spawn/clear bot players live from Dev Mode.
+    this.onMessage("dev_bot", (client, msg: DevBotMessage) => {
+      if (!msg || !this.devSender(client)) return;
+      if (msg.op === "clear") {
+        clearBots(this.state, this.inventories);
+        return;
+      }
+      const behavior = String(msg.behavior ?? "");
+      if (!isKnownBotBehavior(behavior)) return;
+      const count = Math.max(1, Math.min(8, Math.round(Number(msg.count) || 1)));
+      for (let i = 0; i < count; i++) spawnBot(this.state, this.inventories, { behavior });
     });
 
     // Admin controls (Esc menu → Admin). Unlike the dev_* family these are
@@ -548,6 +577,9 @@ export class GameRoom extends Room<GameState> {
       runPluginSystems("pre");
       // Each system runs inside a perf span so a tick-time spike traces to the exact
       // culprit (the `tag:*` rows in the server summary / analyzer).
+      // Bots first: their intents (destinations, attack targets, item uses) are
+      // consumed by movement/combat in the SAME tick. Early-outs at zero bots.
+      perfTracker.span("bots", () => botSystem(this.state, dt, this.botIO()));
       perfTracker.span("stamina", () => staminaSystem(this.state, dt)); // sets p.sprinting; movement reads it for the speed boost
       perfTracker.span("movement", () => movementSystem(this.state, dt));
       // Paused: normal movement is frozen, but the local player roams as a ghost
@@ -677,6 +709,18 @@ export class GameRoom extends Room<GameState> {
       berserkerBase: this.berserkerBase,
       sendInventory: (sid) => this.sendInventory(sid),
       broadcast: (type, payload) => this.broadcast(type, payload),
+    };
+  }
+
+  /** The bot driver's IO surface (#68): item use + chat through the room. */
+  private botIO(): BotIO {
+    return {
+      useItem: (botId, slot) => useItemFromSlot(this.state, botId, slot, this.useItemDeps()),
+      inventory: (botId) => this.inventories.get(botId),
+      say: (botId, text) => {
+        const bot = this.state.players.get(botId);
+        if (bot) this.broadcast("chat", { playerId: botId, name: bot.name, text });
+      },
     };
   }
 
@@ -856,6 +900,7 @@ export class GameRoom extends Room<GameState> {
     }
     this.realmTick = 0;
     this.state.restartTimerMs = 0;
+    resetBotPrograms(this.state); // bots survive the wipe like players; programs restart
 
     // Fresh cycle → the event module starts over (rebuilds La Crypta + the wave
     // clock) and plugin listeners hear the new realm.

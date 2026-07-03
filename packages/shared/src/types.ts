@@ -407,6 +407,7 @@ export type ClientMessages = {
   dev_time: DevTimeMessage;
   dev_action: DevActionMessage;
   dev_tune: DevTuneMessage;
+  dev_bot: DevBotMessage;
   admin_waves: AdminWavesMessage;
   admin_spawner: AdminSpawnerMessage;
 };

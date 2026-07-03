@@ -1,0 +1,25 @@
+{
+  "name": "bot-arena",
+  "description": "Bot driver self-test: an aggro bot clears staged goblins; a loot bot collects the staged bananas.",
+  "seed": 68,
+  "world": {
+    "enemies": [
+      { "kind": "goblin", "x": 8, "z": 0, "level": 1 },
+      { "kind": "goblin", "x": 10, "z": 2, "level": 1 },
+      { "kind": "goblin", "x": 12, "z": -2, "level": 1 }
+    ],
+    "groundItems": [{ "item": "banana", "x": -6, "z": 0, "count": 3 }]
+  },
+  "systems": { "events": false },
+  "tuning": {
+    "enemyMaxHp": 20,
+    "enemyAttack": 2,
+    "playerAttack": 40,
+    "playerMaxHp": 300
+  },
+  "timeScale": 2,
+  "bots": [
+    { "behavior": "aggro", "count": 1, "position": { "x": 4, "z": 0 } },
+    { "behavior": "loot", "count": 1, "position": { "x": -4, "z": 0 } }
+  ]
+}
