@@ -43,6 +43,7 @@ import {
   NOSTR_TAKEOVER_CODE,
   type EventOutcome,
   type HealEvent,
+  type ScenarioManifest,
   type PlayerSave,
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
@@ -78,7 +79,7 @@ import { loadStructureLoot } from "../systems/structureDrops";
 import { loadEntityFeatures } from "../systems/entityFeatures";
 import { loadAuthoredNpcs, syncAuthoredNpcs } from "../systems/npcs";
 import { setRockObstacles } from "../systems/pathfinding";
-import { canUseDevCommands } from "../systems/devAuth";
+import { canUseDevCommands, devCommandsOpen } from "../systems/devAuth";
 import { devSpawn, devMove, devDelete, devSet } from "../systems/devEdit";
 import { devTuning, setDevTuning } from "../systems/devTuning";
 import { perfTracker } from "../systems/perf";
@@ -92,6 +93,14 @@ import { initNostrContent } from "../systems/plugins/nostrContent";
 import { applyRealmConfig, realmEvents, setRealmEvents } from "../systems/realm";
 import { eventRuntime, type RoomBridge } from "../systems/plugins/events";
 import { resolveCycleSeed, rng, seedRng } from "../systems/rng";
+import {
+  activeScenarioName,
+  applyScenarioConfig,
+  applyScenarioPlayer,
+  applyScenarioWorld,
+  getActiveScenario,
+  setActiveScenario,
+} from "../systems/scenario";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
 
@@ -142,14 +151,24 @@ export class GameRoom extends Room<GameState> {
 
   private healingTower = healingTowerPosition();
 
+  /** The Feature Lab scenario staging this room (null = normal realm). */
+  private scenario: ScenarioManifest | null = null;
+
   /** Throttles the realm-tracker snapshot (it doesn't need every 20Hz tick). */
   private realmTick = 0;
 
   /** Sessions whose denied dev_* attempt was already logged (anti log-flood). */
   private devDenied = new Set<string>();
 
-  async onCreate() {
+  async onCreate(options?: { scenario?: string }) {
     this.setState(new GameState());
+    // Feature Lab (#65/#66): resolve the isolated scenario staging this room.
+    // GORILATOR_SCENARIO (set by `pnpm scenario <name>`) is the source of truth;
+    // on open dev servers a ?scenario= join option selects it for a fresh room.
+    if (!activeScenarioName() && options?.scenario && devCommandsOpen(process.env)) {
+      setActiveScenario(String(options.scenario));
+    }
+    this.scenario = getActiveScenario();
     this.seedCycleRng(); // deterministic gameplay rolls — before any world spawn draws from them
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
     onPropsChange(() => applyStructures(this.state)); // re-sync destructible structures on props edit
@@ -179,6 +198,10 @@ export class GameRoom extends Room<GameState> {
     // mode-specific overrides. Absent file = current defaults, untouched.
     applyRealmConfig();
 
+    // Scenario config layers over realm.json (tuning, timeScale, events toggle);
+    // GORILATOR_TEST below and live dev_tune still win over the scenario.
+    if (this.scenario) applyScenarioConfig(this.state, this.scenario);
+
     if (process.env.GORILATOR_TEST === "1") {
       // No event module → no house, no waves, no wipe: room state only changes
       // when a test drives it (replaces the old wave-size-0 tuning hack).
@@ -194,6 +217,13 @@ export class GameRoom extends Room<GameState> {
     // Idempotent across realm restarts; a failing plugin is skipped, never fatal.
     await loadServerPlugins();
     initNostrContent(); // kind-30333 realm packs (REALM_PACK_AUTHORS env) — no-op when unset
+
+    // Stage the scenario's world on top of the base world (resources, ground
+    // items, npcs, staged enemies), then refresh rock collision to include them.
+    if (this.scenario) {
+      applyScenarioWorld(this.state, this.scenario);
+      this.refreshRockObstacles();
+    }
 
     // Start the realm's event module (realm.json `events`; flagship default =
     // la-crypta-defense) and announce the fresh cycle to plugin listeners.
@@ -747,7 +777,7 @@ export class GameRoom extends Room<GameState> {
   /** (Re)seed the cycle RNG (scenario/env pin → same seed every cycle → fully
    *  reproducible runs; otherwise a fresh random seed per realm cycle). */
   private seedCycleRng() {
-    const { seed, source } = resolveCycleSeed();
+    const { seed, source } = resolveCycleSeed(this.scenario?.seed);
     seedRng(this.state, seed, source);
     realmTracker.noteSeed(seed, source);
     console.log(`[rng] realm cycle seed = ${seed} (source: ${source})`);
@@ -789,6 +819,12 @@ export class GameRoom extends Room<GameState> {
     this.state.waveNumber = 0;
     this.state.waveTimerMs = 0;
     this.state.waveActive = false;
+    if (this.scenario) {
+      // Re-stage the scenario so a wipe reproduces the exact same lab (the
+      // pinned seed above makes the whole cycle deterministic).
+      applyScenarioWorld(this.state, this.scenario);
+      this.refreshRockObstacles();
+    }
 
     const policy = realmPolicy();
     const persist = policy.progression.persistAcrossWipes;
@@ -983,6 +1019,9 @@ export class GameRoom extends Room<GameState> {
     if (!restore?.inventory) {
       addItem(inv, "banana", STARTING_BANANAS);
     }
+    // A fresh joiner in a scenario gets the manifest's loadout/stats/position
+    // (restored characters keep their own progression — the lab stages new ones).
+    if (this.scenario && !restore) applyScenarioPlayer(p, inv, this.scenario);
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
 

@@ -6,6 +6,7 @@ import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { finalizeEvent } from "nostr-tools/pure";
 import type { PlayerSaveRealm } from "@rpg/shared";
 import { getServerIdentity } from "./nostrIdentity";
+import { activeScenarioName } from "./scenario";
 
 // Node (≤20) has no global WebSocket, which SimplePool needs — inject `ws`.
 useWebSocketImplementation(WebSocket);
@@ -232,6 +233,7 @@ class RealmTracker {
           }
         : null,
       cycleSeed: this.cycleSeed,
+      activeScenario: activeScenarioName(),
       lastRealm: this.last,
       updatedAt: Date.now(),
     };
