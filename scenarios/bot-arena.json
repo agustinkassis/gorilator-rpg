@@ -4,13 +4,38 @@
   "seed": 68,
   "world": {
     "enemies": [
-      { "kind": "goblin", "x": 8, "z": 0, "level": 1 },
-      { "kind": "goblin", "x": 10, "z": 2, "level": 1 },
-      { "kind": "goblin", "x": 12, "z": -2, "level": 1 }
+      {
+        "kind": "goblin",
+        "x": 8,
+        "z": 0,
+        "level": 1
+      },
+      {
+        "kind": "goblin",
+        "x": 10,
+        "z": 2,
+        "level": 1
+      },
+      {
+        "kind": "goblin",
+        "x": 12,
+        "z": -2,
+        "level": 1
+      }
     ],
-    "groundItems": [{ "item": "banana", "x": -6, "z": 0, "count": 3 }]
+    "groundItems": [
+      {
+        "item": "banana",
+        "x": -6,
+        "z": 0,
+        "count": 3
+      }
+    ]
   },
-  "systems": { "events": false },
+  "systems": {
+    "events": false,
+    "spawners": false
+  },
   "tuning": {
     "enemyMaxHp": 20,
     "enemyAttack": 2,
@@ -19,7 +44,21 @@
   },
   "timeScale": 2,
   "bots": [
-    { "behavior": "aggro", "count": 1, "position": { "x": 4, "z": 0 } },
-    { "behavior": "loot", "count": 1, "position": { "x": -4, "z": 0 } }
+    {
+      "behavior": "aggro",
+      "count": 1,
+      "position": {
+        "x": 4,
+        "z": 0
+      }
+    },
+    {
+      "behavior": "loot",
+      "count": 1,
+      "position": {
+        "x": -4,
+        "z": 0
+      }
+    }
   ]
 }

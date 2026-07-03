@@ -24,6 +24,7 @@ import { placeAtFreeSpot } from "./movement";
 import { nearestFreeWorld } from "./pathfinding";
 import { setRealmEvents } from "./realm";
 import { dropItem } from "./resources";
+import { setSpawnersEnabled } from "./spawners";
 
 /**
  * Feature Lab scenario loader (#65, docs/feature-lab.md): scenarios/<name>.json
@@ -131,6 +132,9 @@ export function applyScenarioConfig(state: GameState, m: ScenarioManifest): void
       // off unless the manifest explicitly turns it on.
       setRealmEvents({ enabled: Boolean(on) });
       console.log(`[scenario] events ${on ? "enabled" : "disabled"}`);
+    } else if (system === "spawners") {
+      setSpawnersEnabled(Boolean(on));
+      console.log(`[scenario] ambient spawners ${on ? "enabled" : "disabled"}`);
     } else {
       console.warn(`[scenario] unknown system toggle "${system}" — ignored`);
     }

@@ -1924,9 +1924,13 @@ engine.runRenderLoop(() => {
 
   // TopBar: every player always sees the home (first house) HP + wave
   // state. Once the house is destroyed it's removed from state, so fall back to a
-  // "fallen" reading using the last-known max HP.
+  // "fallen" reading using the last-known max HP. With NO event module running
+  // (open sandbox / a scenario lab — synced eventId is empty and no house ever
+  // stood), there is no objective to report: hide the banner entirely.
   const st = net.room?.state;
   if (topBar && st) {
+    const sandbox = !st.eventId && st.houses.size === 0 && homeMaxHp <= 0;
+    topBar.setVisible(!sandbox);
     let home: { hp: number; maxHp: number; alive: boolean } | undefined;
     st.houses.forEach((h) => {
       if (!home) home = h;

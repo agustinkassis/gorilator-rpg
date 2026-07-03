@@ -2,7 +2,12 @@
   "name": "baseline",
   "description": "Empty open sandbox (events off) — the e2e and bot smoke-test stage.",
   "seed": 20260703,
-  "systems": { "events": false },
-  "tuning": { "playerMoveSpeed": 8 },
+  "systems": {
+    "events": false,
+    "spawners": false
+  },
+  "tuning": {
+    "playerMoveSpeed": 8
+  },
   "timeScale": 1
 }

@@ -1,5 +1,5 @@
 import { GameState, Player, type ScenarioManifest, TIME_SCALE_MAX } from "@rpg/shared";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { devTuning, resetDevTuning, setDevTuning } from "./devTuning";
 import { makeInventory } from "./inventory";
 import { realmEvents, resetRealmEvents, setRealmEvents } from "./realm";
@@ -67,6 +67,18 @@ describe("scenario loader (#65)", () => {
     setRealmEvents({ enabled: true });
     applyScenarioConfig(state, { name: "t", systems: { events: true } });
     expect(realmEvents().enabled).toBe(true);
+  });
+
+  it("config layer: recognizes the spawners toggle; warns on unknown ones", () => {
+    const state = freshState();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    applyScenarioConfig(state, { name: "t", systems: { spawners: false, volcanoes: true } });
+    const warned = warn.mock.calls.map((c) => String(c[0]));
+    expect(warned.some((m) => m.includes('"volcanoes"'))).toBe(true);
+    expect(warned.some((m) => m.includes('"spawners"'))).toBe(false);
+    warn.mockRestore();
+    // spawnerSystem consults a module-global toggle — restore it for other tests.
+    applyScenarioConfig(state, { name: "t", systems: { spawners: true } });
   });
 
   it("world layer: stages resources, ground items, npcs and enemies", () => {
