@@ -26,6 +26,7 @@ import { brainOf, configureEnemy } from "./enemyConfig";
 import { devTuning } from "./devTuning";
 import { customWave, type WaveEntry } from "./waves";
 import { rng } from "./rng";
+import { playerLevelStats, waveDifficulty } from "./difficulty";
 import { serverPluginHost } from "./plugins/host";
 
 export type EmitDamage = (ev: DamageEvent) => void;
@@ -64,19 +65,11 @@ export function makeGoblin(
   return g;
 }
 
-/** Average + top level across the LIVE players — the wave difficulty inputs (more/
- *  higher-level defenders → bigger, stronger waves). */
-function playerLevelStats(state: GameState): { avg: number; max: number; alive: number } {
-  let sum = 0;
-  let max = 1;
-  let alive = 0;
-  state.players.forEach((p) => {
-    if (p.hp <= 0 || p.state === AnimState.DEAD) return;
-    alive++;
-    sum += p.level;
-    if (p.level > max) max = p.level;
-  });
-  return { avg: alive > 0 ? sum / alive : 1, max, alive };
+/** Event modules layer their own difficulty multiplier on top of the tuning
+ *  knobs (realm.json events.config.difficultyMult) — set at event start. */
+let eventDifficultyMult = 1;
+export function setEventDifficultyMult(mult: number) {
+  eventDifficultyMult = Number.isFinite(mult) && mult > 0 ? mult : 1;
 }
 
 interface ScheduledGoblin {
@@ -127,9 +120,7 @@ function scheduleCustomWave(state: GameState, waveNumber: number, entries: WaveE
   if (total <= 0) return [];
   const roll = rng(state, "spawns");
   const baseAng = roll() * Math.PI * 2;
-  const { avg, max } = playerLevelStats(state);
-  const lo = Math.max(1, Math.round(avg));
-  const hi = Math.max(lo, max) + Math.floor(waveNumber / 3);
+  const { levelLo: lo, levelHi: hi } = waveDifficulty(state, waveNumber, tuning, eventDifficultyMult);
   const delays =
     total === 1
       ? [0]
@@ -167,16 +158,12 @@ function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
   const home = homeOf(state);
   const hx = home ? home.x : 0;
   const hz = home ? home.z : 0;
-  const { avg, max, alive } = playerLevelStats(state);
-  const size = Math.min(
-    tuning.waveSizeMax,
-    tuning.waveSizeBase + tuning.waveSizePerPlayer * Math.max(1, alive) + tuning.waveSizePerWave * (waveNumber - 1),
-  );
+  // Size + level range come from the difficulty module (#64): live-player
+  // driven, scaled by the difficulty* tuning knobs + the event's multiplier.
+  const { size, levelLo: lo, levelHi: hi } = waveDifficulty(state, waveNumber, tuning, eventDifficultyMult);
   if (size <= 0) return [];
   const roll = rng(state, "spawns");
   const baseAng = roll() * Math.PI * 2; // the horde approaches from ~one side
-  const lo = Math.max(1, Math.round(avg));
-  const hi = Math.max(lo, max) + Math.floor(waveNumber / 3); // escalate the level cap over time
   const delays =
     size === 1
       ? [0]

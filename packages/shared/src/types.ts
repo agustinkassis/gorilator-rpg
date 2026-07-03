@@ -273,7 +273,10 @@ export type DevTuningKey =
   | "enemyMoveSpeed"
   | "berserkerAttackMult"
   | "berserkerDurationMs"
-  | "dropRateMult";
+  | "dropRateMult"
+  | "difficultySizeScale"
+  | "difficultyLevelScale"
+  | "difficultyLevelCap";
 
 /** Runtime-only dev tuning override for gameplay constants. */
 export interface DevTuneMessage {
