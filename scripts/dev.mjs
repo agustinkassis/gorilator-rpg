@@ -230,3 +230,6 @@ function writeGorilatorState(state) {
     console.error(`[dev] could not write Gorilator state: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+// Resolved (collision-free) ports, for wrappers like scripts/scenario.mjs.
+export { clientPort, serverPort };

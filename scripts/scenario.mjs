@@ -27,9 +27,35 @@ if (!name || !existsSync(join(scenariosDir, `${name}.json`))) {
 }
 
 process.env.GORILATOR_SCENARIO = name;
-const clientPort = process.env.CLIENT_PORT ?? "5173";
-console.log(`[scenario] "${name}" selected (GORILATOR_SCENARIO=${name})`);
-console.log(`[scenario] ready-to-play: http://localhost:${clientPort}/?scenario=${name}`);
-console.log(`[scenario] (if the [dev] client line below shows another port, use that one)`);
+console.log(`[scenario] "${name}" selected (GORILATOR_SCENARIO=${name}) — booting the dev stack…`);
 
-await import("./dev.mjs");
+const dev = await import("./dev.mjs");
+const clientPort = dev.clientPort ?? Number(process.env.CLIENT_PORT ?? 5173);
+const serverPort = dev.serverPort ?? Number(process.env.GAME_SERVER_PORT ?? 2567);
+const link = `http://localhost:${clientPort}/?scenario=${name}`;
+
+// Print the ready-to-play link LAST — only once the stack actually answers —
+// so it sits at the bottom of the boot noise, handy to click.
+const up = async (url) => {
+  try {
+    return (await fetch(url)).ok;
+  } catch {
+    return false;
+  }
+};
+const deadline = Date.now() + 120_000;
+const printLink = () => {
+  const line = "─".repeat(Math.min(64, link.length + 21));
+  console.log(`\n[scenario] ${line}`);
+  console.log(`[scenario] ▶ ready to play:  ${link}`);
+  console.log(`[scenario] ${line}`);
+};
+while (Date.now() < deadline) {
+  if ((await up(`http://localhost:${serverPort}/healthz`)) && (await up(`http://localhost:${clientPort}/`))) {
+    // a short quiet gap so the banner lands after the startup burst
+    setTimeout(printLink, 1200);
+    break;
+  }
+  await new Promise((r) => setTimeout(r, 300));
+}
+if (Date.now() >= deadline) console.warn(`[scenario] stack not up after 120s — once it is, play at ${link}`);
