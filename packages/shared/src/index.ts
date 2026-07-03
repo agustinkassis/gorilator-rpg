@@ -1,5 +1,6 @@
 export * from "./constants";
 export * from "./types";
+export * from "./difficulty";
 export * from "./obstacles";
 export * from "./perf";
 export * from "./entityFeatures";

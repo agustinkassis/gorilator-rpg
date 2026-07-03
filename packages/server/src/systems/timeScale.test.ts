@@ -3,15 +3,22 @@ import {
   GameState,
   type HealEvent,
   House,
+  PLUGIN_API_VERSION,
   Player,
+  type ServerPluginContext,
   TIME_SCALE_MAX,
   Tree,
   TREE_REGROW_MS,
 } from "@rpg/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import laCryptaPlugin from "../../../../plugins/la-crypta-defense/src/server";
+import {
+  type HouseRegenTimers,
+  houseRegenSystem,
+} from "../../../../plugins/la-crypta-defense/src/house";
 import { resetDevTuning, setDevTuning } from "./devTuning";
-import { waveSystem } from "./goblins";
-import { type HouseRegenTimers, houseRegenSystem } from "./houses";
+import { EventRuntime, type RoomBridge } from "./plugins/events";
+import { serverPluginHost } from "./plugins/host";
 import { installFixedRng } from "./rng";
 import { treeRegrowSystem } from "./resources";
 
@@ -37,9 +44,26 @@ function stateWithTree(regrowTimer: number): { state: GameState; tree: Tree } {
   return { state, tree };
 }
 
+function pluginCtx(): ServerPluginContext {
+  return {
+    apiVersion: PLUGIN_API_VERSION,
+    manifest: { name: "la-crypta-defense", version: "0.1.0", apiVersion: "^1.1.0" },
+    registerBrain: (id, fn) => serverPluginHost.registerBrain(id, fn),
+    registerItem: (id, behavior) => serverPluginHost.registerItem(id, behavior),
+    registerSystem: (name, fn, opts) => serverPluginHost.registerSystem(name, fn, opts?.phase ?? "main"),
+    registerEventModule: (spec) => serverPluginHost.registerEventModule(spec),
+    on: (event, handler) => serverPluginHost.on(event, handler),
+    registerContentLoader: () => {},
+    log: () => {},
+  };
+}
+
 describe("timeScale equivalence (#67)", () => {
   beforeEach(() => resetDevTuning());
-  afterEach(() => resetDevTuning());
+  afterEach(() => {
+    resetDevTuning();
+    serverPluginHost.reset();
+  });
 
   it("TIME_SCALE_MAX is the documented cap", () => {
     expect(TIME_SCALE_MAX).toBe(16);
@@ -85,16 +109,13 @@ describe("timeScale equivalence (#67)", () => {
     expect(drive(0, 200)).toBe(100); // paused: scaledMs 0 → frozen
   });
 
-  it("wave clock: 10s of 1× ticks ≡ 5s of 2× ticks", () => {
-    const build = () => {
+  it("wave clock (event module): 10s of 1× ticks ≡ 5s of 2× ticks", async () => {
+    await laCryptaPlugin.setup(pluginCtx());
+    setDevTuning("waveFirstDelayMs", 60_000);
+
+    const drive = (dt: number, steps: number): GameState => {
       const state = new GameState();
       installFixedRng(state, 0.5);
-      const house = new House();
-      house.id = "house-0";
-      house.maxHp = 300;
-      house.hp = 300;
-      house.alive = true;
-      state.houses.set(house.id, house);
       const p = new Player();
       p.id = "p1";
       p.hp = 100;
@@ -102,15 +123,21 @@ describe("timeScale equivalence (#67)", () => {
       p.level = 1;
       p.state = AnimState.IDLE;
       state.players.set(p.id, p);
+      const bridge: RoomBridge = {
+        state,
+        broadcast: () => {},
+        giveItem: () => true,
+        grantXp: () => 0,
+        onEventEnd: () => {},
+      };
+      const runtime = new EventRuntime();
+      runtime.start("la-crypta-defense", bridge);
+      for (let i = 0; i < steps; i++) runtime.tick(dt);
       return state;
     };
-    setDevTuning("waveFirstDelayMs", 60_000);
 
-    const oneX = build();
-    for (let i = 0; i < 200; i++) waveSystem(oneX, 0.05); // 10s at 1×
-    const twoX = build();
-    for (let i = 0; i < 100; i++) waveSystem(twoX, 0.1); // the same 10s at 2×
-
+    const oneX = drive(0.05, 200); // 10s at 1×
+    const twoX = drive(0.1, 100); // the same 10s at 2×
     expect(twoX.waveTimerMs).toBeCloseTo(oneX.waveTimerMs, 5);
     expect(oneX.waveNumber).toBe(0);
   });

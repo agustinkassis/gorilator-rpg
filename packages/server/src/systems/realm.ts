@@ -15,6 +15,12 @@ import { setRealmPolicy } from "./policy";
  *     "policy": {                                     // death + progression rules
  *       "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
  *       "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+ *     },
+ *     "events": {                                     // pluggable game loops (API 1.1)
+ *       "enabled": true,                              // false → open sandbox, no event
+ *       "autoStart": true,                            // start the module with the realm
+ *       "module": "la-crypta-defense",                // default: the flagship module
+ *       "config": { "difficultyMult": 1 }             // per-event overrides
  *     }
  *   }
  *
@@ -22,6 +28,46 @@ import { setRealmPolicy } from "./policy";
  * devTuning knobs the in-game Gameplay Options panel edits; the policy block
  * seeds the realm policy (see ./policy.ts for defaults).
  */
+
+export interface RealmEventsConfig {
+  enabled: boolean;
+  autoStart: boolean;
+  /** Explicit module id; default: the single registered module, else la-crypta-defense. */
+  module?: string;
+  config: Record<string, unknown>;
+}
+
+const eventsDefaults = (): RealmEventsConfig => ({ enabled: true, autoStart: true, config: {} });
+
+let currentEvents: RealmEventsConfig = eventsDefaults();
+
+export function realmEvents(): RealmEventsConfig {
+  return currentEvents;
+}
+
+/** Override the events config (realm.json block, GORILATOR_TEST, scenarios).
+ *  Partial input merges over the current values; unknown fields are ignored. */
+export function setRealmEvents(raw: unknown): RealmEventsConfig {
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    currentEvents = {
+      enabled: r.enabled === undefined ? currentEvents.enabled : Boolean(r.enabled),
+      autoStart: r.autoStart === undefined ? currentEvents.autoStart : Boolean(r.autoStart),
+      module: r.module === undefined ? currentEvents.module : String(r.module),
+      config:
+        r.config && typeof r.config === "object"
+          ? { ...currentEvents.config, ...(r.config as Record<string, unknown>) }
+          : currentEvents.config,
+    };
+  }
+  return currentEvents;
+}
+
+/** Test hook — back to the defaults (enabled + autoStart). */
+export function resetRealmEvents(): RealmEventsConfig {
+  currentEvents = eventsDefaults();
+  return currentEvents;
+}
 export function applyRealmConfig(): void {
   const candidates = [resolve(process.cwd(), "realm.json"), resolve(process.cwd(), "../../realm.json")];
   const file = candidates.find((p) => existsSync(p));
@@ -43,6 +89,13 @@ export function applyRealmConfig(): void {
         `[realm] policy: death=${applied.death.mode} (xpPenalty=${applied.death.xpPenalty}) ` +
           `persistAcrossWipes=${applied.progression.persistAcrossWipes} ` +
           `keepInventoryOnWipe=${applied.progression.keepInventoryOnWipe}`,
+      );
+    }
+    if (realm?.events) {
+      const applied = setRealmEvents(realm.events);
+      console.log(
+        `[realm] events: enabled=${applied.enabled} autoStart=${applied.autoStart}` +
+          (applied.module ? ` module=${applied.module}` : ""),
       );
     }
   } catch (err) {

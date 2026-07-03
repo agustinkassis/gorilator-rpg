@@ -1,12 +1,13 @@
-import { AnimState, type GameState } from "@rpg/shared";
-import type { DevTuningValues } from "./devTuning";
+import type { GameState } from "./schema/GameState";
+import { AnimState, type DevTuningKey } from "./types";
 
 /**
- * Per-event difficulty math (#64). Wave size and enemy levels scale with the
- * LIVE players — which means persistent veterans (progression survives wipes)
- * make fresh realm cycles brutal for newcomers. These knobs are the operator's
- * relief valve, all live-tunable (realm.json `tuning`, scenario manifests,
- * the Dev Mode sliders, `dev_tune`):
+ * Per-event difficulty math (#64) — shared so both the core and event-module
+ * plugins (which compile against @rpg/shared only) use the same curve. Wave
+ * size and enemy levels scale with the LIVE players — which means persistent
+ * veterans (progression survives wipes) make fresh realm cycles brutal for
+ * newcomers. These knobs are the operator's relief valve, all live-tunable
+ * (realm.json `tuning`, scenario manifests, the Dev Mode sliders, `dev_tune`):
  *
  *   difficultySizeScale   ×N on the wave size (before the waveSizeMax cap)
  *   difficultyLevelScale  ×N on the per-wave level-cap escalation (0 = never escalate)
@@ -17,6 +18,10 @@ import type { DevTuningValues } from "./devTuning";
  * At the defaults (1 / 1 / 0, eventMult 1) every formula reduces EXACTLY to
  * the legacy behavior pinned by waves.characterization.test.ts.
  */
+
+/** Read one live tuning knob (the server passes `(k) => devTuning()[k]`;
+ *  event modules pass `ctx.tuning`). */
+export type TuningReader = (key: DevTuningKey) => number;
 
 /** Average + top level across the LIVE players — the wave difficulty inputs
  *  (more/higher-level defenders → bigger, stronger waves). */
@@ -43,23 +48,23 @@ export interface WaveDifficulty {
 export function waveDifficulty(
   state: GameState,
   waveNumber: number,
-  tuning: DevTuningValues,
+  tune: TuningReader,
   eventMult = 1,
 ): WaveDifficulty {
   const { avg, max, alive } = playerLevelStats(state);
   const mult = Number.isFinite(eventMult) && eventMult > 0 ? eventMult : 1;
 
   const rawSize =
-    tuning.waveSizeBase +
-    tuning.waveSizePerPlayer * Math.max(1, alive) +
-    tuning.waveSizePerWave * (waveNumber - 1);
-  const size = Math.min(tuning.waveSizeMax, Math.round(rawSize * tuning.difficultySizeScale * mult));
+    tune("waveSizeBase") +
+    tune("waveSizePerPlayer") * Math.max(1, alive) +
+    tune("waveSizePerWave") * (waveNumber - 1);
+  const size = Math.min(tune("waveSizeMax"), Math.round(rawSize * tune("difficultySizeScale") * mult));
 
   let levelLo = Math.max(1, Math.round(avg));
   // Legacy escalation is floor(wave/3); the scale stretches or flattens it.
   let levelHi =
-    Math.max(levelLo, max) + Math.floor((waveNumber / 3) * tuning.difficultyLevelScale * mult);
-  const cap = Math.round(tuning.difficultyLevelCap);
+    Math.max(levelLo, max) + Math.floor((waveNumber / 3) * tune("difficultyLevelScale") * mult);
+  const cap = Math.round(tune("difficultyLevelCap"));
   if (cap > 0) {
     levelHi = Math.min(levelHi, cap);
     levelLo = Math.min(levelLo, levelHi);

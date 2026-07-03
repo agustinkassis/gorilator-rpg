@@ -41,6 +41,7 @@ import {
   TICK_RATE,
   TIME_SCALE_MAX,
   NOSTR_TAKEOVER_CODE,
+  type EventOutcome,
   type HealEvent,
   type PlayerSave,
 } from "@rpg/shared";
@@ -63,10 +64,9 @@ import {
 } from "../systems/resources";
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
-import { goblinAiSystem, waveSystem, resetWaves, forceNextWave, previousWave } from "../systems/goblins";
+import { goblinAiSystem } from "../systems/goblins";
 import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
-import { houseRegenSystem, noteHouseDamage, spawnHouse, type HouseRegenTimers } from "../systems/houses";
 import { healingTowerPosition, sacredCircleHealSystem } from "../systems/healingTower";
 import { useItemFromSlot, type BerserkerBase, type UseItemDeps } from "../systems/useItem";
 import { loadPropObstacles, onPropsChange } from "../systems/props";
@@ -89,7 +89,8 @@ import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrS
 import { serverPluginHost } from "../systems/plugins/host";
 import { loadServerPlugins } from "../systems/plugins/loader";
 import { initNostrContent } from "../systems/plugins/nostrContent";
-import { applyRealmConfig } from "../systems/realm";
+import { applyRealmConfig, realmEvents, setRealmEvents } from "../systems/realm";
+import { eventRuntime, type RoomBridge } from "../systems/plugins/events";
 import { resolveCycleSeed, rng, seedRng } from "../systems/rng";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
@@ -126,9 +127,6 @@ export class GameRoom extends Room<GameState> {
   /** Fractional sacred-circle healing is accumulated into whole-HP popups. */
   private sacredHealCarry = new Map<string, number>();
 
-  /** La Crypta regen timers reset every time the house receives damage. */
-  private houseRegen: HouseRegenTimers = new Map();
-
   /** Signs + publishes Nostr-logged-in players' progress with the SERVER key. */
   private serverSaver = new ServerSaver();
   /** Per-session level/death watermark, so the tick can persist a save the
@@ -141,10 +139,6 @@ export class GameRoom extends Room<GameState> {
     string,
     { power: number; timer: number; item: "banana" | "stone" }
   >();
-
-  /** True while La Crypta (the home) stands; flips on collapse so the tick fires the
-   *  wipe exactly once, then back to true once the home is rebuilt. */
-  private homeStanding = true;
 
   private healingTower = healingTowerPosition();
 
@@ -176,7 +170,6 @@ export class GameRoom extends Room<GameState> {
     applyStructures(this.state); // build destructible structures from the loaded concrete props
     this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
-    spawnHouse(this.state);
     loadAuthoredNpcs(this.state);
 
     // Deterministic test mode (e2e smoke tests, `pnpm bench` scenarios): no goblin
@@ -187,20 +180,25 @@ export class GameRoom extends Room<GameState> {
     applyRealmConfig();
 
     if (process.env.GORILATOR_TEST === "1") {
-      setDevTuning("waveSizeBase", 0);
-      setDevTuning("waveSizePerPlayer", 0);
-      setDevTuning("waveSizePerWave", 0);
+      // No event module → no house, no waves, no wipe: room state only changes
+      // when a test drives it (replaces the old wave-size-0 tuning hack).
+      setRealmEvents({ enabled: false });
       // The pre-created bench/e2e room has no clients — without this, Colyseus
       // auto-disposes it mid-benchmark and the capture never completes.
       this.autoDispose = false;
-      console.log("[room] GORILATOR_TEST=1 — goblin waves disabled for a reproducible room");
+      console.log("[room] GORILATOR_TEST=1 — events disabled for a reproducible room");
     }
 
     // Discover + load server plugins (plugins/ + gorilator-plugin-* packages):
-    // brains, item behaviors, tick systems, event listeners, content packs.
+    // brains, item behaviors, tick systems, event modules, listeners, content.
     // Idempotent across realm restarts; a failing plugin is skipped, never fatal.
     await loadServerPlugins();
     initNostrContent(); // kind-30333 realm packs (REALM_PACK_AUTHORS env) — no-op when unset
+
+    // Start the realm's event module (realm.json `events`; flagship default =
+    // la-crypta-defense) and announce the fresh cycle to plugin listeners.
+    this.startRealmEvent();
+    serverPluginHost.fire("realm:start", { eventId: eventRuntime.activeId() }, this.state);
 
     this.onMessage("move", (client, msg: MoveMessage) => {
       const p = this.state.players.get(client.sessionId);
@@ -326,7 +324,8 @@ export class GameRoom extends Room<GameState> {
       if (!msg || !this.devSender(client)) return;
       const applied = setDevTuning(msg.key, msg.value);
       if (applied == null) return;
-      if (msg.key === "waveFirstDelayMs" && this.state.waveNumber === 0) resetWaves(this.state);
+      // (waveFirstDelayMs retunes at wave 0 re-arm the clock inside the event
+      // module's tick — see plugins/la-crypta-defense/src/waves.ts.)
     });
     this.onMessage("dev_action", (client, msg: DevActionMessage) => {
       if (!msg || !this.devSender(client)) return;
@@ -481,7 +480,13 @@ export class GameRoom extends Room<GameState> {
       const scaledMs = deltaMs * this.state.timeScale;
       const dt = scaledMs / 1000;
       const emitDamage = (ev: DamageEvent) => {
-        noteHouseDamage(this.state, this.houseRegen, ev.targetId);
+        // The one damage chokepoint — event modules (house regen resets) and any
+        // other plugin listener hear every hit through entity:damaged.
+        serverPluginHost.fire(
+          "entity:damaged",
+          { targetId: ev.targetId, amount: ev.amount, crit: ev.crit },
+          this.state,
+        );
         this.broadcast("damage", ev);
       };
       const emitKill = (ev: KillEvent) => this.broadcast("kill", ev);
@@ -524,7 +529,7 @@ export class GameRoom extends Room<GameState> {
       perfTracker.span("goblinAi", () => goblinAiSystem(this.state, dt, emitDamage, emitKill));
       if (this.state.timeScale > 0)
         perfTracker.span("separation", () => separationSystem(this.state)); // fan attackers out — no stacking on one tile
-      perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
+      eventRuntime.tick(dt); // the realm's event module (spans itself as event:<id>)
       perfTracker.span("sacredCircleHeal", () =>
         sacredCircleHealSystem(this.state, dt, this.healingTower, this.sacredHealCarry, emitHeal),
       );
@@ -536,7 +541,6 @@ export class GameRoom extends Room<GameState> {
         potionRespawnSystem(this.state, dt);
       });
       perfTracker.span("bananas", () => bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp));
-      perfTracker.span("houseRegen", () => houseRegenSystem(this.state, scaledMs, this.houseRegen, emitHeal));
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {
@@ -600,7 +604,6 @@ export class GameRoom extends Room<GameState> {
           }
         }
       });
-      this.checkHomeFall(); // La Crypta fell? → end the realm + restart per the realm policy
       this.detectSaveTriggers(); // persist Nostr progress on level-up / death
       if (++this.realmTick >= TICK_RATE) {
         this.realmTick = 0;
@@ -647,27 +650,57 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  /** Detect La Crypta collapsing (no standing house) and end the realm once. */
-  private checkHomeFall() {
-    let standing = false;
-    this.state.houses.forEach((h) => {
-      if (h.alive) standing = true;
-    });
-    if (this.homeStanding && !standing) {
-      this.homeStanding = false;
-      this.endRealm();
+  /** The narrow surface the event runtime drives the room through (API 1.1). */
+  private roomBridge(): RoomBridge {
+    return {
+      state: this.state,
+      broadcast: (type, payload) => this.broadcast(type, payload),
+      giveItem: (playerId, item, amount) => {
+        const inv = this.inventories.get(playerId);
+        if (!inv || !this.state.players.has(playerId)) return false;
+        addItem(inv, item as ItemType, amount);
+        this.sendInventory(playerId);
+        return true;
+      },
+      grantXp: (playerId, amount) => {
+        const p = this.state.players.get(playerId);
+        if (!p) return 0;
+        return grantXp(p, amount, (ev) => this.broadcast("xp", ev));
+      },
+      onEventEnd: (outcome) => this.endRealm(outcome),
+    };
+  }
+
+  /** Start (or restart) the realm's event module per the realm.json `events`
+   *  config: explicit module id → the single registered module → the flagship. */
+  private startRealmEvent() {
+    eventRuntime.reset(); // a fresh cycle always starts its event from scratch
+    const cfg = realmEvents();
+    if (!cfg.enabled || !cfg.autoStart) {
+      if (!cfg.enabled) console.log("[events] disabled — open sandbox (no objective, no waves)");
+      return;
     }
+    const registered = [...serverPluginHost.eventModules.keys()];
+    const moduleId =
+      cfg.module ?? (registered.length === 1 ? registered[0] : "la-crypta-defense");
+    if (!serverPluginHost.eventModules.has(moduleId)) {
+      if (registered.length > 0)
+        console.warn(`[events] "${moduleId}" not registered (available: ${registered.join(", ")})`);
+      return;
+    }
+    eventRuntime.start(moduleId, this.roomBridge(), cfg.config);
   }
 
   /**
-   * La Crypta has fallen → the realm is OVER. Every defender falls with it, the
-   * besieging horde is cleared, and a countdown begins (state.restartTimerMs). The
-   * tick freezes all gameplay until it elapses, then startNewRealm() spins up the
-   * next realm. A "wipe" event lets clients flash the defeat banner; the synced
-   * restartTimerMs drives the "next realm in N" overlay on every screen.
+   * The realm's event ended (La Crypta fell) → the realm cycle is OVER. Every
+   * defender falls with it, the besieging horde is cleared, and a countdown
+   * begins (state.restartTimerMs). The tick freezes all gameplay until it
+   * elapses, then startNewRealm() spins up the next realm. A "wipe" event lets
+   * clients flash the defeat banner; the synced restartTimerMs drives the
+   * "next realm in N" overlay on every screen.
    */
-  private endRealm() {
-    const wave = this.state.waveNumber;
+  private endRealm(outcome: EventOutcome) {
+    const wave = Number(outcome.stats?.wave ?? this.state.waveNumber);
     const persist = realmPolicy().progression.persistAcrossWipes;
 
     // Snapshot living progress first — the "realm-end" save is what carries a
@@ -681,6 +714,10 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach((p, sid) => {
       p.hp = 0;
       p.state = AnimState.DEAD;
+      // Pre-mark the death edge: the wipe is a realm event, not a per-player
+      // death — the tick's deaths++ detector must not count it (parity with the
+      // pre-extraction flow, where the intermission froze the detector first).
+      p.prevDead = true;
       p.respawnTimer = 0; // the intermission, not the per-player timer, gates respawn
       p.attackTargetId = "";
       p.pendingHitId = "";
@@ -734,12 +771,12 @@ export class GameRoom extends Room<GameState> {
     });
     this.berserkerBase.clear();
     this.sacredHealCarry.clear();
-    this.houseRegen.clear();
     this.state.timeScale = 1;
 
     // Regenerate the whole world from scratch: clear runtime entities, rebuild
-    // first-realm resources/pickups, rebuild La Crypta, re-apply authored NPCs,
-    // and restart every wave/spawner interval.
+    // first-realm resources/pickups, re-apply authored NPCs, and restart every
+    // spawner interval. The event module (restarted below) rebuilds its own
+    // objective + wave clock.
     this.state.enemies.clear();
     this.state.houses.clear();
     setRockObstacles([]); // match first-room resource placement before rocks exist
@@ -747,10 +784,11 @@ export class GameRoom extends Room<GameState> {
     spawnInitialPotions(this.state);
     spawnInitialBananas(this.state);
     this.refreshRockObstacles(); // rocks are alive again → their collision is back
-    spawnHouse(this.state);
     syncAuthoredNpcs(this.state);
-    resetWaves(this.state, true);
     resetSpawners();
+    this.state.waveNumber = 0;
+    this.state.waveTimerMs = 0;
+    this.state.waveActive = false;
 
     const policy = realmPolicy();
     const persist = policy.progression.persistAcrossWipes;
@@ -780,9 +818,13 @@ export class GameRoom extends Room<GameState> {
         this.sendInventory(sid);
       });
     }
-    this.homeStanding = true;
     this.realmTick = 0;
     this.state.restartTimerMs = 0;
+
+    // Fresh cycle → the event module starts over (rebuilds La Crypta + the wave
+    // clock) and plugin listeners hear the new realm.
+    this.startRealmEvent();
+    serverPluginHost.fire("realm:start", { eventId: eventRuntime.activeId() }, this.state);
 
     console.log(
       persist
@@ -825,10 +867,10 @@ export class GameRoom extends Room<GameState> {
         this.reportRealm();
         break;
       case "force_next_wave":
-        forceNextWave(this.state);
+        eventRuntime.command("force_next_wave");
         break;
       case "previous_wave":
-        previousWave(this.state);
+        eventRuntime.command("previous_wave");
         break;
       case "kill_all_enemies":
         this.state.enemies.clear();
