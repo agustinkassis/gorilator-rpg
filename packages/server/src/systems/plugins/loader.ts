@@ -44,6 +44,10 @@ function contextFor(dir: string, manifest: PluginManifest): ServerPluginContext 
       serverPluginHost.registerSystem(`${manifest.name}:${name}`, fn, opts?.phase ?? "main");
       console.log(`${tag} system "${name}" registered (${opts?.phase ?? "main"})`);
     },
+    registerEventModule: (spec) => {
+      serverPluginHost.registerEventModule(spec);
+      console.log(`${tag} event module "${spec.id}" registered`);
+    },
     on: (event, handler) => serverPluginHost.on(event, handler),
     registerContentLoader: (file, apply) => {
       const path = isAbsolute(file) ? file : join(dir, file);

@@ -47,4 +47,13 @@ export class GameState extends Schema {
   // Spawner ids (spawners.json) an admin has switched off; their countdowns
   // freeze rather than reset, so re-enabling resumes mid-interval.
   @type(["string"]) disabledSpawnerIds = new ArraySchema<string>();
+
+  // Event modules (plugin API 1.1): the active realm event. The host writes
+  // eventId on start/end; the module drives the HUD fields via setEventHud.
+  // Empty id = no event running (open sandbox). Part of the ONE batched Phase 3
+  // schema change (#72) — do not add further @type fields outside a planned batch.
+  @type("string") eventId = "";
+  @type("string") eventLabel = "";
+  @type("number") eventTimerMs = 0;
+  @type("number") eventProgress = 0; // 0..1, module-defined (La Crypta: house HP fraction)
 }

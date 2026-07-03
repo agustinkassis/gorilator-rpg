@@ -1,6 +1,7 @@
 import type {
   BrainFn,
   BuiltinBrainId,
+  EventModuleSpec,
   GameEvent,
   GameEventHandler,
   GameState,
@@ -32,6 +33,9 @@ class ServerPluginHost {
     main: [],
     post: [],
   };
+  /** Pluggable game loops (API 1.1) — registered here, started by the host's
+   *  EventRuntime per realm.json `events` config. */
+  readonly eventModules = new Map<string, EventModuleSpec>();
   private readonly events = new Map<GameEvent, GameEventHandler[]>();
 
   /** Valid value for a manifest `brain` field: a builtin or a registered plugin brain. */
@@ -49,6 +53,12 @@ class ServerPluginHost {
 
   registerSystem(name: string, fn: SystemFn, phase: SystemPhase = "main"): void {
     this.systems[phase].push({ name, fn });
+  }
+
+  registerEventModule(spec: EventModuleSpec): void {
+    if (this.eventModules.has(spec.id))
+      console.warn(`[plugins] event module "${spec.id}" re-registered — overwriting`);
+    this.eventModules.set(spec.id, spec);
   }
 
   on(event: GameEvent, handler: GameEventHandler): void {
@@ -78,6 +88,7 @@ class ServerPluginHost {
     this.systems.pre.length = 0;
     this.systems.main.length = 0;
     this.systems.post.length = 0;
+    this.eventModules.clear();
     this.events.clear();
   }
 }
