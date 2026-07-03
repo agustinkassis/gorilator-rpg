@@ -1733,13 +1733,18 @@ async function start() {
     },
   };
 
+  // Feature Lab (#66): ?scenario=<name> auto-joins single-player — no splash
+  // credentials. The join option also selects the scenario for a freshly
+  // created room on open dev servers (`pnpm scenario` pins it via env anyway).
+  const scenarioName = new URLSearchParams(location.search).get("scenario");
+
   while (true) {
     // Wait for the player to commit: a name, and optionally a verified Nostr id.
     // Progress persistence is fully server-side now: the server signs/owns each
     // Nostr player's save (kind 30078) and recovers it on join — the client only
     // proves the pubkey. A duplicate login is kicked by the server (the takeover
     // close code, handled in NetworkClient.onLeave).
-    const creds = await splash.awaitCredentials();
+    const creds = scenarioName ? { name: "dev" } : await splash.awaitCredentials();
 
     // Make sure every known asset task has settled before we reveal the world. A
     // preload failure isn't fatal — the model builders fall back gracefully — so
@@ -1769,6 +1774,7 @@ async function start() {
         name: creds.name,
         // Only the signed auth + profile go to the server; it owns the save.
         nostr: nostrPayload,
+        scenario: scenarioName ?? undefined,
       });
     } catch (err) {
       console.error(err);

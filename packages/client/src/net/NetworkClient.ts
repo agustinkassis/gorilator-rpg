@@ -161,7 +161,7 @@ export class NetworkClient {
 
   async connect(
     handlers: NetHandlers,
-    options: { name?: string; nostr?: NostrAuthPayload } = {},
+    options: { name?: string; nostr?: NostrAuthPayload; scenario?: string } = {},
   ): Promise<void> {
     let phase = "join room";
     try {

@@ -112,6 +112,16 @@ if (!existsSync(sharedDist)) {
   if (build.status !== 0) process.exit(build.status ?? 1);
 }
 
+// Cold start only: bundle plugins/ once when a server entry has never been
+// built — without dist/, the flagship la-crypta-defense event module (waves +
+// objective) silently stays out of the realm.
+const pluginDist = join(root, "plugins/la-crypta-defense/dist/server.js");
+if (!existsSync(pluginDist)) {
+  console.log("[dev] plugin dist missing; building plugins once (cold start)");
+  const build = runPnpm(["build:plugins"], { env: devEnv });
+  if (build.status !== 0) process.exit(build.status ?? 1);
+}
+
 console.log("[dev] starting shared watcher, game server, and Vite client (in parallel)");
 if (clientPort !== requestedClientPort) {
   console.log(`[dev] client port ${requestedClientPort} is busy; using ${clientPort}`);
