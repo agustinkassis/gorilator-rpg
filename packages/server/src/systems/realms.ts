@@ -96,6 +96,7 @@ class RealmTracker {
   private current: ActiveRealm | null = null;
   private last: EndedRealm | null = null; // the most recently ended realm (for the API)
   private seq = 0;
+  private cycleSeed: { seed: number; source: string } | null = null; // the live cycle's RNG seed
 
   private pool: SimplePool | null = null;
   private publishTimer: ReturnType<typeof setInterval> | null = null;
@@ -144,6 +145,12 @@ class RealmTracker {
   /** Note a Nostr identity joining the live realm (snappier than the next snapshot). */
   noteNpub(pubkey: string): void {
     if (pubkey && this.current) this.current.npubs.add(pubkey);
+  }
+
+  /** Record the live realm cycle's RNG seed (engineering.md §3 — logged + queryable
+   *  via /api/status so any run can be reproduced with GORILATOR_SEED). */
+  noteSeed(seed: number, source: string): void {
+    this.cycleSeed = { seed, source };
   }
 
   /** Fold one player's current run into their all-time-best leaderboard entry.
@@ -224,6 +231,7 @@ class RealmTracker {
             npubs: [...this.current.npubs],
           }
         : null,
+      cycleSeed: this.cycleSeed,
       lastRealm: this.last,
       updatedAt: Date.now(),
     };

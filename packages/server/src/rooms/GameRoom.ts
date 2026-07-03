@@ -89,6 +89,7 @@ import { serverPluginHost } from "../systems/plugins/host";
 import { loadServerPlugins } from "../systems/plugins/loader";
 import { initNostrContent } from "../systems/plugins/nostrContent";
 import { applyRealmConfig } from "../systems/realm";
+import { resolveCycleSeed, rng, seedRng } from "../systems/rng";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
 
@@ -154,6 +155,7 @@ export class GameRoom extends Room<GameState> {
 
   async onCreate() {
     this.setState(new GameState());
+    this.seedCycleRng(); // deterministic gameplay rolls — before any world spawn draws from them
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
     onPropsChange(() => applyStructures(this.state)); // re-sync destructible structures on props edit
     loadEntityFeatures(() => {
@@ -704,8 +706,18 @@ export class GameRoom extends Room<GameState> {
    * XP, stats and inventory persist; with persistAcrossWipes=false everyone
    * respawns as a fresh level-1 character with a starter inventory (legacy wipe).
    */
+  /** (Re)seed the cycle RNG (scenario/env pin → same seed every cycle → fully
+   *  reproducible runs; otherwise a fresh random seed per realm cycle). */
+  private seedCycleRng() {
+    const { seed, source } = resolveCycleSeed();
+    seedRng(this.state, seed, source);
+    realmTracker.noteSeed(seed, source);
+    console.log(`[rng] realm cycle seed = ${seed} (source: ${source})`);
+  }
+
   private startNewRealm() {
     this.pendingThrows.clear();
+    this.seedCycleRng(); // a fresh cycle rolls its own dice (unless env/scenario pins them)
     // Restore any live berserker buffs to base stats BEFORE dropping the map —
     // otherwise the buffed attack/maxHp would be baked into persistent stats
     // (drink a potion right before the fall → keep the buff forever).
@@ -741,12 +753,13 @@ export class GameRoom extends Room<GameState> {
 
     const policy = realmPolicy();
     const persist = policy.progression.persistAcrossWipes;
+    const spawnRoll = rng(this.state, "spawns");
     this.state.players.forEach((p, sid) => {
       resetPlayerForNewRealm(p, persist, devTuning());
       // Respawn ALIVE at a fresh spot. The DEAD→IDLE flip plays the lightning-
       // strike respawn on every client (placeAtFreeSpot sets x/z + targets + path).
-      const angle = Math.random() * Math.PI * 2;
-      const r = 12 + Math.random() * 4;
+      const angle = spawnRoll() * Math.PI * 2;
+      const r = 12 + spawnRoll() * 4;
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
       // Watermark at the player's ACTUAL level — seeding {level: 1} under
@@ -896,11 +909,12 @@ export class GameRoom extends Room<GameState> {
       p.hue = restore.hue;
       p.state = AnimState.IDLE;
     } else {
-      const angle = Math.random() * Math.PI * 2;
-      const r = 12 + Math.random() * 4; // spawn clear of the centre-cross goblin
+      const spawnRoll = rng(this.state, "spawns");
+      const angle = spawnRoll() * Math.PI * 2;
+      const r = 12 + spawnRoll() * 4; // spawn clear of the centre-cross goblin
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
-      p.hue = Math.floor(Math.random() * 360);
+      p.hue = Math.floor(spawnRoll() * 360);
       // Fresh (non-restored) joiners pick up the current tuned starting stats,
       // so Gameplay Options changes apply live without a server restart.
       const tune = devTuning();

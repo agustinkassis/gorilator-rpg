@@ -7,13 +7,14 @@ import {
   SACRED_CIRCLE_HEAL_PER_SEC_MIN,
   SACRED_CIRCLE_RADIUS,
 } from "@rpg/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { sacredCircleHealSystem } from "./healingTower";
+import { installFixedRng } from "./rng";
 
 // Characterization for the Sacred Circle trickle-heal, extracted verbatim from
 // GameRoom so the timeScale audit (#67) can pin it: dt is the SCALED tick delta,
 // so a paused world (dt 0) heals nothing, and 2× time heals 2× per wall tick.
-// Math.random pinned to 0.5 → healPerSec is exactly the min/max midpoint.
+// The seeded RNG is pinned to 0.5 → healPerSec is exactly the min/max midpoint.
 
 const HEAL_PER_SEC_MID =
   SACRED_CIRCLE_HEAL_PER_SEC_MIN +
@@ -31,15 +32,9 @@ function makePlayer(id: string, hp: number): Player {
 }
 
 describe("sacredCircleHealSystem characterization", () => {
-  beforeEach(() => {
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   function run(dt: number, hp = 50, tower: { x: number; z: number } | null = { x: 0, z: 0 }) {
     const state = new GameState();
+    installFixedRng(state, 0.5);
     const p = makePlayer("p1", hp);
     state.players.set("p1", p);
     const carry = new Map<string, number>();
@@ -76,6 +71,7 @@ describe("sacredCircleHealSystem characterization", () => {
 
   it("accumulates fractional healing into whole-HP popups via the carry map", () => {
     const state = new GameState();
+    installFixedRng(state, 0.5);
     const p = makePlayer("p1", 50);
     state.players.set("p1", p);
     const carry = new Map<string, number>();

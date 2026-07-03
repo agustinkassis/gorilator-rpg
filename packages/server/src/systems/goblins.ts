@@ -25,6 +25,7 @@ import type { EmitKill } from "./combat";
 import { brainOf, configureEnemy } from "./enemyConfig";
 import { devTuning } from "./devTuning";
 import { customWave, type WaveEntry } from "./waves";
+import { rng } from "./rng";
 import { serverPluginHost } from "./plugins/host";
 
 export type EmitDamage = (ev: DamageEvent) => void;
@@ -124,7 +125,8 @@ function scheduleCustomWave(state: GameState, waveNumber: number, entries: WaveE
   for (const e of entries) for (let i = 0; i < e.count; i++) units.push(e);
   const total = units.length;
   if (total <= 0) return [];
-  const baseAng = Math.random() * Math.PI * 2;
+  const roll = rng(state, "spawns");
+  const baseAng = roll() * Math.PI * 2;
   const { avg, max } = playerLevelStats(state);
   const lo = Math.max(1, Math.round(avg));
   const hi = Math.max(lo, max) + Math.floor(waveNumber / 3);
@@ -134,18 +136,18 @@ function scheduleCustomWave(state: GameState, waveNumber: number, entries: WaveE
       : [
           0,
           tuning.waveSpawnSpreadMs,
-          ...Array.from({ length: total - 2 }, () => Math.random() * tuning.waveSpawnSpreadMs),
+          ...Array.from({ length: total - 2 }, () => roll() * tuning.waveSpawnSpreadMs),
         ].sort((a, b) => a - b);
   const out: ScheduledGoblin[] = [];
   for (let i = 0; i < total; i++) {
     const u = units[i];
-    const ang = baseAng + (Math.random() - 0.5) * WAVE_SPAWN_ARC * 1.25;
-    const r = WAVE_SPAWN_DISTANCE * (0.78 + Math.random() * 0.44);
+    const ang = baseAng + (roll() - 0.5) * WAVE_SPAWN_ARC * 1.25;
+    const r = WAVE_SPAWN_DISTANCE * (0.78 + roll() * 0.44);
     out.push({
       delayMs: delays[i],
       x: clampRange(hx + Math.cos(ang) * r),
       z: clampRange(hz + Math.sin(ang) * r),
-      level: u.level ?? lo + Math.floor(Math.random() * (hi - lo + 1)),
+      level: u.level ?? lo + Math.floor(roll() * (hi - lo + 1)),
       kind: u.kind,
       defId: u.defId,
       brain: u.brain,
@@ -171,7 +173,8 @@ function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
     tuning.waveSizeBase + tuning.waveSizePerPlayer * Math.max(1, alive) + tuning.waveSizePerWave * (waveNumber - 1),
   );
   if (size <= 0) return [];
-  const baseAng = Math.random() * Math.PI * 2; // the horde approaches from ~one side
+  const roll = rng(state, "spawns");
+  const baseAng = roll() * Math.PI * 2; // the horde approaches from ~one side
   const lo = Math.max(1, Math.round(avg));
   const hi = Math.max(lo, max) + Math.floor(waveNumber / 3); // escalate the level cap over time
   const delays =
@@ -180,13 +183,13 @@ function scheduleWave(state: GameState, waveNumber: number): ScheduledGoblin[] {
       : [
           0,
           tuning.waveSpawnSpreadMs,
-          ...Array.from({ length: size - 2 }, () => Math.random() * tuning.waveSpawnSpreadMs),
+          ...Array.from({ length: size - 2 }, () => roll() * tuning.waveSpawnSpreadMs),
         ].sort((a, b) => a - b);
   const wave: ScheduledGoblin[] = [];
   for (let i = 0; i < size; i++) {
-    const ang = baseAng + (Math.random() - 0.5) * WAVE_SPAWN_ARC * 1.25;
-    const r = WAVE_SPAWN_DISTANCE * (0.78 + Math.random() * 0.44);
-    const level = lo + Math.floor(Math.random() * (hi - lo + 1));
+    const ang = baseAng + (roll() - 0.5) * WAVE_SPAWN_ARC * 1.25;
+    const r = WAVE_SPAWN_DISTANCE * (0.78 + roll() * 0.44);
+    const level = lo + Math.floor(roll() * (hi - lo + 1));
     wave.push({
       delayMs: delays[i],
       x: clampRange(hx + Math.cos(ang) * r),
@@ -435,7 +438,7 @@ export function goblinAiSystem(state: GameState, dt: number, emitDamage: EmitDam
     }
 
     if (brain === "passive_patrol") {
-      passivePatrol(g, dt);
+      passivePatrol(state, g, dt);
       return;
     }
 
@@ -525,15 +528,16 @@ function engagePlayer(g: Enemy, p: Player, d: number, dt: number) {
   }
 }
 
-function passivePatrol(g: Enemy, dt: number) {
+function passivePatrol(state: GameState, g: Enemy, dt: number) {
   g.wanderTimer -= dt * 1000;
   const d = Math.hypot(g.targetX - g.x, g.targetZ - g.z);
   if (g.wanderTimer <= 0 || d < 0.8) {
-    const angle = Math.random() * Math.PI * 2;
-    const r = Math.random() * (g.wanderRadius || GOBLIN_LEASH);
+    const roll = rng(state, "ai");
+    const angle = roll() * Math.PI * 2;
+    const r = roll() * (g.wanderRadius || GOBLIN_LEASH);
     g.targetX = clampRange((g.homeX || g.x) + Math.cos(angle) * r);
     g.targetZ = clampRange((g.homeZ || g.z) + Math.sin(angle) * r);
-    g.wanderTimer = 1500 + Math.random() * 3500;
+    g.wanderTimer = 1500 + roll() * 3500;
   }
   stepToward(g, g.targetX, g.targetZ, enemySpeed(g, GOBLIN_PATROL_SPEED), dt);
   g.state = AnimState.WALK;
@@ -585,7 +589,7 @@ function connectGoblinHit(state: GameState, g: Enemy, emitDamage: EmitDamage, em
   const d = Math.hypot(target.x - g.x, target.z - g.z);
   if (d > tuning.enemyAttackRange * 1.4) return; // player stepped out of reach (dodged)
 
-  const variance = 1 + (Math.random() * 2 - 1) * ATTACK_VARIANCE;
+  const variance = 1 + (rng(state, "combat")() * 2 - 1) * ATTACK_VARIANCE;
   const raw = g.attack * variance;
   const mitigation = target.armor / (target.armor + ARMOR_K);
   const dmg = Math.max(1, Math.round((raw * (1 - mitigation)) / tuning.damageDivisor));

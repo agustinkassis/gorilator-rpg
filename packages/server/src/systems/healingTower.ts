@@ -9,6 +9,7 @@ import {
   SACRED_CIRCLE_RADIUS,
   TOWER_PROP_NAME,
 } from "@rpg/shared";
+import { rng } from "./rng";
 
 const PROPS_CANDIDATES = [
   resolve(process.cwd(), "packages/client/public/props.json"),
@@ -45,7 +46,7 @@ export function sacredCircleHealSystem(
 
     const healPerSec =
       SACRED_CIRCLE_HEAL_PER_SEC_MIN +
-      Math.random() * (SACRED_CIRCLE_HEAL_PER_SEC_MAX - SACRED_CIRCLE_HEAL_PER_SEC_MIN);
+      rng(state, "misc")() * (SACRED_CIRCLE_HEAL_PER_SEC_MAX - SACRED_CIRCLE_HEAL_PER_SEC_MIN);
     const healed = Math.min(p.maxHp - p.hp, healPerSec * dt);
     if (healed <= 0) return;
     p.hp += healed;

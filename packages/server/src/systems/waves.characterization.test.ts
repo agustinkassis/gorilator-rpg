@@ -7,17 +7,18 @@ import {
   Player,
   WAVE_SPAWN_DISTANCE,
 } from "@rpg/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetDevTuning, setDevTuning } from "./devTuning";
 import { forceNextWave, makeGoblin, previousWave, resetWaves, waveSystem } from "./goblins";
 import { serverPluginHost } from "./plugins/host";
+import { installFixedRng } from "./rng";
 
 // Characterization suite for the tower-defense wave scheduler. These assertions
 // must pass UNCHANGED after the #73 extraction moves the scheduler into
 // plugins/la-crypta-defense — only the import line may change.
 //
 // Tuning is pinned to small round numbers so pacing runs in a few simulated
-// seconds; Math.random is pinned to 0.5 so sizes/levels/delays are exact:
+// seconds; the seeded RNG is pinned to 0.5 so sizes/levels/delays are exact:
 //   wave size  = base(3) + perPlayer(1)·alive + perWave(2)·(n−1), cap 6
 //   level      = lo + floor(0.5·(hi−lo+1)),  lo=max(1,round(avg)), hi=max+floor(n/3)
 //   delays     = [0, spread, 0.5·spread…] sorted → [0, 200, 200, 200, 400]
@@ -39,6 +40,7 @@ function makePlayer(id: string, level: number): Player {
 
 function makeWorld(levels: number[] = [2, 6]): GameState {
   const state = new GameState();
+  installFixedRng(state, 0.5);
   const house = new House();
   house.id = "house-0";
   house.x = 0;
@@ -80,12 +82,10 @@ describe("wave scheduler characterization", () => {
     setDevTuning("waveSizePerWave", 2);
     setDevTuning("waveSizeMax", 6);
     setDevTuning("goblinLiveCap", 8);
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
   });
   afterEach(() => {
     resetDevTuning();
     serverPluginHost.reset();
-    vi.restoreAllMocks();
   });
 
   it("waits waveFirstDelayMs, then schedules wave 1 and spreads spawns over waveSpawnSpreadMs", () => {
