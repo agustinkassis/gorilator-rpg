@@ -32,7 +32,6 @@ import {
   type KillEvent,
   type XpEvent,
   ROCK_COLLISION_SCALE,
-  POTION_HEAL,
   THROW_STATE_MS,
   THROW_RELEASE_FRACTION,
   BANANA_MAX_THROW,
@@ -41,15 +40,6 @@ import {
   REALM_RESTART_MS,
   TICK_RATE,
   NOSTR_TAKEOVER_CODE,
-  CRIT_MULTIPLIER,
-  BERSERKER_SPEED_MULT,
-  BERSERKER_CRIT_CHANCE_ADD,
-  BERSERKER_CRIT_DAMAGE_MULT,
-  BERSERKER_ARMOR_MULT,
-  BERSERKER_HP_MULT,
-  SACRED_CIRCLE_HEAL_PER_SEC_MAX,
-  SACRED_CIRCLE_HEAL_PER_SEC_MIN,
-  SACRED_CIRCLE_RADIUS,
   type HealEvent,
   type PlayerSave,
 } from "@rpg/shared";
@@ -76,7 +66,8 @@ import { goblinAiSystem, waveSystem, resetWaves, forceNextWave, previousWave } f
 import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
 import { houseRegenSystem, noteHouseDamage, spawnHouse, type HouseRegenTimers } from "../systems/houses";
-import { healingTowerPosition } from "../systems/healingTower";
+import { healingTowerPosition, sacredCircleHealSystem } from "../systems/healingTower";
+import { useItemFromSlot, type BerserkerBase, type UseItemDeps } from "../systems/useItem";
 import { loadPropObstacles, onPropsChange } from "../systems/props";
 import { applyStructures } from "../systems/structures";
 import { loadSpawners, resetSpawners, spawnerSystem, spawnerExists } from "../systems/spawners";
@@ -128,10 +119,7 @@ export class GameRoom extends Room<GameState> {
   private inventories = new Map<string, InventorySlot[]>();
 
   /** Pre-buff stats saved when a berserker potion is consumed; restored on expiry. */
-  private berserkerBase = new Map<string, {
-    attack: number; armor: number; critChance: number;
-    critMultiplier: number; moveSpeed: number; maxHp: number;
-  }>();
+  private berserkerBase = new Map<string, BerserkerBase>();
 
   /** Fractional sacred-circle healing is accumulated into whole-HP popups. */
   private sacredHealCarry = new Map<string, number>();
@@ -413,80 +401,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.onMessage("use_item", (client, msg: UseItemMessage) => {
-      const inv = this.inventories.get(client.sessionId);
-      const p = this.state.players.get(client.sessionId);
-      if (!inv || !p || p.state === AnimState.DEAD) return;
-      const slot = inv[msg.slot];
-      if (!slot || slot.count <= 0) return;
-
-      // Plugin-registered item behaviors dispatch first (a plugin may override a
-      // builtin id). The builtins (potion, berserker_potion) stay inline below.
-      const pluginBehavior = serverPluginHost.items.get(slot.type);
-      if (pluginBehavior) {
-        const sid = client.sessionId;
-        const itemId = slot.type;
-        try {
-          pluginBehavior.onUse(p, msg.slot, {
-            state: this.state,
-            consume: () => {
-              slot.count -= 1;
-              if (slot.count <= 0) {
-                slot.type = "";
-                slot.count = 0;
-              }
-              this.sendInventory(sid);
-            },
-            broadcast: (type, payload) => this.broadcast(type, payload),
-            heal: (target, amount) => {
-              const healed = Math.min(amount, target.maxHp - target.hp);
-              if (healed <= 0) return;
-              target.hp += healed;
-              this.broadcast("heal", { targetId: target.id, amount: healed });
-            },
-            log: (m) => console.log(`[plugin:item:${itemId}] ${m}`),
-          });
-        } catch (err) {
-          console.error(`[plugins] item "${itemId}" onUse failed:`, err);
-        }
-        return;
-      }
-
-      if (slot.type === "potion") {
-        if (p.hp >= p.maxHp) return; // don't waste a potion at full HP
-        const heal = Math.min(POTION_HEAL, p.maxHp - p.hp);
-        p.hp += heal;
-        slot.count -= 1;
-        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
-        this.broadcast("heal", { targetId: client.sessionId, amount: heal });
-        this.sendInventory(client.sessionId);
-
-      } else if (slot.type === "berserker_potion") {
-        if (p.berserkerMs > 0) return; // already berserk — don't stack
-        const sid = client.sessionId;
-        // Save base stats so we can restore them exactly when the buff expires.
-        this.berserkerBase.set(sid, {
-          attack: p.attack,
-          armor: p.armor,
-          critChance: p.critChance,
-          critMultiplier: p.critMultiplier,
-          moveSpeed: p.moveSpeed,
-          maxHp: p.maxHp,
-        });
-        // Apply the berserker multipliers.
-        p.attack = p.attack * devTuning().berserkerAttackMult;
-        p.armor = p.armor * BERSERKER_ARMOR_MULT;
-        p.critChance = Math.min(1, p.critChance + BERSERKER_CRIT_CHANCE_ADD);
-        const baseCrit = p.critMultiplier > 0 ? p.critMultiplier : CRIT_MULTIPLIER;
-        p.critMultiplier = baseCrit * BERSERKER_CRIT_DAMAGE_MULT;
-        p.moveSpeed = p.moveSpeed * BERSERKER_SPEED_MULT;
-        const hpFraction = p.hp / p.maxHp;
-        p.maxHp = Math.round(p.maxHp * BERSERKER_HP_MULT);
-        p.hp = Math.min(p.maxHp, Math.round(hpFraction * p.maxHp));
-        p.berserkerMs = devTuning().berserkerDurationMs;
-        slot.count -= 1;
-        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
-        this.sendInventory(client.sessionId);
-      }
+      useItemFromSlot(this.state, client.sessionId, msg.slot, this.useItemDeps());
     });
 
     // Chat: trim/clamp the line and re-broadcast it to everyone (sender included),
@@ -607,7 +522,9 @@ export class GameRoom extends Room<GameState> {
       if (this.state.timeScale > 0)
         perfTracker.span("separation", () => separationSystem(this.state)); // fan attackers out — no stacking on one tile
       perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
-      perfTracker.span("sacredCircleHeal", () => this.sacredCircleHealSystem(dt));
+      perfTracker.span("sacredCircleHeal", () =>
+        sacredCircleHealSystem(this.state, dt, this.healingTower, this.sacredHealCarry, emitHeal),
+      );
       perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
       runPluginSystems("main");
       this.releasePendingThrows(scaledMs);
@@ -717,32 +634,14 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private sacredCircleHealSystem(dt: number) {
-    if (dt <= 0 || !this.healingTower) return;
-    const radiusSq = SACRED_CIRCLE_RADIUS * SACRED_CIRCLE_RADIUS;
-    const emitHeal = (ev: HealEvent) => this.broadcast("heal", ev);
-    this.state.players.forEach((p, sid) => {
-      if (p.hp <= 0 || p.state === AnimState.DEAD || p.hp >= p.maxHp) return;
-      const dx = p.x - this.healingTower!.x;
-      const dz = p.z - this.healingTower!.z;
-      if (dx * dx + dz * dz > radiusSq) return;
-
-      const healPerSec =
-        SACRED_CIRCLE_HEAL_PER_SEC_MIN +
-        Math.random() * (SACRED_CIRCLE_HEAL_PER_SEC_MAX - SACRED_CIRCLE_HEAL_PER_SEC_MIN);
-      const healed = Math.min(p.maxHp - p.hp, healPerSec * dt);
-      if (healed <= 0) return;
-      p.hp += healed;
-
-      const carry = (this.sacredHealCarry.get(sid) ?? 0) + healed;
-      if (carry >= 1 || p.hp >= p.maxHp) {
-        const amount = Math.max(1, Math.floor(carry));
-        emitHeal({ targetId: sid, amount });
-        this.sacredHealCarry.set(sid, carry - amount);
-      } else {
-        this.sacredHealCarry.set(sid, carry);
-      }
-    });
+  /** The room capabilities item-use needs (also handed to the bot driver's IO). */
+  private useItemDeps(): UseItemDeps {
+    return {
+      inventories: this.inventories,
+      berserkerBase: this.berserkerBase,
+      sendInventory: (sid) => this.sendInventory(sid),
+      broadcast: (type, payload) => this.broadcast(type, payload),
+    };
   }
 
   /** Detect La Crypta collapsing (no standing house) and end the realm once. */
