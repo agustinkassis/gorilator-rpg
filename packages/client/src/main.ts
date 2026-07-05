@@ -1778,6 +1778,18 @@ async function start() {
         nostr: nostrPayload,
         scenario: scenarioName ?? undefined,
       });
+
+      // Runtime lab switch: joining an EXISTING room doesn't re-stage — if the
+      // server is running a different scenario than the URL asks for, request a
+      // room recycle (dev_scenario). Our onLeave reloads into the fresh lab.
+      if (scenarioName) {
+        void fetch(`${net.httpBase()}/api/status`)
+          .then((res) => res.json() as Promise<{ activeScenario?: string | null }>)
+          .then((status) => {
+            if ((status.activeScenario ?? null) !== scenarioName) net.switchScenario(scenarioName);
+          })
+          .catch(() => {}); // status probe is best-effort — a cold room staged us already
+      }
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : String(err);

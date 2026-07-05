@@ -22,6 +22,7 @@ import {
   type DevTimeMessage,
   type DevActionMessage,
   type DevBotMessage,
+  type DevScenarioMessage,
   type DevTuneMessage,
   type AdminWavesMessage,
   type AdminSpawnerMessage,
@@ -381,6 +382,26 @@ export class GameRoom extends Room<GameState> {
       if (!msg || !this.devSender(client)) return;
       this.handleDevAction(client, msg.action);
     });
+    // Runtime Feature Lab switch (test dashboard): select another scenario and
+    // RECYCLE the room — the fresh room's onCreate path stages the new lab
+    // (config, world, bots, loadout) exactly like a cold boot. Clients that
+    // asked for it reload with ?scenario= still in the URL and rejoin.
+    this.onMessage("dev_scenario", (client, msg: DevScenarioMessage) => {
+      if (!msg || !this.devSender(client)) return;
+      const name = msg.name === null ? null : String(msg.name);
+      if (name !== null && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name)) return;
+      const previous = activeScenarioName();
+      if (name === previous) return; // already staged — nothing to do
+      const manifest = setActiveScenario(name);
+      if (name && !manifest) {
+        setActiveScenario(previous); // unknown manifest — keep the current lab
+        client.send("dev_scenario_error", { name });
+        return;
+      }
+      console.log(`[room] scenario switch → ${name ?? "(none)"} — recycling the room`);
+      void this.disconnect(); // dispose; the next join creates a freshly staged room
+    });
+
     // Scripted-player control (#68): spawn/clear bot players live from Dev Mode.
     this.onMessage("dev_bot", (client, msg: DevBotMessage) => {
       if (!msg || !this.devSender(client)) return;

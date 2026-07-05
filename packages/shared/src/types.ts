@@ -363,6 +363,13 @@ export interface DevBotMessage {
   count?: number;
 }
 
+/** Dev-only: switch the room's Feature Lab scenario at runtime (null clears).
+ *  The server recycles the room; clients reconnect and the fresh room stages
+ *  the new lab through the normal onCreate path. */
+export interface DevScenarioMessage {
+  name: string | null;
+}
+
 /** Runtime-only dev tuning override for gameplay constants. */
 export interface DevTuneMessage {
   key: DevTuningKey;
@@ -414,6 +421,7 @@ export type ClientMessages = {
   dev_action: DevActionMessage;
   dev_tune: DevTuneMessage;
   dev_bot: DevBotMessage;
+  dev_scenario: DevScenarioMessage;
   admin_waves: AdminWavesMessage;
   admin_spawner: AdminSpawnerMessage;
   admin_kick: AdminKickMessage;
