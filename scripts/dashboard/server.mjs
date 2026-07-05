@@ -332,7 +332,7 @@ function lastRunFor(dir) {
   };
 }
 
-function startRun({ dir, command, argv, taskId, label }) {
+function startRun({ dir, command, argv, taskId, label, onExit }) {
   if (activeRunByDir.has(dir))
     return { error: "a run is already live in this worktree", code: 409 };
   const id = `run-${++runSeq}`;
@@ -373,6 +373,11 @@ function startRun({ dir, command, argv, taskId, label }) {
     run.exitCode = code ?? (signal ? 1 : 0);
     ring.push(`— exited ${run.exitCode}${signal ? ` (${signal})` : ""}`);
     if (activeRunByDir.get(dir) === id) activeRunByDir.delete(dir);
+    try {
+      onExit?.(run.exitCode, ring);
+    } catch (e) {
+      ring.push(`post-run hook failed: ${e.message}`);
+    }
     pruneRuns(dir);
   });
   child.on("error", (e) => {
@@ -550,6 +555,44 @@ function stopStack(dir) {
   escalate("SIGKILL", 10_000);
   stackLog(dir, "— stop requested");
   return { ok: true };
+}
+
+// ---------- worktree seeding (the dashboard → agent hand-off) ----------
+
+/** After `wt.mjs <name>` succeeds: drop the user's brief where the agent looks
+ *  first (.gorilator/brief.md, per the test-plan skill), seed an empty plan so
+ *  the lane appears immediately, and print the one command that connects a
+ *  Claude Code session to the new tree. */
+function seedWorktree(name, brief, ring) {
+  const dir = join(mainRoot, ".claude/worktrees", name);
+  if (!existsSync(dir)) {
+    ring.push(`(expected worktree at ${dir} but it isn't there — skipping seed)`);
+    return;
+  }
+  try {
+    mkdirSync(join(dir, ".gorilator"), { recursive: true });
+    if (brief) {
+      writeFileSync(
+        join(dir, ".gorilator/brief.md"),
+        `# Brief: ${name}\n\n${brief}\n\n> Written from the test-plan dashboard. Agent: author .gorilator/test-plan.json from this brief (one task per verifiable behavior), then implement.\n`,
+      );
+      ring.push("→ brief saved to .gorilator/brief.md");
+    }
+    if (!existsSync(join(dir, PLAN_REL))) {
+      writeFileSync(
+        join(dir, PLAN_REL),
+        `${JSON.stringify({ v: 1, feature: name, updatedAt: new Date().toISOString(), tasks: [] }, null, 2)}\n`,
+      );
+    }
+    ring.push("");
+    ring.push("→ worktree ready. Connect the agent:");
+    ring.push(
+      `→   cd ${dir} && claude${brief ? ' "Read .gorilator/brief.md and take it from there"' : ""}`,
+    );
+    ring.push("→ its lane is already on the board — cards appear as the agent authors the plan");
+  } catch (e) {
+    ring.push(`seed failed: ${e.message}`);
+  }
 }
 
 // ---------- file serving (docs / presentations) ----------
@@ -746,6 +789,7 @@ async function handle(req, res) {
     const body = JSON.parse((await collectBody(req)).toString("utf8") || "{}");
     const name = String(body.name ?? "");
     if (!/^[a-z0-9][a-z0-9-_]*$/i.test(name)) return fail(res, 400, "bad worktree name");
+    const brief = typeof body.brief === "string" ? body.brief.trim().slice(0, 8000) : "";
     // Runs through the run manager (streams the pnpm-install output). The argv
     // is server-constructed — not user text — so it bypasses the plan allowlist.
     const started = startRun({
@@ -753,6 +797,10 @@ async function handle(req, res) {
       command: `node scripts/wt.mjs ${name}`,
       argv: ["node", "scripts/wt.mjs", name],
       label: `new worktree ${name}`,
+      onExit: (code, ring) => {
+        if (code !== 0) return;
+        seedWorktree(name, brief, ring);
+      },
     });
     return started.error ? fail(res, started.code ?? 500, started.error) : sendJson(res, started);
   }

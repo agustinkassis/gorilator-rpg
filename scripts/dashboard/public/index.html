@@ -37,6 +37,27 @@
 
   <footer id="dock" hidden></footer>
 
+  <dialog id="taskDialog">
+    <div id="taskDialogHead">
+      <b id="taskDialogTitle">task</b>
+      <button id="taskClose" title="close">×</button>
+    </div>
+    <div id="taskDialogBody"></div>
+  </dialog>
+
+  <dialog id="wtDialog">
+    <form id="wtForm">
+      <h3>New worktree</h3>
+      <p>Creates <code>.claude/worktrees/&lt;name&gt;</code> with its own ports + deps (streams in the log panel). The brief is handed to the agent you connect there.</p>
+      <input id="wtName" placeholder="feature-name (a-z, 0-9, -, _)" autocomplete="off" />
+      <textarea id="wtBrief" rows="6" placeholder="Optional brief for the agent: what to build, constraints, what the result should look like…"></textarea>
+      <menu>
+        <button type="button" id="wtCancel">Cancel</button>
+        <button type="button" id="wtOk">Create worktree</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="noteDialog">
     <form method="dialog" id="noteForm">
       <h3 id="noteTitle">Reject task</h3>

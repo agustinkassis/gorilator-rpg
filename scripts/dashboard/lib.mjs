@@ -93,6 +93,7 @@ export function normalizePlan(raw) {
       kind,
       status,
       details: typeof t.details === "string" ? t.details : undefined,
+      expected: typeof t.expected === "string" ? t.expected : undefined,
       test,
       verdict: t.verdict && typeof t.verdict === "object" ? t.verdict : undefined,
       verdictHistory: Array.isArray(t.verdictHistory) ? t.verdictHistory : [],

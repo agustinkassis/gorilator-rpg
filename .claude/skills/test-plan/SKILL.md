@@ -25,6 +25,7 @@ gitignored) — never commit it.
       "kind": "feature | bugfix | optimization | docs",
       "status": "planned | in_progress | ready | verified | rejected",
       "details": "one short paragraph of what changed / what to look at",
+      "expected": "what the tester should SEE when it works — the pass criterion",
       "test": {
         "type": "scenario | cli | doc | manual",
         "scenario": "quests",
@@ -49,8 +50,9 @@ name (Test button boots/converges the lab and opens `?scenario=`), `cli` →
 ## Rules
 
 1. **Author the plan BEFORE coding** — one task per independently verifiable
-   behavior, each with a concrete `test` block. This is the feature's public
-   contract with the human.
+   behavior, each with a concrete `test` block AND an `expected` line (the
+   human clicks a card to read details/expected/how-to-test — write for them).
+   This is the feature's public contract with the human.
 2. **Keep `status` truthful the moment it changes** — flip to `in_progress`
    when you start, back off if you park it. The human is watching live.
 3. **`ready` only after the task's own test passed for you** — a `cli` task's
@@ -65,3 +67,6 @@ name (Test button boots/converges the lab and opens `?scenario=`), `cli` →
    update `updatedAt` on each write.
 7. **At session start, check for `rejected` tasks first** — a rejection note is
    direct human feedback awaiting you.
+8. **If `.gorilator/brief.md` exists and the plan has no tasks**, the human
+   created this worktree from the dashboard with that brief as the spec —
+   author the plan from it, then start implementing.

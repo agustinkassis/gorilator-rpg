@@ -8,14 +8,26 @@ agent half is `.claude/skills/test-plan/SKILL.md`.
 
 ## The pipeline
 
-1. **Start worktrees** — `pnpm wt <name>` per parallel feature (or the board's
-   *＋ New worktree* button, which streams the setup output).
+1. **Start worktrees** — the board's *＋ New worktree* button (or
+   `pnpm wt <name>`). The dialog takes an optional **brief** — what to build,
+   constraints, expected outcome. Setup streams in the log panel; on success
+   the brief lands in `<worktree>/.gorilator/brief.md`, an empty plan is
+   seeded (the lane appears immediately), and the log prints the one command
+   that connects an agent:
+   `cd .claude/worktrees/<name> && claude "Read .gorilator/brief.md and take it from there"`.
+   The dashboard never spawns Claude Code itself — an interactive session
+   needs your terminal for auth and permission approvals — but everything is
+   staged so connecting is a single command.
 2. **The agent authors a plan** before coding:
    `<worktree>/.gorilator/test-plan.json` — one task per verifiable behavior,
-   each with a `test` block. The file is local-only (gitignored).
+   each with a `test` block and an `expected` pass criterion (the test-plan
+   skill makes the agent pick up `brief.md` automatically at session start).
+   The file is local-only (gitignored).
 3. **Statuses update live** — the board polls every 2s; cards move
    Planned → In progress → Ready to test as the agent works.
-4. **You test with one click** — per `test.type` the Test button:
+4. **You test with one click** — click any card for the full picture (what
+   changed, the expected result, how to test, verdict history); per
+   `test.type` the Test button:
    - `scenario` → boots the worktree's dev stack into that Feature Lab
      (or opens `?scenario=` against a running one; the game's `dev_scenario`
      switch recycles a mismatched live room),

@@ -204,6 +204,15 @@ body {
   padding: 10px 12px;
   margin-bottom: 10px;
 }
+.card[data-action="task-open"] {
+  cursor: pointer;
+}
+.card[data-action="task-open"]:hover {
+  border-color: var(--gold);
+}
+.card[data-action="task-open"]:hover h3 {
+  color: var(--gold-soft);
+}
 .card.rejected {
   border-color: var(--red-dim);
 }
@@ -453,12 +462,123 @@ dialog textarea {
     sans-serif;
   resize: vertical;
 }
+dialog input {
+  width: 100%;
+  background: #10231a;
+  color: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  font: 12.5px var(--mono);
+  margin-bottom: 8px;
+}
 dialog menu {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding: 0;
   margin: 12px 0 0;
+}
+
+/* ---------- task detail dialog ---------- */
+#taskDialog {
+  width: min(600px, 94vw);
+  max-height: 84vh;
+  overflow: auto;
+  padding: 0;
+}
+#taskDialogHead {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+#taskDialogHead b {
+  color: var(--gold-soft);
+  font-size: 15px;
+}
+#taskClose {
+  background: var(--panel2);
+  color: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+#taskDialogBody {
+  padding: 12px 16px 16px;
+}
+.tdMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.tdStatus {
+  font: 700 10px var(--mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 2px 8px;
+  color: var(--lite);
+}
+.tdStatus.ready {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+.tdStatus.verified {
+  color: var(--green);
+  border-color: #6b9a6f;
+}
+.tdStatus.rejected {
+  color: var(--red);
+  border-color: var(--red-dim);
+}
+.tdSection {
+  margin: 12px 0;
+}
+.tdSection h4 {
+  margin: 0 0 4px;
+  font: 700 10px var(--mono);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.tdSection p,
+.tdSection ol {
+  margin: 0;
+  color: var(--lite);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.tdSection ol {
+  padding-left: 20px;
+}
+.tdSection code {
+  font: 11.5px var(--mono);
+  background: #10231a;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  display: inline-block;
+}
+.tdHist {
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--lite);
+}
+.tdHist .when {
+  font: 10px var(--mono);
+  color: var(--muted);
 }
 dialog button {
   border-radius: 7px;

@@ -141,7 +141,7 @@ function card(wt, task) {
       : task.test?.type === "cli"
         ? `<div class="testHint">${esc(task.test.command ?? "")}</div>`
         : "";
-  return `<div class="card ${rejected ? "rejected" : ""}">
+  return `<div class="card ${rejected ? "rejected" : ""}" data-action="task-open" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" title="click for details — what changed, expected result, how to test">
     <div class="cardTop">
       <span class="wtTag" style="${tagStyle(wt.dir)}">${esc(wt.name)}</span>
       <span class="kind" title="${esc(task.kind)}">${KIND_ICON[task.kind] ?? "✨"}</span>
@@ -152,6 +152,62 @@ function card(wt, task) {
     <div class="cardBtns">${task.status === "ready" || rejected ? testButton(wt, task) : ""}${verdictBtns}</div>
     ${run}${hint}
   </div>`;
+}
+
+// ---------- task detail dialog ----------
+
+function howToTest(wt, task) {
+  const t = task.test;
+  if (!t) return "<p>no test block — ask the agent to add one</p>";
+  const steps = t.steps?.length
+    ? `<ol>${t.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`
+    : "";
+  if (t.type === "scenario")
+    return `<p>Feature Lab scenario — the Test button boots this worktree's stack into it (or opens the link on a running one):</p>
+      <p><code>${esc(wt.stack.clientUrl)}?scenario=${esc(t.scenario ?? "")}</code></p>${steps}`;
+  if (t.type === "cli")
+    return `<p>Allowlisted command — the Test button runs it here and streams the output:</p><p><code>${esc(t.command ?? "")}</code></p>${steps}`;
+  if (t.type === "doc")
+    return `<p>Opens straight from the worktree:</p><p><code>${esc(t.path ?? "")}</code></p>${steps}`;
+  return steps || "<p>follow the steps on the card</p>";
+}
+
+function openTaskDialog(dir, taskId) {
+  const wt = state?.worktrees.find((w) => w.dir === dir);
+  const task = wt?.plan?.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  const history = [...(task.verdictHistory ?? []), ...(task.verdict ? [task.verdict] : [])];
+  const histHtml = history.length
+    ? history
+        .map(
+          (v) =>
+            `<div class="tdHist">${v.result === "verified" ? "✓" : "✗"} <b>${esc(v.result)}</b>${
+              v.note ? ` — ${esc(v.note)}` : ""
+            } <span class="when">${esc((v.at ?? "").replace("T", " ").slice(0, 16))}</span></div>`,
+        )
+        .join("")
+    : "";
+  $("#taskDialogTitle").textContent = task.title;
+  $("#taskDialogBody").innerHTML = `
+    <div class="tdMeta">
+      <span class="wtTag" style="${tagStyle(wt.dir)}">${esc(wt.name)}</span>
+      <span class="kind">${KIND_ICON[task.kind] ?? "✨"} ${esc(task.kind)}</span>
+      <span class="tdStatus ${esc(task.status)}">${esc(task.status.replace("_", " "))}</span>
+    </div>
+    ${task.details ? `<div class="tdSection"><h4>What changed</h4><p>${esc(task.details)}</p></div>` : ""}
+    ${task.expected ? `<div class="tdSection"><h4>Expected result</h4><p>${esc(task.expected)}</p></div>` : ""}
+    <div class="tdSection"><h4>How to test</h4>${howToTest(wt, task)}</div>
+    ${histHtml ? `<div class="tdSection"><h4>Verdict history</h4>${histHtml}</div>` : ""}
+    <div class="cardBtns">
+      ${task.status === "ready" || task.status === "rejected" ? testButton(wt, task) : ""}
+      ${
+        task.status === "ready"
+          ? `<button class="verify" data-action="verdict" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" data-result="verified">✓ Verify</button>
+             <button class="reject" data-action="verdict" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" data-result="rejected">✗ Reject</button>`
+          : ""
+      }
+    </div>`;
+  $("#taskDialog").showModal();
 }
 
 function renderBoard() {
@@ -325,8 +381,14 @@ async function pollDrawer() {
 
 async function onAction(el) {
   const { action, dir, task, scenario, result, path, run } = el.dataset;
+  // Acting from inside the task dialog: close it so the drawer/game/toast is visible.
+  if ($("#taskDialog").open && action !== "task-open" && action !== "verdict") {
+    $("#taskDialog").close();
+  }
   try {
-    if (action === "lane-toggle") {
+    if (action === "task-open") {
+      openTaskDialog(dir, task);
+    } else if (action === "lane-toggle") {
       if (hiddenLanes.has(dir)) hiddenLanes.delete(dir);
       else hiddenLanes.add(dir);
       localStorage.setItem("dash.hiddenLanes", JSON.stringify([...hiddenLanes]));
@@ -382,6 +444,7 @@ async function onAction(el) {
         await api("/api/task/verdict", { dir, taskId: task, result: "rejected", note });
         toast("✗ rejected — the agent will see your note");
       }
+      if ($("#taskDialog").open) $("#taskDialog").close();
       lastHash = "";
       refresh();
     }
@@ -435,15 +498,37 @@ $("#drawerKill").addEventListener("click", async () => {
     toast(String(err.message ?? err), 6000);
   }
 });
-$("#newWorktree").addEventListener("click", async () => {
-  const name = prompt("New worktree name (a-z, 0-9, -, _):");
-  if (!name) return;
+// New-worktree dialog (button-driven, like askNote — the dialog "close" event
+// is unreliable in embedded browsers).
+$("#newWorktree").addEventListener("click", () => {
+  $("#wtName").value = "";
+  $("#wtBrief").value = "";
+  $("#wtDialog").showModal();
+  $("#wtName").focus();
+});
+$("#wtCancel").addEventListener("click", () => $("#wtDialog").close());
+$("#wtForm").addEventListener("submit", (e) => {
+  e.preventDefault(); // Enter in the name field = Create, never a page reload
+  $("#wtOk").click();
+});
+$("#wtOk").addEventListener("click", async () => {
+  const name = $("#wtName").value.trim();
+  if (!/^[a-z0-9][a-z0-9-_]*$/i.test(name)) return toast("worktree name: a-z, 0-9, -, _", 4000);
+  const brief = $("#wtBrief").value.trim();
   try {
-    const started = await api("/api/worktree/create", { name });
+    const started = await api("/api/worktree/create", { name, brief });
+    $("#wtDialog").close();
     openDrawer("run", started.id, `creating worktree ${name}…`);
+    toast("creating the worktree — the connect command prints at the end of the log");
   } catch (err) {
     toast(String(err.message ?? err), 6000);
   }
+});
+
+// task detail dialog chrome
+$("#taskClose").addEventListener("click", () => $("#taskDialog").close());
+$("#taskDialog").addEventListener("click", (e) => {
+  if (e.target === $("#taskDialog")) $("#taskDialog").close(); // backdrop click
 });
 refresh();
 setInterval(refresh, 2000);

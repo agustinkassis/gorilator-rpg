@@ -63,6 +63,7 @@ describe("normalizePlan", () => {
             title: "Accept a quest",
             kind: "feature",
             status: "ready",
+            expected: "the quest appears in the journal",
             test: { type: "scenario", scenario: "quests" },
           },
         ],
@@ -74,6 +75,7 @@ describe("normalizePlan", () => {
     expect(plan.tasks[0]).toMatchObject({
       id: "accept",
       status: "ready",
+      expected: "the quest appears in the journal",
       test: { type: "scenario", scenario: "quests" },
     });
   });
