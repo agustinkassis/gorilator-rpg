@@ -1,10 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+// Default: <root>/.gorilator/dev-state.json (gitignored) — the RESOLVED ports
+// + pid, so tools like the test dashboard can discover a running stack even
+// when findFreePort shifted off the requested ports. Env overrides the path.
+const gorilatorStateFile =
+  process.env.GORILATOR_STATE_FILE ?? join(root, ".gorilator", "dev-state.json");
 const DEFAULT_CLIENT_PORT = 5173;
 const DEFAULT_SERVER_PORT = 2567;
 const cliArgs = process.argv.slice(2);
@@ -181,13 +186,23 @@ function stopChildren() {
   }
 }
 
+function clearGorilatorState() {
+  try {
+    unlinkSync(gorilatorStateFile);
+  } catch {
+    /* already gone */
+  }
+}
+
 process.on("SIGINT", () => {
   shuttingDown = true;
+  clearGorilatorState();
   stopChildren();
 });
 
 process.on("SIGTERM", () => {
   shuttingDown = true;
+  clearGorilatorState();
   stopChildren();
 });
 
@@ -221,7 +236,7 @@ start("server", colors.blue, ["--filter", "@rpg/server", "dev"]);
 start("client", colors.green, ["--filter", "@rpg/client", "dev"]);
 
 function writeGorilatorState(state) {
-  const file = process.env.GORILATOR_STATE_FILE;
+  const file = gorilatorStateFile;
   if (!file) return;
   try {
     mkdirSync(dirname(file), { recursive: true });
