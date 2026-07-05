@@ -63,6 +63,7 @@ All `public/*.json` manifests live-reload on the server (watchFile) — no resta
 - `pnpm bootstrap` — clone-to-running setup (install, .env, ports, warm cache). Then `pnpm dev`.
 - `pnpm scenario <name>` — boot the dev stack staged by `scenarios/<name>.json`; hand the user the printed `?scenario=` link (auto-joins; Dev Mode pins the manifest's tweak knobs).
 - `pnpm dev` — game stack. Per-worktree ports: `.claude/launch.json` (regen: `pnpm wt:launch`).
+- `pnpm dashboard` (main tree) — global kanban test board across all worktrees at :7300; the agent maintains `<worktree>/.gorilator/test-plan.json` (see `.claude/skills/test-plan/SKILL.md`, docs: `docs/test-dashboard.md`).
 - `pnpm wt <name>` / `pnpm wt rm <name>` / `pnpm wt list` — parallel worktrees with collision-free ports (manifest: `.claude/worktrees-manifest.json` in the main tree).
 - `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm e2e` · `pnpm bench` — the verification ladder; run typecheck+test before a PR, `pnpm version:check` too.
 - Verify in-browser via DOM/network/`window.__perf` evals — never canvas screenshots (see `docs/TESTING.md`).
@@ -74,5 +75,5 @@ All `public/*.json` manifests live-reload on the server (watchFile) — no resta
 
 ## Agent helpers
 
-- Skills live in `.claude/skills/` (dev-up, add-entity, add-system, add-plugin, **feature-dev** — the issue→scenario→bot-test→playable-link pipeline, run-tests, bench, release, merge-target, perf-triage); subagents in `.claude/agents/`; cached deep references in `.claude/context/` — read those fragments lazily, only when the task touches that area.
+- Skills live in `.claude/skills/` (dev-up, add-entity, add-system, add-plugin, **feature-dev** — the issue→scenario→bot-test→playable-link pipeline, **test-plan** — the dashboard's per-worktree task file, run-tests, bench, release, merge-target, perf-triage); subagents in `.claude/agents/`; cached deep references in `.claude/context/` — read those fragments lazily, only when the task touches that area.
 - Parallel worktree fan-out: only for independent, non-overlapping work (e.g. content JSON in one tree, a server system in another). Never edit the shared schema in two trees at once — every shared change forces a rebuild for all.
