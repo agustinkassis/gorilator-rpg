@@ -273,7 +273,102 @@ export type DevTuningKey =
   | "enemyMoveSpeed"
   | "berserkerAttackMult"
   | "berserkerDurationMs"
-  | "dropRateMult";
+  | "dropRateMult"
+  | "difficultySizeScale"
+  | "difficultyLevelScale"
+  | "difficultyLevelCap";
+
+// ---- Feature Lab: scenario manifests + bot driver (docs/feature-lab.md) ----
+
+/** A scripted simulated player staged by a scenario (bots[] block). */
+export interface ScenarioBotSpec {
+  behavior: string; // a registered bot behavior id (BUILTIN_BOT_BEHAVIORS + plugins)
+  count?: number; // default 1
+  name?: string;
+  position?: { x: number; z: number };
+  loadout?: { item: string; count?: number }[];
+  stats?: {
+    level?: number;
+    hp?: number;
+    maxHp?: number;
+    attack?: number;
+    armor?: number;
+    moveSpeed?: number;
+  };
+}
+
+/** Player stat fields a scenario may pin (whitelisted server-side). */
+export type ScenarioPlayerStat =
+  | "level"
+  | "xp"
+  | "hp"
+  | "maxHp"
+  | "stamina"
+  | "maxStamina"
+  | "attack"
+  | "armor"
+  | "critChance"
+  | "moveSpeed"
+  | "throwPower"
+  | "mana"
+  | "maxMana"
+  | "hunger"
+  | "maxHunger";
+
+/** scenarios/<feature>.json — an isolated test map staging ONE feature.
+ *  Layered over realm.json/DevTuning at boot; last write wins. */
+export interface ScenarioManifest {
+  name: string;
+  description?: string;
+  /** Pins the realm-cycle RNG seed → fully reproducible runs. */
+  seed?: number;
+  world?: {
+    /** "tree" | "rock" staged at exact spots (v1). */
+    resources?: { type: string; x: number; z: number }[];
+    /** Ambient characters (kind "npc", model = defId). */
+    npcs?: { defId: string; x: number; z: number; brain?: string; level?: number }[];
+    /** Pickups scattered on the ground. */
+    groundItems?: { item: string; x: number; z: number; count?: number }[];
+    /** Staged hostiles (kind "goblin"/"dummy"/a character defId). */
+    enemies?: { kind: string; x: number; z: number; level?: number; brain?: string }[];
+    /** Client-side prop overlay (not server-staged in v1). */
+    props?: unknown[];
+  };
+  player?: {
+    loadout?: { item: string; count?: number }[];
+    stats?: Partial<Record<ScenarioPlayerStat, number>>;
+    position?: { x: number; z: number };
+  };
+  /** System toggles; "events" (the realm event module) is understood today. */
+  systems?: Record<string, boolean>;
+  /** Any DevTuningKey — the scenario's declared tweak knobs. */
+  tuning?: Partial<Record<DevTuningKey, number>>;
+  /** 0..TIME_SCALE_MAX (accelerated simulation). */
+  timeScale?: number;
+  bots?: ScenarioBotSpec[];
+}
+
+/** Server → client on join when a scenario is active (drives the Dev Mode
+ *  "Scenario tweaks" pinned section). Inventory-message pattern — no schema. */
+export interface ScenarioInfoMessage {
+  name: string;
+  description?: string;
+  tuning: Partial<Record<DevTuningKey, number>>;
+}
+
+/** Dev-only bot control (spawn/clear scripted players). */
+export interface DevBotMessage {
+  op: "spawn" | "clear";
+  behavior?: string;
+  count?: number;
+}
+
+/** Dev-only: switch the room's Feature Lab scenario at runtime (null clears).
+ *  The server recycles the room; clients reconnect and the fresh room stages
+ *  the new lab through the normal onCreate path. */
+export interface DevScenarioMessage {
+  name: string | null;
+}
 
 /** Runtime-only dev tuning override for gameplay constants. */
 export interface DevTuneMessage {
@@ -300,6 +395,12 @@ export interface AdminSpawnerMessage {
   enabled: boolean;
 }
 
+/** Admin-only (big map → player list): kick a player or scripted bot out of the
+ *  realm. Same ADMIN_NPUBS gate as AdminWavesMessage. */
+export interface AdminKickMessage {
+  playerId: string;
+}
+
 export type ClientMessages = {
   move: MoveMessage;
   attack: AttackMessage;
@@ -319,8 +420,11 @@ export type ClientMessages = {
   dev_time: DevTimeMessage;
   dev_action: DevActionMessage;
   dev_tune: DevTuneMessage;
+  dev_bot: DevBotMessage;
+  dev_scenario: DevScenarioMessage;
   admin_waves: AdminWavesMessage;
   admin_spawner: AdminSpawnerMessage;
+  admin_kick: AdminKickMessage;
 };
 
 // Server -> client: emitted every time a hit lands, so clients can pop a

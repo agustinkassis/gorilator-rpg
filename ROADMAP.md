@@ -18,8 +18,8 @@ The phased plan from tower-defense brawler to **open Nostr MMORPG sandbox**
 | --- | --- | --- |
 | 1 | Vision & reframe | ✅ done (this PR) |
 | 2 | Persistence first | 🔨 in progress |
-| 2.5 | Feature Lab | next |
-| 3 | Modular game loops + RPG combat core | planned |
+| 2.5 | Feature Lab | ✅ done (#64–#70) |
+| 3 | Modular game loops + RPG combat core | 🔨 foundation done (#71–#73); features next |
 | 4 | Collaborative creation | planned |
 | 5 | Federation | planned |
 | 6 | Social + economy | sketch |
@@ -52,10 +52,12 @@ Known follow-up: wave difficulty scales with player level, so persistent
 veterans make fresh waves harder — tuning knobs are the relief valve until
 Phase 3 event-module difficulty config.
 
-## Phase 2.5 — Feature Lab
+## Phase 2.5 — Feature Lab ✅
 
 Built **before** Phase 3 — every later feature's Definition of Done depends on
-it. Full design: [docs/feature-lab.md](docs/feature-lab.md).
+it. Shipped: scenario manifest+loader (#65), runner (#66), timeScale audit
+(#67), bot driver + headless harness (#68), Scenario-tweaks panel + feature-dev
+skill (#69), seeded RNG (#70). As-built doc: [docs/feature-lab.md](docs/feature-lab.md).
 
 | Workstream | Size | Notes |
 | --- | --- | --- |
@@ -68,8 +70,10 @@ it. Full design: [docs/feature-lab.md](docs/feature-lab.md).
 
 ## Phase 3 — Modular game loops + RPG combat core
 
-Every workstream ships with its scenario + bot self-test per the Feature Lab
-DoD. Design detail per system: [docs/game-design.md](docs/game-design.md).
+Foundation shipped: plugin API 1.1 (#71), the one batched schema change (#72),
+the la-crypta-defense extraction (#73) and per-event difficulty (#64). Every
+remaining workstream ships with its scenario + bot self-test per the Feature
+Lab DoD. Design detail per system: [docs/game-design.md](docs/game-design.md).
 
 | Workstream | Size | Notes |
 | --- | --- | --- |

@@ -64,28 +64,48 @@ The rules that already hold, written down so they keep holding:
   manifest + bot self-test + tweak knobs + docs ([feature-lab.md](feature-lab.md)).
   No exceptions for "small" features — small features are where regressions hide.
 
-## 3. Deterministic simulation direction
+## 3. Deterministic simulation (implemented)
 
-Today gameplay rolls scattered `Math.random()` calls (combat crits, drop
-tables, spawn jitter, goblin AI). That's fine for play, useless for
-verification: a bot self-test that fails one run in twenty is noise, not
-signal.
+Gameplay rolls go through the **seeded PRNG service** in
+`packages/server/src/systems/rng.ts` — never `Math.random()` (a source-grep
+guard in `rng.test.ts` enforces this; `rng.ts` itself is the only sanctioned
+caller, to mint fresh seeds).
 
-The direction: a **seeded PRNG service** —
-
-- one seed per **realm cycle**, logged at cycle start and stored with the
-  realm record;
-- injected into systems instead of imported ambiently, so tests and scenarios
-  can pass a fixed seed;
-- separate streams per concern (combat / drops / spawns) so adding a roll in
-  one system doesn't shift every other system's sequence.
+- **One seed per realm cycle**, resolved by priority: scenario manifest
+  `seed` → `GORILATOR_SEED` env → random. Logged at cycle start
+  (`[rng] realm cycle seed = …`) and exposed at `/api/status` (`cycleSeed`).
+- **Injected, not ambient**: the service is keyed by the `GameState` object
+  (WeakMap — same pattern as the wave clock), so pure `(state, dt)` system
+  signatures stay unchanged: `rng(state, "drops")()`.
+- **Independent streams per concern** — `combat`, `drops`, `spawns`, `ai`,
+  `world`, `bots`, `misc` — so adding a roll in one system never shifts
+  another system's sequence.
+- **Tests** pin rolls with `installFixedRng(state, 0.5)` instead of spying on
+  `Math.random` (see combat.test.ts / waves.characterization.test.ts).
 
 Payoff: **reproducible bot self-tests, replays, and bench runs** — the same
 scenario + seed produces the same outcome, every time, which is what makes the
 Feature Lab's bot assertions trustworthy ([feature-lab.md](feature-lab.md)).
 
-Sized **M**; lands with Feature Lab (Phase 2.5) or immediately after — before
-the Phase 3 systems multiply the call sites.
+### timeScale audit (#67)
+
+Every gameplay timer runs on the **scaled** tick delta the GameRoom tick hands
+it (`dt = deltaMs · state.timeScale / 1000`, cap `TIME_SCALE_MAX = 16`), so
+accelerated simulation works end-to-end. `timeScale.test.ts` pins equivalence
+(N ticks at 1× ≡ N/2 ticks at 2×; 0× freezes).
+
+| Clock | Scaled? | Why |
+| --- | --- | --- |
+| All `(state, dt)` systems (movement, combat, waves, spawners, regrow, hunger-to-be…) | ✅ | receive scaled `dt` |
+| House regen, pending throws, berserker buff timer | ✅ | receive `scaledMs` |
+| Sacred-circle heal | ✅ | `healPerSec · dt` |
+| Game-over intermission (`state.restartTimerMs`) | ❌ by design | the "next realm in N" countdown is wall-clock for players |
+| Dev Mode ghost movement while paused | ❌ by design | the editor roams in real time while the world is frozen |
+| Perf tracker, content `watchFile` reloads, Nostr challenge expiry, realm-tracker timestamps | ❌ by design | infrastructure, not gameplay |
+
+Above 16× a 20Hz tick's dt exceeds ~800ms and fast movers can tunnel through
+collision — sub-stepping the tick is the documented follow-up before raising
+`TIME_SCALE_MAX`.
 
 ## 4. Rename / refactor map (de-tower-defensing the core)
 

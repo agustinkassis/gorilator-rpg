@@ -38,6 +38,7 @@ import {
 import { grantXp, killXp, applyDeathXpPenalty, type EmitXp } from "./leveling";
 import { spawnBanana } from "./bananas";
 import { devTuning } from "./devTuning";
+import { rng } from "./rng";
 import { destroyPropObstacle } from "./props";
 import { serverPluginHost } from "./plugins/host";
 
@@ -60,14 +61,16 @@ export type RepairInventory = {
  * the target's armor (diminishing returns), with a chance to crit.
  */
 function rollDamage(
+  state: GameState,
   attacker: Player,
   target: Damageable,
 ): { amount: number; crit: boolean } {
-  const variance = 1 + (Math.random() * 2 - 1) * ATTACK_VARIANCE;
+  const roll = rng(state, "combat");
+  const variance = 1 + (roll() * 2 - 1) * ATTACK_VARIANCE;
   const raw = attacker.attack * variance;
   const mitigation = target.armor / (target.armor + ARMOR_K);
   let dmg = raw * (1 - mitigation);
-  const crit = Math.random() < attacker.critChance;
+  const crit = roll() < attacker.critChance;
   if (crit) {
     // Per-player multiplier (set by berserker buff); fall back to global constant.
     const critMult = attacker.critMultiplier > 0 ? attacker.critMultiplier : CRIT_MULTIPLIER;
@@ -180,7 +183,7 @@ export function combatSystem(
 
       case AnimState.DEAD:
         p.respawnTimer -= dtMs;
-        if (p.respawnTimer <= 0) respawnPlayer(p);
+        if (p.respawnTimer <= 0) respawnPlayer(state, p);
         return;
     }
 
@@ -245,7 +248,9 @@ function connectHit(
   if (target instanceof House) {
     if (target.hp >= target.maxHp) return;
     if (!repairInventory?.consumeWood(attacker.id)) return;
-    const roll = HOUSE_REPAIR_MIN_HP + Math.floor(Math.random() * (HOUSE_REPAIR_MAX_HP - HOUSE_REPAIR_MIN_HP + 1));
+    const roll =
+      HOUSE_REPAIR_MIN_HP +
+      Math.floor(rng(state, "combat")() * (HOUSE_REPAIR_MAX_HP - HOUSE_REPAIR_MIN_HP + 1));
     const amount = Math.min(roll, target.maxHp - target.hp);
     if (amount <= 0) return;
     target.hp += amount;
@@ -253,7 +258,7 @@ function connectHit(
     return;
   }
 
-  const { amount, crit } = rollDamage(attacker, target);
+  const { amount, crit } = rollDamage(state, attacker, target);
   target.hp = Math.max(0, target.hp - amount);
   emitDamage({ targetId, amount, crit });
 
@@ -261,7 +266,8 @@ function connectHit(
   const tree = state.trees.get(targetId);
   if (tree) {
     // every chop has a chance to shake a banana loose
-    if (Math.random() < TREE_BANANA_DROP_CHANCE * devTuning().dropRateMult) spawnBanana(state, tree.x, tree.z);
+    if (rng(state, "drops")() < TREE_BANANA_DROP_CHANCE * devTuning().dropRateMult)
+      spawnBanana(state, tree.x, tree.z);
     onTreeDamaged(state, tree, amount); // progressive-drop trees shed as they're chopped
     if (tree.hp <= 0) {
       onTreeCut(state, tree); // kill-drop trees yield their full amount here
@@ -363,10 +369,11 @@ function applyKnockback(target: Player | Enemy, fromX: number, fromZ: number) {
   }
 }
 
-function respawnPlayer(p: Player) {
+function respawnPlayer(state: GameState, p: Player) {
   p.hp = p.maxHp; // full heal, keeping any maxHp gained from leveling up
-  const angle = Math.random() * Math.PI * 2;
-  const r = 12 + Math.random() * 4; // spawn clear of the centre-cross goblin's reach
+  const roll = rng(state, "spawns");
+  const angle = roll() * Math.PI * 2;
+  const r = 12 + roll() * 4; // spawn clear of the centre-cross goblin's reach
   placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
   p.state = AnimState.IDLE;
   p.attackTargetId = "";
