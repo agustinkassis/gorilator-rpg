@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gorilator — Test Plan Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦍</text></svg>" />
+</head>
+<body>
+  <header id="topbar">
+    <div id="brand">
+      <span id="brandIcon">🦍</span>
+      <div>
+        <h1>Test Plan Dashboard</h1>
+        <div id="brandSub">gorilator · every worktree, one board</div>
+      </div>
+    </div>
+    <div id="lanes"></div>
+    <button id="newWorktree" title="pnpm wt <name> — creates the worktree + branch and installs deps">＋ New worktree</button>
+  </header>
+
+  <main id="board" aria-live="polite"></main>
+
+  <aside id="drawer" hidden>
+    <div id="drawerHead">
+      <b id="drawerTitle">log</b>
+      <div>
+        <button id="drawerKill" hidden>■ stop</button>
+        <button id="drawerClose">×</button>
+      </div>
+    </div>
+    <pre id="drawerLog"></pre>
+  </aside>
+
+  <dialog id="noteDialog">
+    <form method="dialog" id="noteForm">
+      <h3 id="noteTitle">Reject task</h3>
+      <p id="noteHint">Tell the agent what was wrong — this note lands in the plan file it reads.</p>
+      <textarea id="noteText" rows="4" placeholder="e.g. the bot walks through the wall near the house…"></textarea>
+      <menu>
+        <button value="cancel" id="noteCancel">Cancel</button>
+        <button value="ok" id="noteOk">✗ Reject</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -4,10 +4,11 @@ import {
   applyVerdict,
   matchAllowlist,
   normalizePlan,
-  reconcileWorktrees,
   RingBuffer,
+  reconcileWorktrees,
   safeJoin,
   splitLines,
+  stripAnsi,
 } from "./lib.mjs";
 
 describe("matchAllowlist", () => {
@@ -127,7 +128,12 @@ describe("applyStatus / applyVerdict", () => {
     applyVerdict(plan, "t1", "rejected", "the bot walks through walls", "T1");
     expect(plan.tasks[0]).toMatchObject({
       status: "rejected",
-      verdict: { result: "rejected", note: "the bot walks through walls", at: "T1", by: "dashboard" },
+      verdict: {
+        result: "rejected",
+        note: "the bot walks through walls",
+        at: "T1",
+        by: "dashboard",
+      },
     });
 
     // agent reworks: status back to ready (simulating the skill flow)
@@ -195,6 +201,17 @@ describe("splitLines", () => {
     splitter.push("ld\r\ntail");
     splitter.flush();
     expect(out).toEqual(["hello", "world", "tail"]);
+  });
+
+  it("strips ANSI color sequences from streamed chunks", () => {
+    const esc = String.fromCharCode(27);
+    expect(stripAnsi(`${esc}[1m${esc}[32m13 passed${esc}[39m${esc}[22m plain`)).toBe(
+      "13 passed plain",
+    );
+    const out = [];
+    const splitter = splitLines((l) => out.push(l));
+    splitter.push(`${esc}[36mRUN${esc}[39m suite\n`);
+    expect(out).toEqual(["RUN suite"]);
   });
 });
 

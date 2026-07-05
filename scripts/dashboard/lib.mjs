@@ -51,7 +51,10 @@ export function normalizePlan(raw) {
   const plan = {
     v: 1,
     feature: typeof parsed.feature === "string" ? parsed.feature : "",
-    issue: Number.isFinite(Number(parsed.issue)) && parsed.issue != null ? Number(parsed.issue) : undefined,
+    issue:
+      Number.isFinite(Number(parsed.issue)) && parsed.issue != null
+        ? Number(parsed.issue)
+        : undefined,
     updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : undefined,
     tasks: [],
   };
@@ -156,7 +159,10 @@ export class RingBuffer {
     const line = { seq: this.nextSeq++, text: String(text) };
     this.lines.push(line);
     this.bytes += line.text.length;
-    while (this.lines.length > this.maxLines || (this.bytes > this.maxBytes && this.lines.length > 1)) {
+    while (
+      this.lines.length > this.maxLines ||
+      (this.bytes > this.maxBytes && this.lines.length > 1)
+    ) {
       const dropped = this.lines.shift();
       this.bytes -= dropped.text.length;
     }
@@ -171,12 +177,18 @@ export class RingBuffer {
   }
 }
 
+/** Strip ANSI color/control sequences — vitest et al ignore FORCE_COLOR=0 under some TTY shims. */
+const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[a-zA-Z]`, "g");
+export function stripAnsi(text) {
+  return String(text).replace(ANSI_RE, "");
+}
+
 /** Stateful chunk→lines splitter (the dev.mjs prefixStream pattern). */
 export function splitLines(onLine) {
   let pending = "";
   return {
     push(chunk) {
-      pending += chunk.toString();
+      pending += stripAnsi(chunk.toString());
       const lines = pending.split(/\r?\n/);
       pending = lines.pop() ?? "";
       for (const line of lines) onLine(line);
