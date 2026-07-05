@@ -20,18 +20,22 @@
     <button id="newWorktree" title="pnpm wt <name> — creates the worktree + branch and installs deps">＋ New worktree</button>
   </header>
 
-  <main id="board" aria-live="polite"></main>
+  <div id="mainRow">
+    <main id="board" aria-live="polite"></main>
 
-  <aside id="drawer" hidden>
-    <div id="drawerHead">
-      <b id="drawerTitle">log</b>
-      <div>
-        <button id="drawerKill" hidden>■ stop</button>
-        <button id="drawerClose">×</button>
+    <aside id="drawer" hidden>
+      <div id="drawerHead">
+        <b id="drawerTitle">log</b>
+        <div>
+          <button id="drawerKill" hidden>■ stop</button>
+          <button id="drawerClose" title="minimize — the process keeps running (reopen from the dock below)">─</button>
+        </div>
       </div>
-    </div>
-    <pre id="drawerLog"></pre>
-  </aside>
+      <pre id="drawerLog"></pre>
+    </aside>
+  </div>
+
+  <footer id="dock" hidden></footer>
 
   <dialog id="noteDialog">
     <form method="dialog" id="noteForm">

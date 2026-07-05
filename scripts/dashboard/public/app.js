@@ -177,9 +177,48 @@ function renderBoard() {
   ).join("");
 }
 
+// ---------- process dock ----------
+// One chip per process the dashboard holds: managed/starting stacks and the
+// latest run per worktree. Minimizing the drawer never touches the process —
+// chips reopen its log (stack logs are file-backed, runs replay their ring).
+
+function dockChips() {
+  const chips = [];
+  for (const wt of state?.worktrees ?? []) {
+    if (wt.stack.managed || wt.stack.starting) {
+      const active = !$("#drawer").hidden && drawer.kind === "stack" && drawer.id === wt.dir;
+      const dot = wt.stack.up ? "dot up" : "dot live";
+      chips.push(`<button class="chip ${active ? "active" : ""}" data-action="dock-stack" data-dir="${esc(wt.dir)}"
+        title="dev stack — click to ${active ? "minimize" : "show"} its log">
+        <span class="${dot}"></span><span class="wtTag" style="${tagStyle(wt.dir)}">${esc(wt.name)}</span>
+        <span class="chipLabel">${wt.stack.activeScenario ? `⛰ ${esc(wt.stack.activeScenario)}` : "⛰ stack"}${wt.stack.up ? "" : " — starting…"}</span>
+      </button>`);
+    }
+    if (wt.run) {
+      const active = !$("#drawer").hidden && drawer.kind === "run" && drawer.id === wt.run.id;
+      const dot = wt.run.running ? "dot live" : wt.run.exitCode === 0 ? "dot ok" : "dot bad";
+      const status = wt.run.running ? "" : wt.run.exitCode === 0 ? " ✓" : ` ✗ ${wt.run.exitCode}`;
+      chips.push(`<button class="chip ${active ? "active" : ""}" data-action="dock-run" data-run="${esc(wt.run.id)}" data-cmd="${esc(wt.run.command)}"
+        title="${esc(wt.run.command)} — click to ${active ? "minimize" : "show"} its log">
+        <span class="${dot}"></span><span class="wtTag" style="${tagStyle(wt.dir)}">${esc(wt.name)}</span>
+        <span class="chipLabel">${esc(wt.run.command)}${status}</span>
+      </button>`);
+    }
+  }
+  return chips;
+}
+
+function renderDock() {
+  const chips = dockChips();
+  const dock = $("#dock");
+  dock.hidden = chips.length === 0;
+  dock.innerHTML = chips.length ? `<span id="dockLabel">processes</span>${chips.join("")}` : "";
+}
+
 function render() {
   renderLanes();
   renderBoard();
+  renderDock();
 }
 
 // ---------- polling ----------
@@ -217,29 +256,42 @@ function tryPendingOpen() {
 
 // ---------- log drawer ----------
 
-const drawer = { kind: null, id: null, from: 0, timer: 0 };
+const drawer = { kind: null, id: null, from: 0, timer: 0, gen: 0 };
 
 function openDrawer(kind, id, title) {
+  drawer.gen++; // invalidate any in-flight poll for the previous focus
   drawer.kind = kind;
   drawer.id = id;
   drawer.from = 0;
   $("#drawerTitle").textContent = title;
   $("#drawerLog").textContent = "";
-  $("#drawerKill").hidden = kind !== "run";
+  $("#drawerKill").hidden = false;
   $("#drawer").hidden = false;
   clearInterval(drawer.timer);
   drawer.timer = setInterval(pollDrawer, 600);
   pollDrawer();
+  renderDock(); // highlight the focused chip
+}
+
+function minimizeDrawer() {
+  drawer.gen++;
+  $("#drawer").hidden = true; // the process keeps running — its dock chip stays
+  clearInterval(drawer.timer);
+  renderDock();
 }
 
 async function pollDrawer() {
   if ($("#drawer").hidden) return clearInterval(drawer.timer);
+  const gen = drawer.gen;
   try {
     const q =
       drawer.kind === "run"
         ? `id=${encodeURIComponent(drawer.id)}`
         : `dir=${encodeURIComponent(drawer.id)}`;
     const data = await api(`/api/${drawer.kind}/log?${q}&from=${drawer.from}`);
+    // The user may have switched chips while this request was in flight —
+    // its offset and lines belong to the previous focus; discard.
+    if (gen !== drawer.gen) return;
     if (data.dropped && drawer.from > 0) $("#drawerLog").textContent += "…(older output dropped)\n";
     if (data.lines.length) {
       const el = $("#drawerLog");
@@ -252,8 +304,20 @@ async function pollDrawer() {
       $("#drawerKill").hidden = true;
       $("#drawerTitle").textContent = `${data.command} — exited ${data.exitCode}`;
     }
-  } catch {
-    /* transient */
+    if (drawer.kind === "stack") {
+      // pid is null once the stack exits / is unmanaged — stop is meaningless then
+      $("#drawerKill").hidden = data.pid == null;
+    }
+  } catch (err) {
+    if (gen !== drawer.gen) return;
+    if (String(err.message ?? err).includes("unknown run")) {
+      // pruned by the server (it keeps the last 5 finished runs per worktree)
+      clearInterval(drawer.timer);
+      $("#drawerKill").hidden = true;
+      const t = $("#drawerTitle");
+      if (!t.textContent.includes("log gone")) t.textContent += " — log gone (pruned)";
+    }
+    /* otherwise transient — next tick retries */
   }
 }
 
@@ -300,6 +364,14 @@ async function onAction(el) {
       );
     } else if (action === "open-run") {
       openDrawer("run", run, "run log");
+    } else if (action === "dock-run") {
+      const focused = !$("#drawer").hidden && drawer.kind === "run" && drawer.id === run;
+      if (focused) minimizeDrawer();
+      else openDrawer("run", run, el.dataset.cmd || "run log");
+    } else if (action === "dock-stack") {
+      const focused = !$("#drawer").hidden && drawer.kind === "stack" && drawer.id === dir;
+      if (focused) minimizeDrawer();
+      else openDrawer("stack", dir, `dev stack — ${dir.split("/").pop()}`);
     } else if (action === "verdict") {
       if (result === "verified") {
         await api("/api/task/verdict", { dir, taskId: task, result: "verified" });
@@ -349,11 +421,19 @@ document.body.addEventListener("click", (e) => {
   const el = e.target.closest("[data-action]");
   if (el) onAction(el);
 });
-$("#drawerClose").addEventListener("click", () => {
-  $("#drawer").hidden = true;
-});
+$("#drawerClose").addEventListener("click", minimizeDrawer);
 $("#drawerKill").addEventListener("click", async () => {
-  if (drawer.kind === "run") await api("/api/run/kill", { id: drawer.id }).catch(() => {});
+  try {
+    if (drawer.kind === "run") {
+      await api("/api/run/kill", { id: drawer.id });
+      toast("run stopped");
+    } else if (drawer.kind === "stack") {
+      await api("/api/stack/stop", { dir: drawer.id });
+      toast("stopping stack…");
+    }
+  } catch (err) {
+    toast(String(err.message ?? err), 6000);
+  }
 });
 $("#newWorktree").addEventListener("click", async () => {
   const name = prompt("New worktree name (a-z, 0-9, -, _):");

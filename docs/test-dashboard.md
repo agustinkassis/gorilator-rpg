@@ -35,6 +35,13 @@ gold scenario · pulsing starting), dirty marker, start/stop/play buttons,
 click to filter. ⚠ on a lane = two trees declare the same ports in their
 `.claude/launch.json`.
 
+**Process dock** (bottom bar): one chip per process the dashboard holds —
+managed/starting stacks and the latest run per worktree. Logs open in a
+side panel (the board shrinks, stays fully usable); the `─` button or a
+second chip click minimizes it while the process keeps running. `■ stop`
+kills the focused run or stack. Chips show live (pulsing) / ✓ / ✗ state,
+so several stacks and runs can be held and switched between at any time.
+
 ## Under the hood
 
 - `scripts/dashboard/server.mjs` — plain `node:http`, no deps, binds
