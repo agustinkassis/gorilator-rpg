@@ -66,7 +66,10 @@ name (Test button boots/converges the lab and opens `?scenario=`), `cli` →
 6. **Re-read before every write** (the dashboard writes verdicts concurrently);
    update `updatedAt` on each write.
 7. **At session start, check for `rejected` tasks first** — a rejection note is
-   direct human feedback awaiting you.
+   direct human feedback awaiting you. A task you'd previously gotten to
+   `verified` can come back as `rejected` (the human re-opened it from the
+   board) — treat it exactly like any other rejection: read the note, archive
+   the verdict, rework.
 8. **If `.gorilator/brief.md` exists and the plan has no tasks**, the human
    created this worktree from the dashboard with that brief as the spec —
    author the plan from it, then start implementing.

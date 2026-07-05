@@ -27,6 +27,7 @@ import {
   PLAN_REL,
   RingBuffer,
   reconcileWorktrees,
+  reopenTask,
   safeJoin,
   splitLines,
   stripAnsi,
@@ -666,6 +667,14 @@ async function handle(req, res) {
             String(body.note ?? ""),
           ),
     );
+    return result.error ? fail(res, 422, result.error) : sendJson(res, { ok: true });
+  }
+
+  if (route === "POST /api/task/reopen") {
+    const body = JSON.parse((await collectBody(req)).toString("utf8") || "{}");
+    const dir = await resolveWorktreeDir(body.dir);
+    if (!dir) return fail(res, 400, "unknown worktree dir");
+    const result = mutatePlan(dir, (plan) => reopenTask(plan, String(body.taskId ?? "")));
     return result.error ? fail(res, 422, result.error) : sendJson(res, { ok: true });
   }
 

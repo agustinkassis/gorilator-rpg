@@ -37,6 +37,11 @@ agent half is `.claude/skills/test-plan/SKILL.md`.
 5. **You record a verdict** — ✓ Verify moves the card to Verified; ✗ Reject
    requires a note, which lands in the plan file where the agent reads it,
    reworks, and puts the card back in Ready to test.
+6. **A verdict is never final.** A card in *Verified* carries two buttons:
+   **↩ Back to testing** returns it to Ready to test (to re-check it yourself),
+   and **✗ Reject** re-opens it with a note and drops it into *In progress*
+   for the agent. Either way the prior verdict is archived to the task's
+   verdict history (visible in the card's detail view).
 
 ## Kanban semantics
 
@@ -80,7 +85,8 @@ so several stacks and runs can be held and switched between at any time.
 | --- | --- |
 | `GET /api/state` | Everything the board renders (worktrees, plans, stacks, runs) + content hash |
 | `POST /api/task/status` | `{dir, taskId, status}` — move a card |
-| `POST /api/task/verdict` | `{dir, taskId, result, note?}` — verify/reject (reject needs a note; only from `ready`) |
+| `POST /api/task/verdict` | `{dir, taskId, result, note?}` — verify/reject (reject needs a note; from `ready` or `verified`) |
+| `POST /api/task/reopen` | `{dir, taskId}` — send a settled task back to `ready`, archiving its verdict |
 | `POST /api/run` | `{dir, taskId}` — run the task's allowlisted command |
 | `GET /api/run/log?id&from` | Poll streamed output (ring buffer, seq-resume) |
 | `POST /api/run/kill` | `{id}` — stop a live run |

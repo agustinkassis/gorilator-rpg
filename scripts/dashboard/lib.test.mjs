@@ -6,6 +6,7 @@ import {
   normalizePlan,
   RingBuffer,
   reconcileWorktrees,
+  reopenTask,
   safeJoin,
   splitLines,
   stripAnsi,
@@ -119,10 +120,42 @@ describe("applyStatus / applyVerdict", () => {
     expect(applyStatus(plan, "ghost", "ready").error).toBeTruthy();
   });
 
-  it("verdicts only apply to ready tasks; rejection requires a note", () => {
-    expect(applyVerdict(mkPlan("in_progress"), "t1", "verified").error).toMatch(/ready/);
+  it("verdicts only apply to ready/verified tasks; rejection requires a note", () => {
+    expect(applyVerdict(mkPlan("in_progress"), "t1", "verified").error).toMatch(/ready\/verified/);
+    expect(applyVerdict(mkPlan("planned"), "t1", "rejected", "x").error).toMatch(/ready\/verified/);
     expect(applyVerdict(mkPlan("ready"), "t1", "rejected", "  ").error).toMatch(/note/);
     expect(applyVerdict(mkPlan("ready"), "t1", "meh", "x").error).toMatch(/verified\|rejected/);
+  });
+
+  it("a verified task can be re-rejected (human changes their mind); prior verdict archived", () => {
+    const plan = mkPlan("ready");
+    applyVerdict(plan, "t1", "verified", "", "T1");
+    expect(plan.tasks[0].status).toBe("verified");
+    // human reopens the decision and rejects with a note
+    const out = applyVerdict(plan, "t1", "rejected", "regressed after a rebase", "T2");
+    expect(out.changed).toBe(true);
+    expect(plan.tasks[0].status).toBe("rejected");
+    expect(plan.tasks[0].verdict).toMatchObject({
+      result: "rejected",
+      note: "regressed after a rebase",
+    });
+    expect(plan.tasks[0].verdictHistory).toHaveLength(1);
+    expect(plan.tasks[0].verdictHistory[0]).toMatchObject({ result: "verified", at: "T1" });
+  });
+
+  it("reopenTask sends a settled task back to ready and archives its verdict", () => {
+    const plan = mkPlan("ready");
+    applyVerdict(plan, "t1", "verified", "", "T1");
+    const out = reopenTask(plan, "t1");
+    expect(out.changed).toBe(true);
+    expect(plan.tasks[0].status).toBe("ready");
+    expect(plan.tasks[0].verdict).toBeUndefined();
+    expect(plan.tasks[0].verdictHistory).toHaveLength(1);
+    expect(plan.tasks[0].verdictHistory[0].result).toBe("verified");
+    // rejected tasks reopen too; a still-open (ready) task cannot
+    expect(reopenTask(mkPlan("rejected"), "t1").changed).toBe(true);
+    expect(reopenTask(mkPlan("ready"), "t1").error).toMatch(/settled/);
+    expect(reopenTask(mkPlan("ready"), "ghost").error).toMatch(/unknown/);
   });
 
   it("verified/rejected set status + verdict and archive prior verdicts", () => {

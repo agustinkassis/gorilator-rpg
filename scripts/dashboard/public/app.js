@@ -110,6 +110,22 @@ function testButton(wt, task) {
   return "";
 }
 
+// The action buttons for a card / detail view, keyed on status so both render
+// identically. verified → reopen or re-reject; ready → test + verify/reject;
+// rejected → re-test (the agent owns the rework back to ready).
+function cardActions(wt, task) {
+  const d = `data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}"`;
+  if (task.status === "ready")
+    return `${testButton(wt, task)}
+      <button class="verify" data-action="verdict" ${d} data-result="verified">✓ Verify</button>
+      <button class="reject" data-action="verdict" ${d} data-result="rejected">✗ Reject</button>`;
+  if (task.status === "verified")
+    return `<button class="reopen" data-action="reopen" ${d} title="send back to Ready to test">↩ Back to testing</button>
+      <button class="reject" data-action="verdict" ${d} data-result="rejected" title="reject with a note — moves it to In progress for the agent">✗ Reject</button>`;
+  if (task.status === "rejected") return testButton(wt, task);
+  return "";
+}
+
 function card(wt, task) {
   const rejected = task.status === "rejected";
   const note =
@@ -119,11 +135,6 @@ function card(wt, task) {
   const steps =
     task.test?.type === "manual" && task.test.steps?.length
       ? `<ol class="steps">${task.test.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`
-      : "";
-  const verdictBtns =
-    task.status === "ready"
-      ? `<button class="verify" data-action="verdict" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" data-result="verified">✓ Verify</button>
-         <button class="reject" data-action="verdict" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" data-result="rejected">✗ Reject</button>`
       : "";
   const run =
     wt.run && wt.run.taskId === task.id
@@ -149,7 +160,7 @@ function card(wt, task) {
     <h3>${esc(task.title)}</h3>
     ${task.details ? `<p class="details">${esc(task.details)}</p>` : ""}
     ${note}${steps}
-    <div class="cardBtns">${task.status === "ready" || rejected ? testButton(wt, task) : ""}${verdictBtns}</div>
+    <div class="cardBtns">${cardActions(wt, task)}</div>
     ${run}${hint}
   </div>`;
 }
@@ -198,15 +209,7 @@ function openTaskDialog(dir, taskId) {
     ${task.expected ? `<div class="tdSection"><h4>Expected result</h4><p>${esc(task.expected)}</p></div>` : ""}
     <div class="tdSection"><h4>How to test</h4>${howToTest(wt, task)}</div>
     ${histHtml ? `<div class="tdSection"><h4>Verdict history</h4>${histHtml}</div>` : ""}
-    <div class="cardBtns">
-      ${task.status === "ready" || task.status === "rejected" ? testButton(wt, task) : ""}
-      ${
-        task.status === "ready"
-          ? `<button class="verify" data-action="verdict" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" data-result="verified">✓ Verify</button>
-             <button class="reject" data-action="verdict" data-dir="${esc(wt.dir)}" data-task="${esc(task.id)}" data-result="rejected">✗ Reject</button>`
-          : ""
-      }
-    </div>`;
+    <div class="cardBtns">${cardActions(wt, task)}</div>`;
   $("#taskDialog").showModal();
 }
 
@@ -434,6 +437,11 @@ async function onAction(el) {
       const focused = !$("#drawer").hidden && drawer.kind === "stack" && drawer.id === dir;
       if (focused) minimizeDrawer();
       else openDrawer("stack", dir, `dev stack — ${dir.split("/").pop()}`);
+    } else if (action === "reopen") {
+      await api("/api/task/reopen", { dir, taskId: task });
+      toast("↩ back to Ready to test");
+      lastHash = "";
+      refresh();
     } else if (action === "verdict") {
       if (result === "verified") {
         await api("/api/task/verdict", { dir, taskId: task, result: "verified" });

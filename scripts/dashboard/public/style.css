@@ -297,6 +297,11 @@ body {
   border-color: var(--red-dim);
   color: var(--red);
 }
+.cardBtns .reopen {
+  background: var(--panel2);
+  border-color: var(--gold);
+  color: var(--gold-soft);
+}
 .runBadge {
   font: 10.5px var(--mono);
   margin-top: 5px;

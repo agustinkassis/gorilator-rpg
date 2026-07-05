@@ -112,8 +112,9 @@ export function applyStatus(plan, taskId, status) {
   return { plan, changed };
 }
 
-/** Record the human's verdict on a ready task. Only legal from "ready" —
- *  the agent owns every other transition. Prior verdicts go to history. */
+/** Record the human's verdict. Legal from "ready" (the normal path) and from
+ *  "verified" (the human changes their mind and re-rejects a passed task). Any
+ *  prior verdict goes to history. */
 export function applyVerdict(plan, taskId, result, note = "", now = new Date().toISOString()) {
   if (result !== "verified" && result !== "rejected") {
     return { error: `verdict must be verified|rejected, got "${result}"` };
@@ -123,12 +124,28 @@ export function applyVerdict(plan, taskId, result, note = "", now = new Date().t
   }
   const task = plan.tasks.find((t) => t.id === taskId);
   if (!task) return { error: `unknown task "${taskId}"` };
-  if (task.status !== "ready") {
-    return { error: `verdicts apply to "ready" tasks only (task is "${task.status}")` };
+  if (task.status !== "ready" && task.status !== "verified") {
+    return { error: `verdicts apply to ready/verified tasks (task is "${task.status}")` };
   }
   if (task.verdict) task.verdictHistory = [...(task.verdictHistory ?? []), task.verdict];
   task.verdict = { result, note: String(note), at: now, by: "dashboard" };
   task.status = result;
+  return { plan, changed: true };
+}
+
+/** Reopen a settled (verified/rejected) task back to "ready" for re-testing.
+ *  The current verdict is archived to history and cleared. */
+export function reopenTask(plan, taskId) {
+  const task = plan.tasks.find((t) => t.id === taskId);
+  if (!task) return { error: `unknown task "${taskId}"` };
+  if (task.status !== "verified" && task.status !== "rejected") {
+    return { error: `only settled tasks reopen (task is "${task.status}")` };
+  }
+  if (task.verdict) {
+    task.verdictHistory = [...(task.verdictHistory ?? []), task.verdict];
+    task.verdict = undefined;
+  }
+  task.status = "ready";
   return { plan, changed: true };
 }
 
