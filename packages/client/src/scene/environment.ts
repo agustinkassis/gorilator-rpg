@@ -156,18 +156,5 @@ export function createEnvironment(scene: Scene): Environment {
 
   const shadowCasters: Mesh[] = [];
 
-  // ---- center cross: a glowing "+" marker at the map origin (0,0) ----
-  const crossMat = flat(scene, "centerCrossMat", new Color3(0.97, 0.9, 0.45));
-  crossMat.emissiveColor = new Color3(0.7, 0.62, 0.2); // glow so it reads from the iso camera
-  crossMat.specularColor = new Color3(0, 0, 0);
-  const armX = MeshBuilder.CreateBox("centerCrossX", { width: 11, height: 0.1, depth: 1.1 }, scene);
-  const armZ = MeshBuilder.CreateBox("centerCrossZ", { width: 1.1, height: 0.1, depth: 11 }, scene);
-  for (const arm of [armX, armZ]) {
-    arm.material = crossMat;
-    arm.position.set(0, 0.06, 0); // just above the ground, below characters
-    arm.isPickable = false;
-    arm.receiveShadows = true;
-  }
-
   return { ground, shadowCasters };
 }

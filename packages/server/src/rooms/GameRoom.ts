@@ -97,7 +97,7 @@ import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrS
 import { serverPluginHost } from "../systems/plugins/host";
 import { loadServerPlugins } from "../systems/plugins/loader";
 import { initNostrContent } from "../systems/plugins/nostrContent";
-import { applyRealmConfig } from "../systems/realm";
+import { applyRealmConfig, realmWorldConfig, shouldEndRealmForHomeObjective } from "../systems/realm";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
 
@@ -174,6 +174,11 @@ export class GameRoom extends Room<GameState> {
     });
     loadSpawners(); // dev-placed goblin spawners (+ live reload of spawners.json)
     loadWaves(); // dev-authored custom wave compositions (+ live reload of waves.json)
+    // realm.json (per-realm/fork config) + optional GORILATOR_SCENARIO layer:
+    // seed live tuning/policy and decide whether the base realm starts as an
+    // open sandbox or La Crypta Defense.
+    applyRealmConfig();
+    const world = realmWorldConfig();
     // per-kind tree/rock drop config (+ live reload of resources.json). The callback
     // re-applies the configured HP to every existing tree/rock on each edit.
     loadResourceDrops(() => applyResourceConfig(this.state));
@@ -185,16 +190,14 @@ export class GameRoom extends Room<GameState> {
     applyStructures(this.state); // build destructible structures from the loaded concrete props
     this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
-    spawnHouse(this.state);
+    if (world.homeObjective) spawnHouse(this.state);
+    this.homeStanding = world.homeObjective;
+    this.state.wavesEnabled = world.waves;
     loadAuthoredNpcs(this.state);
 
     // Deterministic test mode (e2e smoke tests, `pnpm bench` scenarios): no goblin
     // waves, so room state only changes when a test drives it. Uses the existing
     // devTuning knobs — every other system runs exactly as in production.
-    // realm.json (per-realm/fork config): seed the live tuning knobs before any
-    // mode-specific overrides. Absent file = current defaults, untouched.
-    applyRealmConfig();
-
     if (process.env.GORILATOR_TEST === "1") {
       setDevTuning("waveSizeBase", 0);
       setDevTuning("waveSizePerPlayer", 0);
@@ -747,11 +750,7 @@ export class GameRoom extends Room<GameState> {
 
   /** Detect La Crypta collapsing (no standing house) and end the realm once. */
   private checkHomeFall() {
-    let standing = false;
-    this.state.houses.forEach((h) => {
-      if (h.alive) standing = true;
-    });
-    if (this.homeStanding && !standing) {
+    if (shouldEndRealmForHomeObjective(this.state, this.homeStanding)) {
       this.homeStanding = false;
       this.endRealm();
     }
@@ -835,7 +834,9 @@ export class GameRoom extends Room<GameState> {
     spawnInitialPotions(this.state);
     spawnInitialBananas(this.state);
     this.refreshRockObstacles(); // rocks are alive again → their collision is back
-    spawnHouse(this.state);
+    const world = realmWorldConfig();
+    if (world.homeObjective) spawnHouse(this.state);
+    this.state.wavesEnabled = world.waves;
     syncAuthoredNpcs(this.state);
     resetWaves(this.state, true);
     resetSpawners();
@@ -867,7 +868,7 @@ export class GameRoom extends Room<GameState> {
         this.sendInventory(sid);
       });
     }
-    this.homeStanding = true;
+    this.homeStanding = world.homeObjective;
     this.realmTick = 0;
     this.state.restartTimerMs = 0;
 

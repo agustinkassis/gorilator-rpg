@@ -1,0 +1,43 @@
+{
+  "name": "sandbox",
+  "description": "Open realm with La Crypta Defense disabled: no home objective, no wave game-over, ambient spawners/resources/NPCs enabled.",
+  "events": {
+    "enabled": [],
+    "autoStart": false
+  },
+  "world": {
+    "homeObjective": false,
+    "waves": false
+  },
+  "systems": {
+    "events": false,
+    "waves": false,
+    "spawners": true,
+    "resources": true,
+    "npcs": true
+  },
+  "tuning": {
+    "waveSizeBase": 0,
+    "waveSizePerPlayer": 0,
+    "waveSizePerWave": 0,
+    "goblinLiveCap": 24
+  },
+  "tweaks": [
+    "goblinLiveCap",
+    "enemyAggroRadius",
+    "enemyDeaggroRadius",
+    "enemyMoveSpeed",
+    "dropRateMult"
+  ],
+  "bots": [
+    {
+      "behavior": "sandbox_patrol_smoke",
+      "count": 1,
+      "assertions": [
+        "restartTimerMs stays 0 with no houses",
+        "wavesEnabled is false",
+        "resources and ambient spawners remain available"
+      ]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 # 🦍 GORILATOR
 
-### Defend La Crypta.
+### Open Nostr RPG Sandbox.
 
 **An open-source Nostr MMORPG sandbox — anyone can run a world, create content, and players carry identity and progress across compatible servers.**
 
@@ -24,7 +24,7 @@
 
 Gorilator is an **open-source Nostr MMORPG sandbox** where anyone can run a world, create content, and let players carry identity and progress across compatible servers. Log in with your Nostr key and your character is *yours* — saved to public relays, not locked in one server's database.
 
-Today's gameplay is the sandbox's first **event module — "La Crypta Defense"**: pick a warrior, drop into a shared realm with other players, and hold **La Crypta** against waves of enemies — looting, crafting, and leveling as you go. Open two tabs (or invite friends to your server) and you'll see everyone move and fight in real time. Where the sandbox is headed — player-crafted gear, classes from wearables, trinity combat, survival & farming, quests, and cross-server federation — lives in **[the vision](docs/vision.md)** and **[the roadmap](ROADMAP.md)**.
+Today's default loop is an **open realm**: pick a warrior, drop into a shared world with other players, roam, gather, fight ambient enemies, loot, and level while your Nostr identity carries progress forward. **La Crypta Defense** remains the first event module — opt a realm into it and the house objective plus escalating waves come back online. Where the sandbox is headed — player-crafted gear, classes from wearables, trinity combat, survival & farming, quests, and cross-server federation — lives in **[the vision](docs/vision.md)** and **[the roadmap](ROADMAP.md)**.
 
 But the twist is what's *inside* the game: Gorilator ships a **developer SDK and world editor baked into the running client**. You don't clone a separate tool — you flip on Dev Mode, place props, import 3D models from the UI, define new items and entities, and **commit your changes from within the game itself**. Building the game and playing the game happen in the same window.
 
@@ -34,7 +34,7 @@ It's early and under active development — and intentionally **easy to contribu
 
 ![Gorilator multiplayer combat](docs/assets/screenshots/screenshot-2-multiplayer.png)
 
-*Isometric multiplayer combat — hold La Crypta against the waves with other players in real time.*
+*Isometric multiplayer combat in a shared realm with other players in real time.*
 
 </div>
 
@@ -188,6 +188,6 @@ The complete dev workflow (setup → verify → PR, fork rules, AI-assisted deve
 
 [**▶ Play Gorilator**](https://game.gorilator.io) · [Star on GitHub](https://github.com/agustinkassis/gorilator-rpg) · [Run your own realm](DEPLOY.md)
 
-🦍 *Defend La Crypta.*
+🦍 *Open Nostr RPG Sandbox.*
 
 </div>

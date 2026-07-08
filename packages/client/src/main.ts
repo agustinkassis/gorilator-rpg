@@ -1914,9 +1914,9 @@ engine.runRenderLoop(() => {
   // Keep the audio listener on the player so spatial SFX pan + attenuate correctly.
   audio.updateListener(camera, me ? { x: me.x, z: me.z } : null);
 
-  // TopBar: every player always sees the home (first house) HP + wave
-  // state. Once the house is destroyed it's removed from state, so fall back to a
-  // "fallen" reading using the last-known max HP.
+  // TopBar: event realms show the home (first house) HP + wave state. Open
+  // sandbox realms have no home objective, so show a stable realm status instead
+  // of a permanent "fallen" siege bar.
   const st = net.room?.state;
   if (topBar && st) {
     let home: { hp: number; maxHp: number; alive: boolean } | undefined;
@@ -1926,6 +1926,9 @@ engine.runRenderLoop(() => {
     if (home) {
       homeMaxHp = home.maxHp;
       topBar.setHouse(home.hp, home.maxHp, home.alive);
+    } else if (!st.wavesEnabled && st.restartTimerMs <= 0) {
+      homeMaxHp = 0;
+      topBar.setSandbox();
     } else if (homeMaxHp > 0) {
       topBar.setHouse(0, homeMaxHp, false);
     }

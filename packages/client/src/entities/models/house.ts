@@ -9,7 +9,7 @@ import "@babylonjs/loaders/glTF";
 import type { ShadowHandle, ShadowRuntime } from "../../scene/contactShadows";
 
 const HOUSE_URL = "/models/house.glb";
-const HOUSE_SIZE = 11; // footprint matches the centre cross (its arms span 11 units)
+const HOUSE_SIZE = 11; // old La Crypta objective footprint size, in world units
 
 /** World-space bounding box of a whole loaded hierarchy (skips empty nodes). */
 function hierarchyBounds(meshes: AbstractMesh[]): { min: Vector3; max: Vector3 } {
@@ -39,8 +39,8 @@ export interface HouseModel {
 }
 
 /**
- * Load the Viking house once and stand it on the centre cross (map origin),
- * scaled so its footprint matches the cross. It casts + receives shadows like the
+ * Load the Viking house once and stand it at the map origin,
+ * scaled to the old objective footprint size. It casts + receives shadows like the
  * rest of the world. Loaded in the background (large model) so it just pops in.
  * Returns a handle to hide it (when the server says it's been destroyed), or null.
  */
@@ -80,7 +80,7 @@ export async function loadHouse(
       mesh.receiveShadows = true;
     }
 
-    // Scale so the larger horizontal dimension matches the cross.
+    // Scale so the larger horizontal dimension matches the objective footprint.
     let b = hierarchyBounds(r.meshes);
     const sizeX = b.max.x - b.min.x;
     const sizeZ = b.max.z - b.min.z;

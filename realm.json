@@ -1,0 +1,21 @@
+{
+  "name": "Gorilator Open Realm",
+  "events": {
+    "enabled": [],
+    "autoStart": false
+  },
+  "world": {
+    "homeObjective": false,
+    "waves": false
+  },
+  "policy": {
+    "death": {
+      "mode": "xp-penalty",
+      "xpPenalty": 0.3
+    },
+    "progression": {
+      "persistAcrossWipes": true,
+      "keepInventoryOnWipe": true
+    }
+  }
+}

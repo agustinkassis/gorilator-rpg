@@ -58,6 +58,7 @@ Worked examples that define the bar:
 
 ```bash
 pnpm scenario hunger        # boots the dev stack with scenarios/hunger.json layered in
+pnpm scenario sandbox       # default open-realm fixture: no home objective, no waves
 ```
 
 - Also reachable as a dev URL param: `?scenario=hunger` (composable with the
