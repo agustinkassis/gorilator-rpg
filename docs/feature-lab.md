@@ -1,8 +1,8 @@
 # Feature Lab — scenario harness + AI dev pipeline
 
 The testing/automation layer every [ROADMAP.md](../ROADMAP.md) Phase 3+ feature
-depends on. This is the **design doc**; implementation lands as Phase 2.5,
-before any Phase 3 feature starts.
+depends on. The first thin implementation exists for `scenarios/hunger.json`;
+the remaining sections describe the fuller Phase 2.5 direction.
 
 The core idea: **every feature ships with an isolated simulation scenario** —
 a single-player test map staging exactly that feature, with developer tweak
@@ -28,28 +28,30 @@ write wins.
   "name": "hunger",
   "description": "Hunger drain + eating. Food scattered around spawn.",
   "world": {
-    "props": [],                          // extra/override props
-    "resources": [{ "type": "berry_bush", "x": 5, "z": 5 }],
-    "npcs": [],
-    "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }]
+    "clearPickups": true,
+    "wavesEnabled": false,
+    "laCryptaDefense": false,
+    "spawnersEnabled": false,
+    "resources": [{ "kind": "bush", "id": "cranberry_bush_0", "x": 2.5, "z": 2.5 }],
+    "groundItems": [{ "item": "wild_berry", "x": 2, "z": 0, "count": 5 }]
   },
   "player": {
-    "loadout": [{ "item": "cooked_meal", "count": 3 }],
-    "stats": { "level": 5, "hunger": 40 },
-    "position": { "x": 0, "z": 0 }
+    "position": { "x": 0, "z": 0 },
+    "stats": { "hunger": 40, "maxHunger": 100 },
+    "loadout": [{ "item": "trail_ration", "count": 1 }]
   },
-  "systems": { "events": false, "hunger": true },   // off-list everything unrelated
-  "tuning": { "hungerDrainPerMin": 30 },            // any DevTuningKey
+  "tuning": { "hungerDrainPerMin": 6 },             // any DevTuningKey
   "timeScale": 1,
-  "bots": [{ "behavior": "eat_when_hungry", "count": 1 }]
+  "tweaks": ["hungerDrainPerMin"]
 }
 ```
 
 Worked examples that define the bar:
 
-- **`scenarios/hunger.json`** — events off, food scattered around spawn, drain
-  rate cranked so the full hungry → eat → restored loop plays out in under a
-  minute.
+- **`scenarios/hunger.json`** — waves, La Crypta defense, and authored spawners
+  off; a cranberry bush resource and loose food staged around spawn; hunger
+  tuning starts at the default survival pace while food restore can still be
+  tested immediately.
 - **`scenarios/farming.json`** — seeds in the starting inventory, tilled plots
   staged near spawn, `timeScale: 20` so crops grow in seconds instead of
   minutes.
@@ -60,10 +62,14 @@ Worked examples that define the bar:
 pnpm scenario hunger        # boots the dev stack with scenarios/hunger.json layered in
 ```
 
-- Also reachable as a dev URL param: `?scenario=hunger` (composable with the
-  existing dev params like `?mocknostr=`).
-- Auto-joins single-player; the wave/event machinery stays off unless the
-  manifest turns it on.
+- The runner sets `GORILATOR_TEST=1` and `GORILATOR_SCENARIO=hunger`, then
+  prints a ready-to-test URL with `?scenario=hunger&autojoin=HungerBot`.
+- Scenario sandboxes default `wavesEnabled`, `laCryptaDefense`, and
+  `spawnersEnabled` to `false`; the normal non-scenario game still starts with
+  the La Crypta defense loop enabled.
+- v1 scenarios are process-scoped: `?scenario=` labels/auto-joins the already
+  booted scenario server; it does not switch a live server to a different
+  manifest.
 - Builds on what exists: the `GORILATOR_TEST` isolation flag, the
   `applyRealmConfig`/DevTuning seeding path, and per-worktree ports — a
   scenario in one worktree never collides with the game in another.

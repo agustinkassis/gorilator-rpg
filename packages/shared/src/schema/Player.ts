@@ -3,6 +3,7 @@ import { AnimState } from "../types";
 import {
   PLAYER_MAX_HP,
   PLAYER_MAX_STAMINA,
+  PLAYER_MAX_HUNGER,
   PLAYER_ATTACK,
   PLAYER_ARMOR,
   PLAYER_CRIT_CHANCE,
@@ -25,6 +26,8 @@ export class Player extends Schema {
   @type("number") maxHp = PLAYER_MAX_HP;
   @type("number") stamina = PLAYER_MAX_STAMINA; // sprint resource; refills over time
   @type("number") maxStamina = PLAYER_MAX_STAMINA;
+  @type("number") hunger = PLAYER_MAX_HUNGER; // survival meter; food restores it
+  @type("number") maxHunger = PLAYER_MAX_HUNGER;
   @type("string") state: AnimState = AnimState.IDLE;
   @type("number") hue = 0; // 0..360, per-player colour tint
 

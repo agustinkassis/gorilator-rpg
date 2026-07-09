@@ -11,6 +11,17 @@
         }
       ]
     },
+    "bush": {
+      "hp": 300,
+      "drops": [
+        {
+          "item": "cranberries",
+          "quantity": 10,
+          "probability": 0.7,
+          "trigger": "damage"
+        }
+      ]
+    },
     "rock": {
       "hp": 200,
       "drops": [

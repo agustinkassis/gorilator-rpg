@@ -16,6 +16,7 @@ import {
   type DamageEvent,
   type KillEvent,
   type HealEvent,
+  type FoodEvent,
   type XpEvent,
   type BananaThrowEvent,
   type ChatEvent,
@@ -65,6 +66,7 @@ export interface NetHandlers {
   onBananaThrow(ev: BananaThrowEvent): void;
   onDamage(ev: DamageEvent): void;
   onHeal(ev: HealEvent): void;
+  onFood(ev: FoodEvent): void;
   onXp(ev: XpEvent): void;
   onChat(ev: ChatEvent): void;
   onInventory(slots: InventorySlot[]): void;
@@ -347,6 +349,7 @@ export class NetworkClient {
       room.onMessage("damage", (ev: DamageEvent) => handlers.onDamage(ev));
       room.onMessage("kill", (ev: KillEvent) => handlers.onKill(ev));
       room.onMessage("heal", (ev: HealEvent) => handlers.onHeal(ev));
+      room.onMessage("food", (ev: FoodEvent) => handlers.onFood(ev));
       room.onMessage("xp", (ev: XpEvent) => handlers.onXp(ev));
       room.onMessage("banana_throw", (ev: BananaThrowEvent) => handlers.onBananaThrow(ev));
       room.onMessage("chat", (ev: ChatEvent) => handlers.onChat(ev));

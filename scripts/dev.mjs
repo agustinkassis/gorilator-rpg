@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -64,9 +64,35 @@ function canListen(port) {
   });
 }
 
+function canConnect(port, host) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host });
+    let done = false;
+    const finish = (connected) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(150);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function portInUse(port) {
+  const localhostBusy = await Promise.all([
+    canConnect(port, "127.0.0.1"),
+    canConnect(port, "::1"),
+  ]);
+  if (localhostBusy.some(Boolean)) return true;
+  return !(await canListen(port));
+}
+
 async function findFreePort(preferred) {
   for (let port = preferred; port < preferred + 100; port += 1) {
-    if (await canListen(port)) return port;
+    if (!(await portInUse(port))) return port;
   }
   throw new Error(`Could not find a free port between ${preferred} and ${preferred + 99}`);
 }

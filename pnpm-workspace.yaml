@@ -1,2 +1,10 @@
 packages:
   - "packages/*"
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+onlyBuiltDependencies:
+  - esbuild
+  - msgpackr-extract
+overrides:
+  rollup: npm:@rollup/wasm-node@4.60.4

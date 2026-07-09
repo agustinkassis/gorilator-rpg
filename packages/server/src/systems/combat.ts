@@ -19,6 +19,7 @@ import {
   DUMMY_RESPAWN_MS,
   GOBLIN_RESPAWN_MS,
   WORLD_SIZE,
+  RESPAWN_HUNGER_FRACTION,
   AGENT_RADIUS,
   TREE_BANANA_DROP_CHANCE,
   ROCK_COLLISION_SCALE,
@@ -365,6 +366,7 @@ function applyKnockback(target: Player | Enemy, fromX: number, fromZ: number) {
 
 function respawnPlayer(p: Player) {
   p.hp = p.maxHp; // full heal, keeping any maxHp gained from leveling up
+  p.hunger = Math.max(p.hunger, p.maxHunger * RESPAWN_HUNGER_FRACTION);
   const angle = Math.random() * Math.PI * 2;
   const r = 12 + Math.random() * 4; // spawn clear of the centre-cross goblin's reach
   placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);

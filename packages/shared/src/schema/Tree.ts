@@ -4,6 +4,7 @@ import { TREE_HP, TREE_ARMOR } from "../constants";
 /** A choppable tree. Attack it to cut it down; it drops logs and later regrows. */
 export class Tree extends Schema {
   @type("string") id = "";
+  @type("string") kind = "tree";
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") rotY = 0;

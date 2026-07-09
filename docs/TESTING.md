@@ -33,14 +33,18 @@ pnpm e2e             # same game smoke through the default Playwright project se
 
 - Config: `playwright.config.ts`. Fixed ports 1462x (never collide with dev).
 - The game project boots the server with `GORILATOR_TEST=1` — deterministic
-  room: no goblin waves, room pre-created — and headless Chromium with
-  swiftshader for software WebGL.
+  room: no goblin waves, room pre-created — plus `GORILATOR_SCENARIO=hunger`
+  for the Feature Lab smoke, and headless Chromium with swiftshader for
+  software WebGL.
 - **The cardinal rule: assert on DOM / network / `window.__perf` — never canvas
   pixels.** The Babylon frame is timing-dependent, and HMR used to stack
   `main.ts` instances (now guarded by an `import.meta.hot.dispose` teardown, but
   the rule stands).
 - The game smoke proves: WS to the Colyseus port opens, `/api/status` registers
   the player, `__perf.latest().fps > 0` (the render loop is alive).
+- The Hunger Lab smoke opens `?scenario=hunger&autojoin=HungerBot` with waves,
+  La Crypta defense, and authored spawners disabled; it polls synced hunger,
+  uses food from slot 0, and verifies hunger rises.
 
 ## 3. Benchmark gate
 

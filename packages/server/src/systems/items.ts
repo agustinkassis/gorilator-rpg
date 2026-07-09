@@ -10,6 +10,11 @@ export interface ItemDef {
   model?: string;
   stack?: number;
   worldScale?: number;
+  food?: {
+    hunger?: number;
+    hp?: number;
+    stamina?: number;
+  };
 }
 
 const ITEM_PATHS = [
@@ -37,7 +42,21 @@ export function itemDefs(): ItemDef[] {
     const mtime = statSync(path).mtimeMs;
     if (path === cachedPath && mtime === cachedMtime) return cachedDefs;
     const arr = JSON.parse(readFileSync(path, "utf8"));
-    cachedDefs = Array.isArray(arr) ? arr.filter((d) => safeItemId(d?.id) === d?.id) : [];
+    cachedDefs = Array.isArray(arr)
+      ? arr
+          .filter((d) => safeItemId(d?.id) === d?.id)
+          .map((d) => ({
+            ...d,
+            food:
+              d?.food && typeof d.food === "object"
+                ? {
+                    hunger: finiteNonNegative(d.food.hunger),
+                    hp: finiteNonNegative(d.food.hp),
+                    stamina: finiteNonNegative(d.food.stamina),
+                  }
+                : undefined,
+          }))
+      : [];
     cachedPath = path;
     cachedMtime = mtime;
     return cachedDefs;
@@ -49,6 +68,16 @@ export function itemDefs(): ItemDef[] {
 export function hasCustomItem(id: string): boolean {
   const safe = safeItemId(id);
   return !!safe && itemDefs().some((d) => d.id === safe);
+}
+
+export function itemDef(id: string): ItemDef | undefined {
+  const safe = safeItemId(id);
+  return itemDefs().find((d) => d.id === safe);
+}
+
+function finiteNonNegative(raw: unknown): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 export function spawnCustomItem(state: GameState, itemId: string, x: number, z: number, id?: string): Item | null {

@@ -55,6 +55,7 @@ import {
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
 import { staminaSystem } from "../systems/stamina";
+import { hungerSystem } from "../systems/hunger";
 import {
   combatSystem,
   handleAttack,
@@ -71,6 +72,7 @@ import {
   applyResourceConfig,
 } from "../systems/resources";
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
+import { useFoodItem } from "../systems/food";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
 import { goblinAiSystem, waveSystem, resetWaves, forceNextWave, previousWave } from "../systems/goblins";
 import { realmTracker, type RealmPlayer } from "../systems/realms";
@@ -100,6 +102,15 @@ import { initNostrContent } from "../systems/plugins/nostrContent";
 import { applyRealmConfig } from "../systems/realm";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
+import {
+  applyScenarioPlayer,
+  applyScenarioTuning,
+  applyScenarioWorld,
+  loadScenarioFromEnv,
+  scenarioLaCryptaDefenseEnabled,
+  scenarioSpawnersEnabled,
+  type ScenarioManifest,
+} from "../systems/scenario";
 
 /** A kicked session's gameplay state, handed to the new login that takes it over. */
 interface TakeoverState {
@@ -110,6 +121,8 @@ interface TakeoverState {
   maxHp: number;
   stamina: number;
   maxStamina: number;
+  hunger: number;
+  maxHunger: number;
   level: number;
   xp: number;
   attack: number;
@@ -123,6 +136,8 @@ interface TakeoverState {
 
 export class GameRoom extends Room<GameState> {
   maxClients = 16;
+
+  private scenario: ScenarioManifest | null = null;
 
   /** Per-player inventory, kept off the synced state and sent only to its owner. */
   private inventories = new Map<string, InventorySlot[]>();
@@ -166,6 +181,7 @@ export class GameRoom extends Room<GameState> {
 
   async onCreate() {
     this.setState(new GameState());
+    this.scenario = loadScenarioFromEnv();
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
     onPropsChange(() => applyStructures(this.state)); // re-sync destructible structures on props edit
     loadEntityFeatures(() => {
@@ -185,7 +201,7 @@ export class GameRoom extends Room<GameState> {
     applyStructures(this.state); // build destructible structures from the loaded concrete props
     this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
-    spawnHouse(this.state);
+    if (scenarioLaCryptaDefenseEnabled(this.scenario)) spawnHouse(this.state);
     loadAuthoredNpcs(this.state);
 
     // Deterministic test mode (e2e smoke tests, `pnpm bench` scenarios): no goblin
@@ -204,6 +220,9 @@ export class GameRoom extends Room<GameState> {
       this.autoDispose = false;
       console.log("[room] GORILATOR_TEST=1 — goblin waves disabled for a reproducible room");
     }
+    applyScenarioTuning(this.scenario);
+    applyScenarioWorld(this.state, this.scenario);
+    this.homeStanding = scenarioLaCryptaDefenseEnabled(this.scenario);
 
     // Discover + load server plugins (plugins/ + gorilator-plugin-* packages):
     // brains, item behaviors, tick systems, event listeners, content packs.
@@ -486,6 +505,25 @@ export class GameRoom extends Room<GameState> {
         slot.count -= 1;
         if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
         this.sendInventory(client.sessionId);
+      } else {
+        const itemType = slot.type;
+        const fromHunger = p.hunger;
+        const food = useFoodItem(p, itemType);
+        if (!food.used) return;
+        slot.count -= 1;
+        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
+        if (food.hungerRestored > 0) {
+          client.send("food", {
+            playerId: client.sessionId,
+            item: itemType,
+            hungerRestored: food.hungerRestored,
+            fromHunger,
+            toHunger: p.hunger,
+            durationMs: 4000,
+          });
+        }
+        if (food.hpRestored > 0) this.broadcast("heal", { targetId: client.sessionId, amount: food.hpRestored });
+        this.sendInventory(client.sessionId);
       }
     });
 
@@ -595,6 +633,7 @@ export class GameRoom extends Room<GameState> {
       runPluginSystems("pre");
       // Each system runs inside a perf span so a tick-time spike traces to the exact
       // culprit (the `tag:*` rows in the server summary / analyzer).
+      perfTracker.span("hunger", () => hungerSystem(this.state, dt)); // drains hunger; starvation can kill before movement/combat
       perfTracker.span("stamina", () => staminaSystem(this.state, dt)); // sets p.sprinting; movement reads it for the speed boost
       perfTracker.span("movement", () => movementSystem(this.state, dt));
       // Paused: normal movement is frozen, but the local player roams as a ghost
@@ -606,9 +645,10 @@ export class GameRoom extends Room<GameState> {
       perfTracker.span("goblinAi", () => goblinAiSystem(this.state, dt, emitDamage, emitKill));
       if (this.state.timeScale > 0)
         perfTracker.span("separation", () => separationSystem(this.state)); // fan attackers out — no stacking on one tile
-      perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: a horde besieges the house every WAVE_INTERVAL_MS
+      perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: holds when state.wavesEnabled=false
       perfTracker.span("sacredCircleHeal", () => this.sacredCircleHealSystem(dt));
-      perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
+      if (scenarioSpawnersEnabled(this.scenario))
+        perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
       runPluginSystems("main");
       this.releasePendingThrows(scaledMs);
       perfTracker.span("resources", () => {
@@ -616,7 +656,8 @@ export class GameRoom extends Room<GameState> {
         potionRespawnSystem(this.state, dt);
       });
       perfTracker.span("bananas", () => bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp));
-      perfTracker.span("houseRegen", () => houseRegenSystem(this.state, scaledMs, this.houseRegen, emitHeal));
+      if (scenarioLaCryptaDefenseEnabled(this.scenario))
+        perfTracker.span("houseRegen", () => houseRegenSystem(this.state, scaledMs, this.houseRegen, emitHeal));
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {
@@ -747,6 +788,7 @@ export class GameRoom extends Room<GameState> {
 
   /** Detect La Crypta collapsing (no standing house) and end the realm once. */
   private checkHomeFall() {
+    if (!scenarioLaCryptaDefenseEnabled(this.scenario)) return;
     let standing = false;
     this.state.houses.forEach((h) => {
       if (h.alive) standing = true;
@@ -834,8 +876,9 @@ export class GameRoom extends Room<GameState> {
     resetResources(this.state); // trees/rocks rebuilt; dropped logs/stones/items cleared
     spawnInitialPotions(this.state);
     spawnInitialBananas(this.state);
+    applyScenarioWorld(this.state, this.scenario);
     this.refreshRockObstacles(); // rocks are alive again → their collision is back
-    spawnHouse(this.state);
+    if (scenarioLaCryptaDefenseEnabled(this.scenario)) spawnHouse(this.state);
     syncAuthoredNpcs(this.state);
     resetWaves(this.state, true);
     resetSpawners();
@@ -850,9 +893,6 @@ export class GameRoom extends Room<GameState> {
       const r = 12 + Math.random() * 4;
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
-      // Watermark at the player's ACTUAL level — seeding {level: 1} under
-      // persistence would fire a bogus "level-up" save on the next tick.
-      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: p.level, dead: false });
     });
 
     if (persist && policy.progression.keepInventoryOnWipe) {
@@ -867,7 +907,16 @@ export class GameRoom extends Room<GameState> {
         this.sendInventory(sid);
       });
     }
-    this.homeStanding = true;
+    this.inventories.forEach((inv, sid) => {
+      const p = this.state.players.get(sid);
+      if (!p) return;
+      const changed = applyScenarioPlayer(p, inv, this.scenario);
+      if (changed) this.sendInventory(sid);
+      // Watermark at the player's ACTUAL level — seeding {level: 1} under
+      // persistence would fire a bogus "level-up" save on the next tick.
+      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: p.level, dead: false });
+    });
+    this.homeStanding = scenarioLaCryptaDefenseEnabled(this.scenario);
     this.realmTick = 0;
     this.state.restartTimerMs = 0;
 
@@ -987,6 +1036,8 @@ export class GameRoom extends Room<GameState> {
       p.hp = restore.hp > 0 ? restore.hp : restore.maxHp; // don't arrive dead
       p.maxStamina = restore.maxStamina;
       p.stamina = restore.stamina;
+      p.maxHunger = restore.maxHunger;
+      p.hunger = restore.hunger;
       p.level = restore.level;
       p.xp = restore.xp;
       p.attack = restore.attack;
@@ -1013,6 +1064,13 @@ export class GameRoom extends Room<GameState> {
       p.moveSpeed = tune.playerMoveSpeed;
     }
 
+    // Inherit the old session's / saved inventory, or start empty.
+    const inv = restore?.inventory ?? makeInventory();
+    if (!restore?.inventory) {
+      addItem(inv, "banana", STARTING_BANANAS);
+    }
+    applyScenarioPlayer(p, inv, this.scenario);
+
     this.state.players.set(client.sessionId, p);
     serverPluginHost.fire(
       "player:spawn",
@@ -1022,11 +1080,6 @@ export class GameRoom extends Room<GameState> {
     this.reportRealm(); // ensure a live realm exists before any immediate save trigger
     realmTracker.noteNpub(p.pubkey); // track the npub in the live realm (no-op for anon / no realm)
 
-    // Inherit the old session's / saved inventory, or start empty.
-    const inv = restore?.inventory ?? makeInventory();
-    if (!restore?.inventory) {
-      addItem(inv, "banana", STARTING_BANANAS);
-    }
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
 
@@ -1062,6 +1115,8 @@ export class GameRoom extends Room<GameState> {
         maxHp: existing.maxHp,
         stamina: existing.stamina,
         maxStamina: existing.maxStamina,
+        hunger: existing.hunger,
+        maxHunger: existing.maxHunger,
         level: existing.level,
         xp: existing.xp,
         attack: existing.attack,

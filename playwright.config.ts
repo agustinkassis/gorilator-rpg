@@ -25,10 +25,11 @@ export default defineConfig({
       },
     },
   ],
-  // GORILATOR_TEST=1 keeps the room reproducible (no waves).
+  // GORILATOR_TEST=1 keeps the room reproducible (no waves); the hunger scenario
+  // stages the Feature Lab smoke while preserving the normal splash join path.
   webServer: [
     {
-      command: `GORILATOR_TEST=1 GAME_SERVER_PORT=${E2E_SERVER_PORT} pnpm --filter @rpg/server dev`,
+      command: `GORILATOR_TEST=1 GORILATOR_SCENARIO=hunger GAME_SERVER_PORT=${E2E_SERVER_PORT} pnpm --filter @rpg/server dev`,
       url: `http://localhost:${E2E_SERVER_PORT}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 90_000,

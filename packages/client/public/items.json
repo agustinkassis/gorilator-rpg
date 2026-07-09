@@ -1,1 +1,34 @@
-[]
+[
+  {
+    "id": "wild_berry",
+    "name": "Wild Berry",
+    "icon": "🫐",
+    "stack": 20,
+    "worldScale": 1,
+    "food": { "hunger": 18, "hp": 4, "stamina": 8 }
+  },
+  {
+    "id": "cranberries",
+    "name": "Cranberries",
+    "icon": "🍒",
+    "stack": 30,
+    "worldScale": 0.9,
+    "food": { "hunger": 12, "hp": 3, "stamina": 6 }
+  },
+  {
+    "id": "roasted_banana",
+    "name": "Roasted Banana",
+    "icon": "🍌",
+    "stack": 10,
+    "worldScale": 1.1,
+    "food": { "hunger": 34, "hp": 8, "stamina": 14 }
+  },
+  {
+    "id": "trail_ration",
+    "name": "Trail Ration",
+    "icon": "🥘",
+    "stack": 8,
+    "worldScale": 1.15,
+    "food": { "hunger": 55, "hp": 12, "stamina": 22 }
+  }
+]

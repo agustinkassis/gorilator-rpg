@@ -102,7 +102,7 @@ function damageMap(state: GameState): WeakMap<object, Record<string, number>> {
   return map;
 }
 
-function legacyResourceDrops(kind: "tree" | "rock"): DropRuleConfig[] {
+function legacyResourceDrops(kind: string): DropRuleConfig[] {
   if (entityFeature(kind).drops !== undefined) return entityDrops(kind);
   const cfg = dropConfig(kind);
   return [
@@ -113,6 +113,12 @@ function legacyResourceDrops(kind: "tree" | "rock"): DropRuleConfig[] {
       trigger: cfg.trigger === "hit" ? "damage" : "kill",
     },
   ];
+}
+
+function treeResourceKind(tree: Tree): string {
+  const kind = String(tree.kind || "").trim().toLowerCase();
+  if (kind) return kind;
+  return tree.id.includes("bush") ? "bush" : "tree";
 }
 
 function rulesFor(kind: string, id?: string, modelId?: string): DropRuleConfig[] {
@@ -256,16 +262,17 @@ function dropFromTree(state: GameState, tree: Tree, item: string) {
  *  configured item every (hp/amount) damage, so it yields `amount` total across its
  *  full hp. Kill-drop trees yield nothing here (everything drops when felled). */
 export function onTreeDamaged(state: GameState, tree: Tree, amount: number) {
-  const rules = legacyResourceDrops("tree");
-  if (entityFeature("tree").drops !== undefined) {
-    applyDamageDrops(state, tree, "tree", tree.id, undefined, tree.x, tree.z, tree.maxHp, amount, 0.9);
+  const kind = treeResourceKind(tree);
+  const rules = legacyResourceDrops(kind);
+  if (entityFeature(kind).drops !== undefined) {
+    applyDamageDrops(state, tree, kind, tree.id, undefined, tree.x, tree.z, tree.maxHp, amount, 0.9);
     return;
   }
   const cfg = rules[0];
   if (!cfg || cfg.trigger !== "damage") return;
   const total = Math.round(cfg.quantity);
   if (total <= 0) return;
-  const perItem = Math.max(1, dropConfig("tree").hp) / total; // user's formula: total HP / total items
+  const perItem = Math.max(1, dropConfig(kind).hp) / total; // user's formula: total HP / total items
   tree.damageSinceDrop += amount;
   while (tree.damageSinceDrop >= perItem) {
     tree.damageSinceDrop -= perItem;
@@ -277,14 +284,15 @@ export function onTreeDamaged(state: GameState, tree: Tree, amount: number) {
  *  tree) shed the full configured amount. Progressive trees already shed while
  *  being chopped (see onTreeDamaged), so nothing extra drops here. */
 export function onTreeCut(state: GameState, tree: Tree) {
+  const kind = treeResourceKind(tree);
   tree.alive = false;
   tree.hp = 0;
   tree.regrowTimer = TREE_REGROW_MS;
   tree.damageSinceDrop = 0;
 
-  const cfg = dropConfig("tree");
-  if (entityFeature("tree").drops !== undefined) {
-    dropEntityLoot(state, "tree", tree.id, undefined, tree.x, tree.z, 0.9);
+  const cfg = dropConfig(kind);
+  if (entityFeature(kind).drops !== undefined) {
+    dropEntityLoot(state, kind, tree.id, undefined, tree.x, tree.z, 0.9);
     return;
   }
   if (cfg.trigger !== "kill") return;
@@ -415,14 +423,15 @@ export function onRockMined(state: GameState, rock: Rock) {
  *  progressive-drop accumulators. Called once after spawn and on every resources.json
  *  change, so editing a tree/rock's HP commits to all trees/rocks at once. */
 export function applyResourceConfig(state: GameState) {
-  const treeHp = Math.max(0, entityHp("tree", undefined, undefined, dropConfig("tree").hp));
-  const rockHp = Math.max(0, entityHp("rock", undefined, undefined, dropConfig("rock").hp));
   state.trees.forEach((t) => {
+    const kind = treeResourceKind(t);
+    const treeHp = Math.max(0, entityHp(kind, t.id, undefined, dropConfig(kind).hp));
     t.maxHp = treeHp;
     if (t.alive) t.hp = treeHp;
     t.damageSinceDrop = 0;
   });
   state.rocks.forEach((r) => {
+    const rockHp = Math.max(0, entityHp("rock", r.id, undefined, dropConfig("rock").hp));
     r.maxHp = rockHp;
     if (r.alive) r.hp = rockHp;
     r.damageSinceStone = 0;

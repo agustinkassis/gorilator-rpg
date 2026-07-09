@@ -5,6 +5,7 @@
   "description": "Multiplayer isometric low-poly RPG demo — Babylon.js + Colyseus",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "scenario": "node scripts/scenario.mjs",
     "start": "node scripts/dev.mjs",
     "bootstrap": "node scripts/setup.mjs",
     "wt": "node scripts/wt.mjs",
@@ -44,14 +45,5 @@
   "packageManager": "pnpm@10.14.0",
   "engines": {
     "node": ">=20"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "msgpackr-extract"
-    ],
-    "overrides": {
-      "rollup": "npm:@rollup/wasm-node@4.60.4"
-    }
   }
 }

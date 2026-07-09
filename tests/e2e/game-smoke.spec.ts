@@ -68,3 +68,67 @@ test("a guest can join: websocket connects, the room sees the player, the render
     )
     .toBeGreaterThan(0);
 });
+
+test("hunger scenario auto-joins and food restores hunger", async ({ page }) => {
+  const wsPromise = page.waitForEvent("websocket", {
+    predicate: (ws) => ws.url().includes(`:${E2E_SERVER_PORT}`),
+    timeout: 60_000,
+  });
+
+  await page.goto("/?scenario=hunger&autojoin=HungerBot");
+  await wsPromise;
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const rpg = (window as { __rpg?: { net?: { room?: unknown } } }).__rpg;
+          const room = rpg?.net?.room as
+            | { sessionId: string; state: { players: Map<string, { hunger: number }> } }
+            | undefined;
+          return room?.state.players.get(room.sessionId)?.hunger ?? null;
+        }),
+      { timeout: 60_000 },
+    )
+    .not.toBeNull();
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const rpg = (window as { __rpg?: { net?: { room?: unknown } } }).__rpg;
+          const room = rpg?.net?.room as
+            | { sessionId: string; state: { players: Map<string, { hunger: number }> } }
+            | undefined;
+          return room?.state.players.get(room.sessionId)?.hunger ?? 100;
+        }),
+      { timeout: 60_000 },
+    )
+    .toBeLessThan(32);
+  const before = await page.evaluate(() => {
+    const rpg = (window as { __rpg?: { net?: { room?: unknown } } }).__rpg;
+    const room = rpg?.net?.room as
+      | { sessionId: string; state: { players: Map<string, { hunger: number }> } }
+      | undefined;
+    return room?.state.players.get(room.sessionId)?.hunger ?? 0;
+  });
+
+  await page.evaluate(() => {
+    const rpg = (window as { __rpg?: { net?: { sendUseItem(slot: number): void } } }).__rpg;
+    rpg?.net?.sendUseItem(0);
+  });
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const rpg = (window as { __rpg?: { net?: { room?: unknown } } }).__rpg;
+          const room = rpg?.net?.room as
+            | { sessionId: string; state: { players: Map<string, { hunger: number }> } }
+            | undefined;
+          return room?.state.players.get(room.sessionId)?.hunger ?? 0;
+        }),
+      { timeout: 60_000 },
+    )
+    .toBeGreaterThan(before + 10);
+});

@@ -1,4 +1,10 @@
-import { AnimState, PLAYER_MAX_STAMINA, Player } from "@rpg/shared";
+import {
+  AnimState,
+  PLAYER_MAX_HUNGER,
+  PLAYER_MAX_STAMINA,
+  RESPAWN_HUNGER_FRACTION,
+  Player,
+} from "@rpg/shared";
 import { describe, expect, it } from "vitest";
 import { devTuningDefaults } from "./devTuning";
 import { resetPlayerForNewRealm } from "./realmLifecycle";
@@ -23,6 +29,8 @@ function makeVeteran(): Player {
   p.throwPower = 1.9;
   p.maxStamina = PLAYER_MAX_STAMINA;
   p.stamina = 3;
+  p.maxHunger = PLAYER_MAX_HUNGER;
+  p.hunger = 2;
   p.godMode = true;
   p.berserkerMs = 5000;
   p.critMultiplier = 5;
@@ -46,6 +54,7 @@ function makeVeteran(): Player {
 function expectRealmStateCleared(p: Player): void {
   expect(p.stamina).toBe(PLAYER_MAX_STAMINA);
   expect(p.maxStamina).toBe(PLAYER_MAX_STAMINA);
+  expect(p.hunger).toBeGreaterThanOrEqual(p.maxHunger * RESPAWN_HUNGER_FRACTION);
   expect(p.godMode).toBe(false);
   expect(p.berserkerMs).toBe(0);
   expect(p.critMultiplier).toBe(0);

@@ -45,6 +45,8 @@ export interface PlayerSave {
   maxHp: number;
   stamina: number;
   maxStamina: number;
+  hunger: number;
+  maxHunger: number;
   x: number;
   z: number;
   rotY: number; // orientation
@@ -268,6 +270,11 @@ export type DevTuningKey =
   | "playerCritChance"
   | "playerMoveSpeed"
   | "sprintSpeedMult"
+  | "hungerDrainPerMin"
+  | "starvationDamagePerSec"
+  | "foodHungerMult"
+  | "foodHpMult"
+  | "foodStaminaMult"
   | "enemyMaxHp"
   | "enemyAttack"
   | "enemyMoveSpeed"
@@ -345,6 +352,17 @@ export interface KillEvent {
 export interface HealEvent {
   targetId: string;
   amount: number;
+}
+
+// Server -> client: emitted to the eater when food restores hunger, so the HUD can
+// animate the hunger meter without delaying authoritative gameplay state.
+export interface FoodEvent {
+  playerId: string;
+  item: ItemType;
+  hungerRestored: number;
+  fromHunger: number;
+  toHunger: number;
+  durationMs: number;
 }
 
 // Server -> client: emitted when a player gains XP from an action (a kill, a

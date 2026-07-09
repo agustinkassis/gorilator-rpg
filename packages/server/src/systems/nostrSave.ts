@@ -49,7 +49,7 @@ export function buildServerSave(
   context: SaveContext = {},
 ): PlayerSave {
   return {
-    v: 1,
+    v: 2,
     playerPubkey: p.pubkey || undefined,
     realm: context.realm ?? undefined,
     reason: context.reason,
@@ -59,6 +59,8 @@ export function buildServerSave(
     maxHp: p.maxHp,
     stamina: p.stamina,
     maxStamina: p.maxStamina,
+    hunger: p.hunger,
+    maxHunger: p.maxHunger,
     x: p.x,
     z: p.z,
     rotY: p.rotY,

@@ -6,6 +6,7 @@ import {
   Enemy,
   GameState,
   Player,
+  RESPAWN_HUNGER_FRACTION,
   WORLD_SIZE,
 } from "@rpg/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -167,5 +168,21 @@ describe("combat characterization", () => {
     combatSystem(state, 0.05, noop, noop, noop);
     expect(p.attackTargetId).toBe("");
     expect(p.state).toBe(AnimState.IDLE);
+  });
+
+  it("respawns a dead player with partial hunger restored", () => {
+    const p = makePlayer("p1", 0, 10);
+    const state = makeState(p);
+    p.state = AnimState.DEAD;
+    p.hp = 0;
+    p.hunger = 0;
+    p.maxHunger = 100;
+    p.respawnTimer = 10;
+
+    combatSystem(state, 0.02, noop, noop, noop);
+
+    expect(p.state).toBe(AnimState.IDLE);
+    expect(p.hp).toBe(p.maxHp);
+    expect(p.hunger).toBe(100 * RESPAWN_HUNGER_FRACTION);
   });
 });

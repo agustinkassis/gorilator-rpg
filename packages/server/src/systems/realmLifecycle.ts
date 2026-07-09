@@ -1,4 +1,10 @@
-import { AnimState, PLAYER_MAX_STAMINA, type Player } from "@rpg/shared";
+import {
+  AnimState,
+  PLAYER_MAX_HUNGER,
+  PLAYER_MAX_STAMINA,
+  RESPAWN_HUNGER_FRACTION,
+  type Player,
+} from "@rpg/shared";
 import type { DevTuningValues } from "./devTuning";
 
 /**
@@ -24,9 +30,11 @@ export function resetPlayerForNewRealm(p: Player, persist: boolean, tune: DevTun
     p.critChance = tune.playerCritChance;
     p.moveSpeed = tune.playerMoveSpeed;
     p.throwPower = 1;
+    p.maxHunger = PLAYER_MAX_HUNGER;
   }
   p.maxStamina = PLAYER_MAX_STAMINA;
   p.stamina = PLAYER_MAX_STAMINA;
+  p.hunger = Math.max(p.hunger, p.maxHunger * RESPAWN_HUNGER_FRACTION);
   p.godMode = false;
   p.berserkerMs = 0;
   p.critMultiplier = 0;

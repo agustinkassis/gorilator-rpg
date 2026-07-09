@@ -44,13 +44,13 @@ its own key (`NOSTR_NSEC`) and publishes it as a replaceable event.
 | written | on level-up, death, and logout (and, with the Phase 2 policy, on realm end) |
 | `content` | a `PlayerSave` JSON |
 
-### `PlayerSave` content (v1)
+### `PlayerSave` content (v2)
 
 The canonical type is `PlayerSave` in `packages/shared/src/types.ts`:
 
 ```ts
 interface PlayerSave {
-  v: number;                  // save schema version (currently 1)
+  v: number;                  // save schema version (currently 2)
   playerPubkey?: string;      // hex pubkey; present on newly published saves
   realm?: { id: string; startedAt: number; wave: number };
   reason?: string;            // "level-up" | "death" | "logout" | …
@@ -61,6 +61,8 @@ interface PlayerSave {
   maxHp: number;
   stamina: number;
   maxStamina: number;
+  hunger: number;
+  maxHunger: number;
   x: number;
   z: number;
   rotY: number;
@@ -81,8 +83,9 @@ inventory slots, stack counts clamped, numeric fields validated. Sanitization
 is the first line of defense for migration too — imports go through the same
 path plus the policy clamps in §4.
 
-**Versioning:** `v` bumps when fields are added. `PlayerSave` v2 (planned with
-Phase 3) adds `equipment[]`, `mana`, `hunger`, and `quests[]` — importers must
+**Versioning:** `v` bumps when fields are added. v1 saves load with default
+hunger values, so old relay saves remain valid. `PlayerSave` v3 (planned with
+Phase 3) adds `equipment[]`, `mana`, and `quests[]` — importers must
 accept lower versions and fill defaults.
 
 A second per-realm address (`d: gorilator-player-realm-v1:<realm-id>:<pk>`)

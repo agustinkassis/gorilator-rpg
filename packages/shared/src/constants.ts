@@ -84,6 +84,16 @@ export const STAMINA_REGEN_PER_SEC = 18; // regained per second once regen resum
 export const STAMINA_REGEN_DELAY_MS = 800; // pause before stamina starts coming back after a sprint
 export const STAMINA_SPRINT_REENGAGE = 20; // once emptied, must recover to this before sprinting again
 
+// Hunger: a slow survival pressure. Food restores it; at zero the player starts
+// losing HP until they eat or die. Values are live-tunable in Dev Mode.
+export const PLAYER_MAX_HUNGER = 100;
+export const HUNGER_DRAIN_PER_MIN = 10; // full → empty in ~16.7 min at default tuning
+export const STARVATION_DAMAGE_PER_SEC = 1;
+export const FOOD_HUNGER_MULT = 1;
+export const FOOD_HP_MULT = 1;
+export const FOOD_STAMINA_MULT = 1;
+export const RESPAWN_HUNGER_FRACTION = 0.35; // don't respawn already starving
+
 // Leveling: characters gain XP from kills and level up on an escalating curve.
 export const XP_BASE = 100; // XP to go from level 1 → 2
 export const XP_GROWTH = 1.5; // each level needs XP_BASE * level^this
