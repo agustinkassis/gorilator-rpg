@@ -59,6 +59,25 @@ describe("scenario loader (#65)", () => {
     expect(state.timeScale).toBe(TIME_SCALE_MAX);
   });
 
+  it("config layer: accepts legacy Hunger Lab sandbox flags", () => {
+    const state = freshState();
+    state.wavesEnabled = true;
+    applyScenarioConfig(state, {
+      name: "hunger",
+      world: {
+        wavesEnabled: false,
+        laCryptaDefense: false,
+        spawnersEnabled: false,
+      },
+      tuning: { hungerDrainPerMin: 6, starvationDamagePerSec: 1 },
+      tweaks: ["hungerDrainPerMin", "starvationDamagePerSec"],
+    });
+    expect(realmEvents().enabled).toBe(false);
+    expect(state.wavesEnabled).toBe(false);
+    expect(devTuning().hungerDrainPerMin).toBe(6);
+    expect(devTuning().starvationDamagePerSec).toBe(1);
+  });
+
   it("config layer: events default OFF in a scenario; explicit true keeps them on", () => {
     const state = freshState();
     applyScenarioConfig(state, { name: "t" });
@@ -88,6 +107,7 @@ describe("scenario loader (#65)", () => {
       world: {
         resources: [
           { type: "tree", x: 5, z: 5 },
+          { kind: "bush", id: "cranberry_bush_0", x: 3, z: 4, scale: 0.75, hp: 24 },
           { type: "rock", x: -5, z: 5 },
           { type: "volcano", x: 0, z: 0 }, // unknown → warned + ignored
         ],
@@ -100,7 +120,11 @@ describe("scenario loader (#65)", () => {
       },
     };
     applyScenarioWorld(state, m);
-    expect(state.trees.size).toBe(1);
+    expect(state.trees.size).toBe(2);
+    const bush = state.trees.get("cranberry_bush_0");
+    expect(bush?.kind).toBe("bush");
+    expect(bush?.scale).toBe(0.75);
+    expect(bush?.hp).toBe(24);
     expect(state.rocks.size).toBe(1);
     expect(state.bananas.size).toBe(3);
     expect(state.enemies.size).toBe(3); // 1 npc + 2 staged enemies

@@ -44,6 +44,11 @@ import {
   PLAYER_CRIT_CHANCE,
   MOVE_SPEED,
   SPRINT_SPEED_MULT,
+  HUNGER_DRAIN_PER_MIN,
+  STARVATION_DAMAGE_PER_SEC,
+  FOOD_HUNGER_MULT,
+  FOOD_HP_MULT,
+  FOOD_STAMINA_MULT,
   GOBLIN_MAX_HP,
   GOBLIN_ATTACK,
   GOBLIN_CHASE_SPEED,
@@ -904,7 +909,7 @@ export class DevMode {
       wrap.appendChild(desc);
     }
 
-    const keys = Object.keys(info.tuning ?? {});
+    const keys = Array.from(new Set([...Object.keys(info.tuning ?? {}), ...(info.tweaks ?? [])]));
     for (const key of keys) {
       const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
       if (control) {
@@ -1025,13 +1030,14 @@ export class DevMode {
     // ---- Scenario tweaks: the active Feature Lab manifest's knobs, pinned on top ----
     if (this.scenarioInfo) body.appendChild(this.renderScenarioTweaks());
 
-    // ---- Big square category buttons (Waves / Player / Combat / Resources) ----
+    // ---- Big square category buttons (Waves / Player / Combat / Survival / Resources) ----
     const catRow = document.createElement("div");
-    catRow.style.cssText = "display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;";
+    catRow.style.cssText = "display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;";
     const CATS: { id: GameplayCategory; icon: string; label: string }[] = [
       { id: "Waves", icon: "🌊", label: "Waves" },
       { id: "Player", icon: "🛡️", label: "Player" },
       { id: "Combat", icon: "⚔️", label: "Combat" },
+      { id: "Survival", icon: "🍲", label: "Survival" },
       { id: "Resources", icon: "🌳", label: "Resources" },
     ];
     for (const cat of CATS) {
@@ -1334,15 +1340,15 @@ export class DevMode {
   private renderResourceHp(): HTMLElement {
     const wrap = this.gameplaySection("Resource HP");
     const hint = document.createElement("div");
-    hint.textContent = "Total HP of every tree / rock — applies to all instances live.";
+    hint.textContent = "Total HP of every tree / bush / rock — applies to all instances live.";
     hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
     wrap.appendChild(hint);
-    for (const kind of ["tree", "rock"] as const) {
+    for (const kind of RESOURCE_KINDS) {
       const cfg = this.dropCfg(kind);
       const row = document.createElement("label");
       row.style.cssText = "display:grid; grid-template-columns:1fr 86px 28px; align-items:center; gap:7px;";
       const name = document.createElement("span");
-      name.textContent = kind === "tree" ? "Tree HP" : "Rock HP";
+      name.textContent = kind === "tree" ? "Tree HP" : kind === "bush" ? "Bush HP" : "Rock HP";
       name.style.cssText = "color:#cdd3e0; font-weight:600;";
       const input = numberInput(Number(cfg.hp) || 0, 1, 1_000_000, 1, "100%");
       input.onchange = () => {
@@ -1949,11 +1955,11 @@ export class DevMode {
       const feature =
         sel.kind === "enemy"
           ? this.featureTarget(sel, obj?.kind || "npc", obj?.modelId)
-          : sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house"
-            ? this.featureTarget(sel, sel.kind)
+          : isDamageableResource(sel.kind) || sel.kind === "house"
+            ? this.featureTarget(sel, resourceFeatureKind(sel.kind, obj))
             : null;
       if (feature) this.appendPropertyScopeToggle(sel, feature, fields);
-      if (sel.kind === "tree" && feature) this.appendDamageableFields("tree", feature.scope, feature.key, sel.id, obj, 10, fields);
+      if (isTreeResource(sel.kind) && feature) this.appendDamageableFields(sel.kind, feature.scope, feature.key, sel.id, obj, 10, fields);
       if (sel.kind === "enemy" && obj?.maxHp !== undefined) {
         const enemyFeature = feature ?? this.featureTarget(sel, obj.kind || "npc", obj.modelId);
         this.appendCharacterFields(sel, obj, fields, enemyFeature);
@@ -2000,8 +2006,9 @@ export class DevMode {
     }
 
     if (sel.kind === "house") this.appendStructureMaskFields(sel, fields, actions);
-    if (sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house") {
-      const feature = this.featureTarget(sel, sel.kind);
+    if (isDamageableResource(sel.kind) || sel.kind === "house") {
+      const obj = this.entityObj(sel.kind, sel.id);
+      const feature = this.featureTarget(sel, resourceFeatureKind(sel.kind, obj));
       this.appendFeatureDropFields(sel.kind, feature.scope, feature.key, sel, fields, actions, feature.modelId);
     }
     if (sel.kind === "enemy") {
@@ -2680,7 +2687,9 @@ export class DevMode {
     const def: DropCfg =
       kind === "tree"
         ? { item: "log", amount: 1, trigger: "kill", hp: 60 }
-        : { item: "stone", amount: 11, trigger: "hit", hp: 560 };
+        : kind === "bush"
+          ? { item: "cranberries", amount: 5, trigger: "kill", hp: 24 }
+          : { item: "stone", amount: 11, trigger: "hit", hp: 560 };
     const c = this.drops.get(kind);
     if (!c) {
       this.drops.set(kind, def);
@@ -2901,6 +2910,8 @@ export class DevMode {
     const map =
       kind === "tree"
         ? st.trees
+        : kind === "bush"
+          ? st.trees
         : kind === "player"
           ? st.players
         : kind === "potion"
@@ -2982,6 +2993,11 @@ const MASK_VERTEX_HIT = 0.65;
 const MASK_EDGE_HIT = 0.5;
 
 const structureKind = (kind: string): string | null => (kind === "house" ? "house" : null);
+const RESOURCE_KINDS = ["tree", "bush", "rock"] as const;
+const isTreeResource = (kind: string) => kind === "tree" || kind === "bush";
+const isDamageableResource = (kind: string) => isTreeResource(kind) || kind === "rock";
+const resourceFeatureKind = (kind: string, obj: EntityView | null): string =>
+  isTreeResource(kind) ? (obj?.kind === "bush" ? "bush" : kind) : kind;
 
 function nearestVertex(points: MaskPoint[], p: MaskPoint): { index: number; dist: number } {
   let index = -1;
@@ -3041,6 +3057,7 @@ const copyable = (kind: string) =>
 /** Synced runtime entities that Dev Mode can move/delete through the server. */
 const editableSynced = (kind: string) =>
   kind === "tree" ||
+  kind === "bush" ||
   kind === "enemy" ||
   kind === "rock" ||
   kind === "potion" ||
@@ -3071,15 +3088,16 @@ const nameFromModel = (model: string) => model.split("/").pop()?.replace(/\.glb$
 
 /** Kinds that can be turned into a goblin spawner (any non-character object). */
 const spawnable = (kind: string) =>
-  kind === "prop" || kind === "tree" || kind === "rock" || kind === "house";
+  kind === "prop" || kind === "tree" || kind === "bush" || kind === "rock" || kind === "house";
 
 /** Resource kinds with a tunable drop table (what/how much they yield). */
-const isResource = (kind: string) => kind === "tree" || kind === "rock";
+const isResource = (kind: string) => kind === "tree" || kind === "bush" || kind === "rock";
 
 /** Items a resource can be configured to drop (must match the server's dropItem). */
 const DROP_ITEMS = [
   { value: "log", label: "Log" },
   { value: "stone", label: "Stone" },
+  { value: "cranberries", label: "Cranberries" },
   { value: "banana", label: "Banana" },
   { value: "potion", label: "Potion" },
   { value: "berserker_potion", label: "Berserker Potion" },
@@ -3101,6 +3119,7 @@ const BASE_SPAWN_TYPES = [
   { value: "log", label: "Log" },
   { value: "stone", label: "Stone" },
   { value: "tree", label: "Tree" },
+  { value: "bush", label: "Bush" },
   { value: "rock", label: "Rock" },
 ];
 
@@ -3119,7 +3138,7 @@ const DEV_GLOBAL_ACTIONS: GameplayAction[] = [
   { id: "level_up_player", label: "Level Up Current Player" },
 ];
 
-type GameplayCategory = "Waves" | "Player" | "Combat" | "Resources";
+type GameplayCategory = "Waves" | "Player" | "Combat" | "Survival" | "Resources";
 
 interface WaveEntryUI {
   kind: string;
@@ -3384,6 +3403,73 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
     unit: "s",
     scale: sec,
     integer: true,
+  },
+
+  // ===================== SURVIVAL =====================
+  {
+    key: "hungerDrainPerMin",
+    label: "Hunger drain",
+    category: "Survival",
+    section: "Hunger",
+    description: "Hunger lost per minute. Set to 0 for peaceful worlds.",
+    defaultValue: HUNGER_DRAIN_PER_MIN,
+    min: 0,
+    max: 600,
+    step: 1,
+    unit: "/min",
+    scale: 1,
+  },
+  {
+    key: "starvationDamagePerSec",
+    label: "Starvation damage",
+    category: "Survival",
+    section: "Hunger",
+    description: "HP lost per second while hunger is empty.",
+    defaultValue: STARVATION_DAMAGE_PER_SEC,
+    min: 0,
+    max: 1000,
+    step: 0.5,
+    unit: "hp/s",
+    scale: 1,
+  },
+  {
+    key: "foodHungerMult",
+    label: "Food hunger",
+    category: "Survival",
+    section: "Food",
+    description: "Multiplier on hunger restored by edible items.",
+    defaultValue: FOOD_HUNGER_MULT,
+    min: 0,
+    max: 50,
+    step: 0.1,
+    unit: "x",
+    scale: 1,
+  },
+  {
+    key: "foodHpMult",
+    label: "Food HP",
+    category: "Survival",
+    section: "Food",
+    description: "Multiplier on HP restored by edible items.",
+    defaultValue: FOOD_HP_MULT,
+    min: 0,
+    max: 50,
+    step: 0.1,
+    unit: "x",
+    scale: 1,
+  },
+  {
+    key: "foodStaminaMult",
+    label: "Food stamina",
+    category: "Survival",
+    section: "Food",
+    description: "Multiplier on stamina restored by edible items.",
+    defaultValue: FOOD_STAMINA_MULT,
+    min: 0,
+    max: 50,
+    step: 0.1,
+    unit: "x",
+    scale: 1,
   },
 
   // ===================== COMBAT =====================

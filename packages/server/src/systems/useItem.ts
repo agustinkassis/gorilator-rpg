@@ -1,6 +1,7 @@
 import {
   type GameState,
   type InventorySlot,
+  type ItemType,
   AnimState,
   POTION_HEAL,
   CRIT_MULTIPLIER,
@@ -11,6 +12,7 @@ import {
   BERSERKER_HP_MULT,
 } from "@rpg/shared";
 import { devTuning } from "./devTuning";
+import { useFoodItem } from "./food";
 import { serverPluginHost } from "./plugins/host";
 
 /** Pre-buff stats saved when a berserker potion is consumed; restored on expiry. */
@@ -116,6 +118,28 @@ export function useItemFromSlot(
       slot.type = "";
       slot.count = 0;
     }
+    deps.sendInventory(sessionId);
+  } else {
+    const itemType = slot.type as ItemType;
+    const fromHunger = p.hunger;
+    const food = useFoodItem(p, itemType);
+    if (!food.used) return;
+    slot.count -= 1;
+    if (slot.count <= 0) {
+      slot.type = "";
+      slot.count = 0;
+    }
+    if (food.hungerRestored > 0) {
+      deps.broadcast("food", {
+        playerId: sessionId,
+        item: itemType,
+        hungerRestored: food.hungerRestored,
+        fromHunger,
+        toHunger: p.hunger,
+        durationMs: 4000,
+      });
+    }
+    if (food.hpRestored > 0) deps.broadcast("heal", { targetId: sessionId, amount: food.hpRestored });
     deps.sendInventory(sessionId);
   }
 }

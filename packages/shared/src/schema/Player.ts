@@ -3,6 +3,7 @@ import { AnimState } from "../types";
 import {
   PLAYER_MAX_HP,
   PLAYER_MAX_STAMINA,
+  PLAYER_MAX_HUNGER,
   PLAYER_ATTACK,
   PLAYER_ARMOR,
   PLAYER_CRIT_CHANCE,
@@ -25,6 +26,8 @@ export class Player extends Schema {
   @type("number") maxHp = PLAYER_MAX_HP;
   @type("number") stamina = PLAYER_MAX_STAMINA; // sprint resource; refills over time
   @type("number") maxStamina = PLAYER_MAX_STAMINA;
+  @type("number") hunger = PLAYER_MAX_HUNGER; // survival meter; food restores it
+  @type("number") maxHunger = PLAYER_MAX_HUNGER;
   @type("string") state: AnimState = AnimState.IDLE;
   @type("number") hue = 0; // 0..360, per-player colour tint
 
@@ -65,14 +68,12 @@ export class Player extends Schema {
   @type("number") berserkerMs = 0;
 
   // ---- Phase 3 batched schema change (#72) ----
-  // Reserved synced fields for the abilities/survival/equipment systems (their
-  // gameplay lands in later issues). maxMana/maxHunger 0 = that system is off
-  // for this player. gear* carry item ids so OTHER clients can render visible
-  // wearables. Do not add further @type fields outside a planned batch.
+  // Reserved synced fields for the abilities/equipment systems (their gameplay
+  // lands in later issues). maxMana 0 = that system is off for this player.
+  // gear* carry item ids so OTHER clients can render visible wearables. Do not
+  // add further @type fields outside a planned batch.
   @type("number") mana = 0;
   @type("number") maxMana = 0;
-  @type("number") hunger = 0;
-  @type("number") maxHunger = 0;
   @type("string") gearWeapon = "";
   @type("string") gearHead = "";
   @type("string") gearChest = "";

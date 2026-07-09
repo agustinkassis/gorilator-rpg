@@ -100,7 +100,7 @@ interface ModelEntry {
   size: number;
 }
 
-type BuiltinThumb = "tree" | "rock" | "log" | "stone" | "potion" | "banana" | "berserker_potion" | "dummy";
+type BuiltinThumb = "tree" | "bush" | "rock" | "log" | "stone" | "potion" | "banana" | "berserker_potion" | "dummy";
 type ThumbSource =
   | { type: "model"; model: string; token?: string | number }
   | { type: "builtin"; id: BuiltinThumb; token?: string | number }
@@ -139,6 +139,7 @@ const BUILTIN_NEW_ENTITIES: TemplateEntry[] = [
   { label: "Goblin", kind: "goblin", meta: "Enemy", category: "characters", thumb: { type: "model", model: "/models/goblin.glb", token: "runtime" } },
   { label: "Dummy", kind: "dummy", meta: "Training enemy", category: "characters", thumb: { type: "builtin", id: "dummy" } },
   { label: "Tree", kind: "tree", meta: "Resource", category: "resources", thumb: { type: "builtin", id: "tree" } },
+  { label: "Bush", kind: "bush", meta: "Cranberry resource", category: "resources", thumb: { type: "builtin", id: "bush" } },
   { label: "Rock", kind: "rock", meta: "Resource", category: "resources", thumb: { type: "builtin", id: "rock" } },
   { label: "House", kind: "house", meta: "Structure", category: "structures", thumb: { type: "model", model: "/models/house.glb", token: "runtime" } },
   { label: "Log", kind: "log", meta: "Pickup item", category: "items", thumb: { type: "builtin", id: "log" } },
@@ -636,7 +637,8 @@ export class LibraryExplorer {
       return { ids: idsOf(st.potions, (v) => v.kind === "berserker_potion"), focusKind: "potion" };
     if (kind === "potion") return { ids: idsOf(st.potions, (v) => !v.kind || v.kind === "potion"), focusKind: "potion" };
     if (kind === "house") return { ids: idsOf(st.houses), focusKind: "house" };
-    if (kind === "tree") return { ids: idsOf(st.trees), focusKind: "tree" };
+    if (kind === "tree") return { ids: idsOf(st.trees, (v) => (v.kind || "tree") !== "bush"), focusKind: "tree" };
+    if (kind === "bush") return { ids: idsOf(st.trees, (v) => v.kind === "bush"), focusKind: "bush" };
     if (kind === "rock") return { ids: idsOf(st.rocks), focusKind: "rock" };
     return { ids: idsOf(st[`${kind}s`]), focusKind: kind }; // log / stone / banana
   }
@@ -1062,6 +1064,7 @@ async function buildThumbTarget(scene: Scene, source: ThumbSource): Promise<Thum
     return loaded;
   }
   if (source.id === "tree") return buildTree(scene);
+  if (source.id === "bush") return buildTree(scene, "bush");
   if (source.id === "rock") return buildRock(scene, 1.25);
   if (source.id === "log") return buildLog(scene);
   if (source.id === "stone") return buildStone(scene);

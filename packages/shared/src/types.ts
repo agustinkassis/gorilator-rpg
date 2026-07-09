@@ -45,6 +45,8 @@ export interface PlayerSave {
   maxHp: number;
   stamina: number;
   maxStamina: number;
+  hunger: number;
+  maxHunger: number;
   x: number;
   z: number;
   rotY: number; // orientation
@@ -268,6 +270,11 @@ export type DevTuningKey =
   | "playerCritChance"
   | "playerMoveSpeed"
   | "sprintSpeedMult"
+  | "hungerDrainPerMin"
+  | "starvationDamagePerSec"
+  | "foodHungerMult"
+  | "foodHpMult"
+  | "foodStaminaMult"
   | "enemyMaxHp"
   | "enemyAttack"
   | "enemyMoveSpeed"
@@ -291,6 +298,8 @@ export interface ScenarioBotSpec {
     level?: number;
     hp?: number;
     maxHp?: number;
+    hunger?: number;
+    maxHunger?: number;
     attack?: number;
     armor?: number;
     moveSpeed?: number;
@@ -323,8 +332,18 @@ export interface ScenarioManifest {
   /** Pins the realm-cycle RNG seed → fully reproducible runs. */
   seed?: number;
   world?: {
-    /** "tree" | "rock" staged at exact spots (v1). */
-    resources?: { type: string; x: number; z: number }[];
+    /** "tree" | "rock" | "bush" staged at exact spots (v1). */
+    resources?: {
+      type?: string;
+      kind?: string;
+      id?: string;
+      x: number;
+      z: number;
+      count?: number;
+      scale?: number;
+      rotY?: number;
+      hp?: number;
+    }[];
     /** Ambient characters (kind "npc", model = defId). */
     npcs?: { defId: string; x: number; z: number; brain?: string; level?: number }[];
     /** Pickups scattered on the ground. */
@@ -333,6 +352,11 @@ export interface ScenarioManifest {
     enemies?: { kind: string; x: number; z: number; level?: number; brain?: string }[];
     /** Client-side prop overlay (not server-staged in v1). */
     props?: unknown[];
+    /** Legacy v1 sandbox toggles accepted by the loader. Prefer systems.events/spawners. */
+    clearPickups?: boolean;
+    wavesEnabled?: boolean;
+    laCryptaDefense?: boolean;
+    spawnersEnabled?: boolean;
   };
   player?: {
     loadout?: { item: string; count?: number }[];
@@ -345,6 +369,8 @@ export interface ScenarioManifest {
   tuning?: Partial<Record<DevTuningKey, number>>;
   /** 0..TIME_SCALE_MAX (accelerated simulation). */
   timeScale?: number;
+  /** Optional pinned knobs beyond the keys with explicit tuning overrides. */
+  tweaks?: DevTuningKey[];
   bots?: ScenarioBotSpec[];
 }
 
@@ -354,6 +380,7 @@ export interface ScenarioInfoMessage {
   name: string;
   description?: string;
   tuning: Partial<Record<DevTuningKey, number>>;
+  tweaks?: DevTuningKey[];
 }
 
 /** Dev-only bot control (spawn/clear scripted players). */
@@ -449,6 +476,17 @@ export interface KillEvent {
 export interface HealEvent {
   targetId: string;
   amount: number;
+}
+
+// Server -> client: emitted to the eater when food restores hunger, so the HUD can
+// animate the hunger meter without delaying authoritative gameplay state.
+export interface FoodEvent {
+  playerId: string;
+  item: ItemType;
+  hungerRestored: number;
+  fromHunger: number;
+  toHunger: number;
+  durationMs: number;
 }
 
 // Server -> client: emitted when a player gains XP from an action (a kill, a

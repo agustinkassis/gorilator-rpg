@@ -32,7 +32,8 @@ console.log(`[scenario] "${name}" selected (GORILATOR_SCENARIO=${name}) — boot
 const dev = await import("./dev.mjs");
 const clientPort = dev.clientPort ?? Number(process.env.CLIENT_PORT ?? 5173);
 const serverPort = dev.serverPort ?? Number(process.env.GAME_SERVER_PORT ?? 2567);
-const link = `http://localhost:${clientPort}/?scenario=${name}`;
+const autoJoin = name === "hunger" ? "HungerBot" : "dev";
+const link = `http://localhost:${clientPort}/?scenario=${encodeURIComponent(name)}&autojoin=${encodeURIComponent(autoJoin)}`;
 
 // Print the ready-to-play link LAST — only once the stack actually answers —
 // so it sits at the bottom of the boot noise, handy to click.

@@ -24,6 +24,7 @@ import { HUD } from "./ui/hud";
 import { HealthGlobe } from "./ui/healthGlobe";
 import { XpBar } from "./ui/xpBar";
 import { StaminaBar } from "./ui/staminaBar";
+import { HungerBar } from "./ui/hungerBar";
 import { CharacterSheet } from "./ui/characterSheet";
 import { PlayerBadge } from "./ui/playerBadge";
 import { PlayerMenu } from "./ui/playerMenu";
@@ -1215,6 +1216,7 @@ const hud = new HUD(scene);
 const globe = new HealthGlobe();
 const xpBar = new XpBar();
 const staminaBar = new StaminaBar();
+const hungerBar = new HungerBar();
 const characterSheet = new CharacterSheet();
 const playerBadge = new PlayerBadge();
 const topBar = new TopBar(); // top HUD (La Crypta HP + wave); hidden on the splash via CSS
@@ -1751,6 +1753,9 @@ async function start() {
     onDamage: (ev) => game.onDamage(ev),
     onKill: (ev) => game.onKill(ev),
     onHeal: (ev) => game.onHeal(ev),
+    onFood: (ev) => {
+      if (ev.playerId === game.localId) hungerBar.animateFood(ev.fromHunger, ev.toHunger, ev.durationMs);
+    },
     onXp: (ev) => game.onXp(ev),
     onChat: (ev) => {
       game.showChatBubble(ev.playerId, ev.text); // bubble over the speaker
@@ -1775,10 +1780,14 @@ async function start() {
     },
   };
 
-  // Feature Lab (#66): ?scenario=<name> auto-joins single-player — no splash
-  // credentials. The join option also selects the scenario for a freshly
-  // created room on open dev servers (`pnpm scenario` pins it via env anyway).
-  const scenarioName = new URLSearchParams(location.search).get("scenario");
+  const params = new URLSearchParams(location.search);
+  // Feature Lab (#66): ?scenario=<name> auto-joins single-player. The join
+  // option also selects the scenario for a freshly created room on open dev
+  // servers (`pnpm scenario` pins it via env anyway). `autojoin` lets labs name
+  // the guest player in their printed ready URL.
+  const scenarioName = params.get("scenario")?.trim() || "";
+  const autoJoinName = params.get("autojoin")?.trim().slice(0, 24) || "";
+  let autoJoinUsed = false;
 
   while (true) {
     // Wait for the player to commit: a name, and optionally a verified Nostr id.
@@ -1786,7 +1795,11 @@ async function start() {
     // Nostr player's save (kind 30078) and recovers it on join — the client only
     // proves the pubkey. A duplicate login is kicked by the server (the takeover
     // close code, handled in NetworkClient.onLeave).
-    const creds = scenarioName ? { name: "dev" } : await splash.awaitCredentials();
+    const creds =
+      (scenarioName || autoJoinName) && !autoJoinUsed
+        ? { name: autoJoinName || "dev" }
+        : await splash.awaitCredentials();
+    autoJoinUsed = true;
 
     // Make sure every known asset task has settled before we reveal the world. A
     // preload failure isn't fatal — the model builders fall back gracefully — so
@@ -1816,7 +1829,7 @@ async function start() {
         name: creds.name,
         // Only the signed auth + profile go to the server; it owns the save.
         nostr: nostrPayload,
-        scenario: scenarioName ?? undefined,
+        scenario: scenarioName || undefined,
       });
 
       // Runtime lab switch: joining an EXISTING room doesn't re-stage — if the
@@ -1958,6 +1971,7 @@ engine.runRenderLoop(() => {
   if (me) {
     xpBar.set(me.level, me.xp);
     staminaBar.set(me.stamina, me.maxStamina);
+    hungerBar.set(me.hunger, me.maxHunger);
     playerBadge.set({
       name: me.name,
       level: me.level,

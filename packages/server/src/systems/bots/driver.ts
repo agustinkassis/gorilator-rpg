@@ -130,11 +130,14 @@ export function spawnBot(
   p.hue = Math.floor(roll() * 360);
 
   for (const [key, value] of Object.entries(opts.stats ?? {})) {
-    if (!["level", "hp", "maxHp", "attack", "armor", "moveSpeed"].includes(key)) continue;
+    if (!["level", "hp", "maxHp", "hunger", "maxHunger", "attack", "armor", "moveSpeed"].includes(key)) continue;
     const n = Number(value);
     if (Number.isFinite(n)) (p as unknown as Record<string, number>)[key] = n;
   }
   if (opts.stats?.maxHp !== undefined && opts.stats.hp === undefined) p.hp = p.maxHp;
+  if (opts.stats?.maxHunger !== undefined && opts.stats.hunger === undefined) p.hunger = p.maxHunger;
+  p.maxHunger = Math.max(1, p.maxHunger);
+  p.hunger = Math.max(0, Math.min(p.maxHunger, p.hunger));
 
   const inv = makeInventory();
   for (const entry of opts.loadout ?? []) {

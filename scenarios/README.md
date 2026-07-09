@@ -10,7 +10,7 @@ Full design: [docs/feature-lab.md](../docs/feature-lab.md).
 ```bash
 pnpm scenario <name>      # boots the dev stack with scenarios/<name>.json layered in
 # then open the printed link — it auto-joins single-player:
-#   http://localhost:<client-port>/?scenario=<name>
+#   http://localhost:<client-port>/?scenario=<name>&autojoin=<bot-name>
 ```
 
 - The server reads `GORILATOR_SCENARIO` (set by the runner); on open dev
@@ -29,7 +29,7 @@ pnpm scenario <name>      # boots the dev stack with scenarios/<name>.json layer
   "description": "What this stages, in one line.",
   "seed": 1234,                                   // optional: pin the cycle RNG
   "world": {
-    "resources": [{ "type": "tree", "x": 5, "z": 5 }],          // v1: tree | rock
+    "resources": [{ "type": "tree", "x": 5, "z": 5 }],          // v1: tree | rock | bush
     "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }],
     "npcs": [{ "defId": "gorila", "x": -4, "z": 3, "brain": "passive_patrol" }],
     "enemies": [{ "kind": "goblin", "x": 8, "z": 0, "level": 1 }]
@@ -41,6 +41,7 @@ pnpm scenario <name>      # boots the dev stack with scenarios/<name>.json layer
   },
   "systems": { "events": false },                  // realm event module (default: off)
   "tuning": { "enemyMaxHp": 20 },                  // any DevTuningKey → pinned tweaks
+  "tweaks": ["enemyAttack"],                       // optional extra pinned knobs
   "timeScale": 2,                                  // 0..16 accelerated simulation
   "bots": [{ "behavior": "aggro", "count": 1 }]    // scripted players (self-tests)
 }
@@ -51,6 +52,7 @@ pnpm scenario <name>      # boots the dev stack with scenarios/<name>.json layer
 | Manifest | Stages |
 | --- | --- |
 | `baseline.json` | An empty sandbox (events off) — the e2e/bot smoke stage. |
+| `hunger.json` | Hunger drain + food use with a cranberry bush resource near spawn. |
 | `wave-siege.json` | The La Crypta Defense event with the difficulty knobs pinned (#64). |
 | `bot-arena.json` | The bot driver's own self-test: an aggro bot clears staged goblins, a loot bot collects the drops. |
 

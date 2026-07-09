@@ -15,13 +15,15 @@ import {
   TIME_SCALE_MAX,
   Tree,
   TREE_ARMOR,
-  TREE_HP,
+  WORLD_SIZE,
 } from "@rpg/shared";
 import { configureEnemy } from "./enemyConfig";
 import { setDevTuning } from "./devTuning";
 import { addItem } from "./inventory";
 import { placeAtFreeSpot } from "./movement";
 import { nearestFreeWorld } from "./pathfinding";
+import { entityHp } from "./entityFeatures";
+import { dropConfig } from "./resourceDrops";
 import { setRealmEvents } from "./realm";
 import { dropItem } from "./resources";
 import { setSpawnersEnabled } from "./spawners";
@@ -59,6 +61,40 @@ const STAT_WHITELIST: readonly ScenarioPlayerStat[] = [
   "maxHunger",
 ];
 
+function finite(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function optionalFinite(raw: unknown): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function bool(raw: unknown): boolean | undefined {
+  return typeof raw === "boolean" ? raw : undefined;
+}
+
+function clampWorld(raw: unknown, fallback = 0): number {
+  return Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, finite(raw, fallback)));
+}
+
+function safeScenarioPart(raw: unknown, fallback: string): string {
+  const safe = String(raw || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return safe || fallback;
+}
+
+function resourceKind(raw: unknown): "tree" | "bush" | "rock" | string {
+  const obj = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const kind = String(obj.type ?? obj.kind ?? "tree").toLowerCase();
+  if (kind === "bush" || kind === "tree" || kind === "rock") return kind;
+  return kind;
+}
+
 let activeName: string | null | undefined; // undefined = not resolved yet
 let activeManifest: ScenarioManifest | null = null;
 
@@ -83,6 +119,12 @@ export function setActiveScenario(name: string | null): ScenarioManifest | null 
   activeName = name;
   activeManifest = name ? loadScenario(name) : null;
   return activeManifest;
+}
+
+/** Compatibility helper for older callers/tests that look directly at the env. */
+export function loadScenarioFromEnv(env = process.env): ScenarioManifest | null {
+  const name = String(env.GORILATOR_SCENARIO ?? "").trim();
+  return name ? loadScenario(name) : null;
 }
 
 /** Load + sanitize scenarios/<name>.json from the repo root (cwd or ../../). */
@@ -126,20 +168,32 @@ export function applyScenarioConfig(state: GameState, m: ScenarioManifest): void
     state.timeScale = Number.isFinite(scale) ? Math.max(0, Math.min(TIME_SCALE_MAX, scale)) : 1;
     console.log(`[scenario] timeScale = ${state.timeScale}`);
   }
+  const world = (m.world ?? {}) as NonNullable<ScenarioManifest["world"]>;
+  let handledEvents = false;
+  let handledSpawners = false;
   for (const [system, on] of Object.entries(m.systems ?? {})) {
     if (system === "events") {
       // A scenario stages ONE feature — the realm event (waves/objective) stays
       // off unless the manifest explicitly turns it on.
       setRealmEvents({ enabled: Boolean(on) });
       console.log(`[scenario] events ${on ? "enabled" : "disabled"}`);
+      handledEvents = true;
     } else if (system === "spawners") {
       setSpawnersEnabled(Boolean(on));
       console.log(`[scenario] ambient spawners ${on ? "enabled" : "disabled"}`);
+      handledSpawners = true;
+    } else if (system === "waves" || system === "resources" || system === "npcs") {
+      // Reserved/legacy Feature Lab toggles. Kept accepted so older manifests
+      // can declare intent without noisy warnings while their systems are live.
     } else {
       console.warn(`[scenario] unknown system toggle "${system}" — ignored`);
     }
   }
-  if (m.systems?.events === undefined) setRealmEvents({ enabled: false });
+  const legacyEvents = bool(world.laCryptaDefense) ?? bool(world.wavesEnabled);
+  if (!handledEvents) setRealmEvents({ enabled: legacyEvents ?? false });
+  const legacySpawners = bool(world.spawnersEnabled);
+  if (!handledSpawners && legacySpawners !== undefined) setSpawnersEnabled(legacySpawners);
+  if (world.wavesEnabled !== undefined) state.wavesEnabled = Boolean(world.wavesEnabled);
 }
 
 let stageSeq = 0;
@@ -149,40 +203,62 @@ let stageSeq = 0;
 export function applyScenarioWorld(state: GameState, m: ScenarioManifest): void {
   const world = m.world ?? {};
 
+  if (world.clearPickups) {
+    state.logs.clear();
+    state.stones.clear();
+    state.potions.clear();
+    state.bananas.clear();
+    state.items.clear();
+  }
+
   for (const r of world.resources ?? []) {
-    const spot = nearestFreeWorld(Number(r.x) || 0, Number(r.z) || 0);
-    if (r.type === "tree") {
-      const tree = new Tree();
-      tree.id = `scn-tree-${stageSeq++}`;
-      tree.x = spot.x;
-      tree.z = spot.z;
-      tree.hp = TREE_HP;
-      tree.maxHp = TREE_HP;
-      tree.armor = TREE_ARMOR;
-      tree.alive = true;
-      state.trees.set(tree.id, tree);
-    } else if (r.type === "rock") {
-      const rock = new Rock();
-      rock.id = `scn-rock-${stageSeq++}`;
-      rock.x = spot.x;
-      rock.z = spot.z;
-      rock.hp = ROCK_HP;
-      rock.maxHp = ROCK_HP;
-      rock.armor = ROCK_ARMOR;
-      rock.alive = true;
-      state.rocks.set(rock.id, rock);
-    } else {
-      console.warn(`[scenario] unknown resource type "${r.type}" — ignored (v1: tree | rock)`);
+    const raw = (r && typeof r === "object" ? r : {}) as Record<string, unknown>;
+    const kind = resourceKind(raw);
+    const count = Math.max(1, Math.min(50, Math.round(finite(raw.count, 1))));
+    for (let i = 0; i < count; i++) {
+      const x = clampWorld(raw.x) + (i % 4) * 1.1;
+      const z = clampWorld(raw.z) + Math.floor(i / 4) * 1.1;
+      const spot = nearestFreeWorld(x, z);
+      const idBase = safeScenarioPart(raw.id, `scn-${kind}-${stageSeq++}`);
+      const id = count === 1 ? idBase : `${idBase}-${i}`;
+      if (kind === "tree" || kind === "bush") {
+        const tree = new Tree();
+        tree.id = id;
+        tree.kind = kind;
+        tree.x = spot.x;
+        tree.z = spot.z;
+        tree.rotY = finite(raw.rotY, 0);
+        tree.scale = Math.max(0.1, Math.min(8, finite(raw.scale, kind === "bush" ? 0.8 : 1)));
+        const hp = optionalFinite(raw.hp);
+        tree.maxHp = hp === undefined ? entityHp(kind, id, undefined, dropConfig(kind).hp) : Math.max(1, Math.round(hp));
+        tree.hp = tree.maxHp;
+        tree.armor = TREE_ARMOR;
+        tree.alive = true;
+        state.trees.set(tree.id, tree);
+      } else if (kind === "rock") {
+        const rock = new Rock();
+        rock.id = id;
+        rock.x = spot.x;
+        rock.z = spot.z;
+        const hp = optionalFinite(raw.hp);
+        rock.hp = hp === undefined ? ROCK_HP : Math.max(1, Math.round(hp));
+        rock.maxHp = rock.hp;
+        rock.armor = ROCK_ARMOR;
+        rock.alive = true;
+        state.rocks.set(rock.id, rock);
+      } else {
+        console.warn(`[scenario] unknown resource type "${kind}" — ignored (v1: tree | rock | bush)`);
+      }
     }
   }
 
   for (const g of world.groundItems ?? []) {
-    const count = Math.max(1, Math.min(50, Math.round(Number(g.count) || 1)));
+    const count = Math.max(1, Math.min(200, Math.round(Number(g.count) || 1)));
     for (let i = 0; i < count; i++) {
       // Small deterministic ring so stacked counts stay reachable + visible.
       const ang = (i / count) * Math.PI * 2;
       const r = i === 0 ? 0 : 0.6;
-      dropItem(state, String(g.item), (Number(g.x) || 0) + Math.cos(ang) * r, (Number(g.z) || 0) + Math.sin(ang) * r);
+      dropItem(state, String(g.item), clampWorld(g.x) + Math.cos(ang) * r, clampWorld(g.z) + Math.sin(ang) * r);
     }
   }
 
@@ -238,6 +314,13 @@ export function applyScenarioPlayer(p: Player, inv: InventorySlot[], m: Scenario
   }
   if (stats.maxHp !== undefined && stats.hp === undefined) p.hp = p.maxHp;
   if (stats.maxStamina !== undefined && stats.stamina === undefined) p.stamina = p.maxStamina;
+  if (stats.maxHunger !== undefined && stats.hunger === undefined) p.hunger = p.maxHunger;
+  p.maxHunger = Math.max(1, p.maxHunger);
+  p.hunger = Math.max(0, Math.min(p.maxHunger, p.hunger));
+  p.maxStamina = Math.max(1, p.maxStamina);
+  p.stamina = Math.max(0, Math.min(p.maxStamina, p.stamina));
+  p.maxHp = Math.max(1, p.maxHp);
+  p.hp = Math.max(0, Math.min(p.maxHp, p.hp));
 
   if (spec.loadout) {
     for (const slot of inv) {
@@ -252,4 +335,23 @@ export function applyScenarioPlayer(p: Player, inv: InventorySlot[], m: Scenario
   if (spec.position) {
     placeAtFreeSpot(p, Number(spec.position.x) || 0, Number(spec.position.z) || 0);
   }
+}
+
+export function scenarioSummary(scenario: ScenarioManifest | null): Record<string, unknown> {
+  const world = scenario?.world;
+  return scenario
+    ? {
+        active: true,
+        name: scenario.name,
+        description: scenario.description,
+        timeScale: scenario.timeScale ?? 1,
+        world: {
+          wavesEnabled: world?.wavesEnabled,
+          laCryptaDefense: world?.laCryptaDefense,
+          spawnersEnabled: world?.spawnersEnabled,
+          resources: world?.resources?.length ?? 0,
+        },
+        tweaks: scenario.tweaks ?? Object.keys(scenario.tuning ?? {}),
+      }
+    : { active: false };
 }

@@ -43,6 +43,10 @@ const DEFAULTS: Required<Pick<EntityFeatureManifest, "defaults" | "instances">> 
       hp: TREE_HP,
       drops: [{ item: "log", quantity: 1, probability: 1, trigger: "kill" }],
     },
+    bush: {
+      hp: 24,
+      drops: [{ item: "cranberries", quantity: 5, probability: 1, trigger: "kill" }],
+    },
     rock: {
       hp: ROCK_HP,
       drops: [{ item: "stone", quantity: 11, probability: 1, trigger: "damage" }],

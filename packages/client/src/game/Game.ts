@@ -7,6 +7,8 @@ import {
   Matrix,
   type ParticleSystem,
   MeshBuilder,
+  DynamicTexture,
+  Texture,
   StandardMaterial,
 } from "@babylonjs/core";
 import {
@@ -66,7 +68,7 @@ import {
 import { smooth } from "../util/math";
 import { applyTransform, bounds, importModel } from "../scene/props";
 import { getCameraZoom } from "../scene/camera";
-import { itemDef, loadItemDefs } from "../items/itemRegistry";
+import { itemDef, itemIcon, loadItemDefs } from "../items/itemRegistry";
 import type { ContactShadowShape, ShadowHandle, ShadowRuntime } from "../scene/contactShadows";
 
 interface ServerView {
@@ -138,6 +140,10 @@ const PICK_PRIORITY = {
   structure: 30,
 };
 
+function treeResourceKind(tree: Tree, id: string): "tree" | "bush" {
+  return tree.kind === "bush" || id.includes("bush") ? "bush" : "tree";
+}
+
 /** Minimal collectible model shape (potion/log/stone/banana all satisfy this). */
 interface CollectibleModel {
   root: TransformNode;
@@ -173,7 +179,7 @@ export class Game {
   private pendingEnemies = new Set<string>();
   private pendingEnemyViews = new Map<string, Enemy>();
   private potions = new Map<string, (PotionModel | BerserkerPotionModel) & { bob: number; drop?: DropAnim }>();
-  private trees = new Map<string, TreeModel & { hp: number; maxHp: number; alive: boolean; x: number; z: number; rotY: number; scale: number }>();
+  private trees = new Map<string, TreeModel & { kind: "tree" | "bush"; hp: number; maxHp: number; alive: boolean; x: number; z: number; rotY: number; scale: number }>();
   private logs = new Map<string, LogModel & { bob: number; drop?: DropAnim }>();
   private rocks = new Map<string, RockModel & { hp: number; maxHp: number; alive: boolean; x: number; z: number; rotY: number; scale: number }>();
   private stones = new Map<string, StoneModel & { bob: number; drop?: DropAnim }>();
@@ -294,6 +300,7 @@ export class Game {
         return e ? { root: e.root, meshes: e.meshes } : null;
       }
       case "tree":
+      case "bush":
         return wrap(this.trees.get(id)?.root);
       case "rock":
         return wrap(this.rocks.get(id)?.root);
@@ -554,26 +561,31 @@ export class Game {
   addTree(t: Tree, id: string) {
     if (this.trees.has(id)) return;
     const scene = this.camera.getScene();
-    const model = buildTree(scene);
+    const resourceKind = treeResourceKind(t, id);
+    const treeVariant = resourceKind === "bush" ? "bush" : "tree";
+    const model = buildTree(scene, treeVariant);
     this.applySyncedTransform(model.root, t, 0);
-    model.root.metadata = { entityId: id, kind: "tree" };
+    model.root.metadata = { entityId: id, kind: resourceKind };
     model.setAlive(t.alive);
     for (const mesh of model.meshes) this.receiveContactShadow(mesh);
     const treeScale = t.scale || 1;
     this.addContactShadow("tree", id, model.root, "structure", 2.6 * treeScale, 3.2 * treeScale, 0.42, model.meshes, true);
-    const tm = { ...model, hp: t.hp, maxHp: t.maxHp, alive: t.alive, x: t.x, z: t.z, rotY: t.rotY ?? 0, scale: treeScale };
+    const tm = { ...model, kind: resourceKind, hp: t.hp, maxHp: t.maxHp, alive: t.alive, x: t.x, z: t.z, rotY: t.rotY ?? 0, scale: treeScale };
     this.trees.set(id, tm);
-    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS * (t.scale || 1), PICK_PRIORITY.resource, t.alive && t.hp > 0);
+    this.upsertCircleFootprint(resourceKind, id, t.x, t.z, TREE_PICK_RADIUS * (t.scale || 1), PICK_PRIORITY.resource, t.alive && t.hp > 0);
     // HP bar floats above the crown; it only appears once the tree is chopped.
     const anchor = new TransformNode(`treeBar-${id}`, scene);
     anchor.parent = model.root;
-    anchor.position.y = 5.9;
+    anchor.position.y = treeVariant === "bush" ? 1.45 : 5.9;
     this.hud.addResource(id, anchor, () => tm.hp, () => tm.maxHp, "#7bd17b");
   }
 
   changeTree(t: Tree, id: string) {
     const tm = this.trees.get(id);
     if (!tm) return;
+    const nextResourceKind = treeResourceKind(t, id);
+    const previousResourceKind = tm.kind;
+    const resourceKindChanged = tm.kind !== nextResourceKind;
     const modelStateChanged = tm.alive !== t.alive;
     const nextScale = t.scale || 1;
     const nextRotY = t.rotY ?? 0;
@@ -585,11 +597,13 @@ export class Game {
     tm.hp = t.hp;
     tm.maxHp = t.maxHp;
     tm.alive = t.alive;
+    tm.kind = nextResourceKind;
     tm.x = t.x;
     tm.z = t.z;
     tm.rotY = nextRotY;
     tm.scale = nextScale;
     tm.setAlive(t.alive);
+    tm.root.metadata = { entityId: id, kind: nextResourceKind };
     this.applySyncedTransform(tm.root, t, 0); // HP bar is parented, so it tags along
     const alive = t.alive && t.hp > 0;
     const shadowW = (alive ? 2.6 : 1.0) * nextScale;
@@ -601,7 +615,8 @@ export class Game {
       this.updateContactShadow("tree", id, tm.root, shadowOpacity);
       this.resizeContactShadow("tree", id, shadowW, shadowD);
     }
-    this.upsertCircleFootprint("tree", id, t.x, t.z, TREE_PICK_RADIUS * (t.scale || 1), PICK_PRIORITY.resource, t.alive && t.hp > 0);
+    if (resourceKindChanged) this.footprints.remove(previousResourceKind, id);
+    this.upsertCircleFootprint(nextResourceKind, id, t.x, t.z, TREE_PICK_RADIUS * (t.scale || 1), PICK_PRIORITY.resource, t.alive && t.hp > 0);
     if (modelStateChanged || transformChanged) this.shadows.refreshStaticShadows();
   }
 
@@ -613,6 +628,7 @@ export class Game {
     tree.dispose();
     this.trees.delete(id);
     this.footprints.remove("tree", id);
+    this.footprints.remove("bush", id);
   }
 
   // ---- destructible structure callbacks (concrete props with HP) ----
@@ -1032,6 +1048,9 @@ export class Game {
   }
 
   private buildFallbackItemModel(itemId: string): CollectibleModel {
+    const icon = itemIcon(itemId);
+    if (icon && icon !== "❓") return this.buildIconItemModel(itemId, icon);
+
     const scene = this.camera.getScene();
     const root = new TransformNode(`item-${itemId}`, scene);
     const mat = new StandardMaterial(`itemMat-${itemId}-${Math.random().toString(36).slice(2)}`, scene);
@@ -1052,6 +1071,69 @@ export class Game {
       dispose: () => {
         body.dispose();
         mat.dispose();
+        root.dispose();
+      },
+    };
+  }
+
+  private buildIconItemModel(itemId: string, icon: string): CollectibleModel {
+    const scene = this.camera.getScene();
+    const root = new TransformNode(`item-${itemId}`, scene);
+    const baseMat = new StandardMaterial(`itemBaseMat-${itemId}-${Math.random().toString(36).slice(2)}`, scene);
+    baseMat.diffuseColor = colorFromId(itemId);
+    baseMat.specularColor = new Color3(0.08, 0.08, 0.08);
+
+    const base = MeshBuilder.CreateCylinder(
+      `itemBase-${itemId}`,
+      { height: 0.12, diameterTop: 0.52, diameterBottom: 0.6, tessellation: 10 },
+      scene,
+    );
+    base.parent = root;
+    base.position.y = 0.14;
+    base.material = baseMat;
+
+    const iconMat = new StandardMaterial(`itemIconMat-${itemId}-${Math.random().toString(36).slice(2)}`, scene);
+    iconMat.backFaceCulling = false;
+    iconMat.specularColor = new Color3(0, 0, 0);
+    iconMat.emissiveColor = new Color3(1, 1, 1);
+
+    let dynamicTexture: DynamicTexture | null = null;
+    let imageTexture: Texture | null = null;
+    if (/^\/|^https?:|^data:/i.test(icon)) {
+      imageTexture = new Texture(icon, scene, false, false);
+      imageTexture.hasAlpha = true;
+      iconMat.diffuseTexture = imageTexture;
+      iconMat.useAlphaFromDiffuseTexture = true;
+    } else {
+      dynamicTexture = new DynamicTexture(`itemIconTex-${itemId}`, { width: 256, height: 256 }, scene, false);
+      dynamicTexture.hasAlpha = true;
+      const ctx = dynamicTexture.getContext() as unknown as CanvasRenderingContext2D;
+      ctx.clearRect(0, 0, 256, 256);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "172px system-ui, Apple Color Emoji, Segoe UI Emoji, sans-serif";
+      ctx.fillText(icon, 128, 134);
+      dynamicTexture.update(false);
+      iconMat.diffuseTexture = dynamicTexture;
+      iconMat.useAlphaFromDiffuseTexture = true;
+    }
+
+    const plane = MeshBuilder.CreatePlane(`itemIcon-${itemId}`, { size: 0.82 }, scene);
+    plane.parent = root;
+    plane.position.y = 0.58;
+    plane.billboardMode = 7;
+    plane.material = iconMat;
+
+    return {
+      root,
+      meshes: [base, plane],
+      dispose: () => {
+        base.dispose();
+        plane.dispose();
+        baseMat.dispose();
+        iconMat.dispose();
+        dynamicTexture?.dispose();
+        imageTexture?.dispose();
         root.dispose();
       },
     };

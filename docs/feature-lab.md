@@ -32,9 +32,10 @@ write wins.
   "description": "Hunger drain + eating. Food scattered around spawn.",
   "seed": 1234,                           // pin the cycle RNG → reproducible runs
   "world": {
-    "resources": [{ "type": "tree", "x": 5, "z": 5 }],       // v1: tree | rock
+    "clearPickups": true,
+    "resources": [{ "kind": "bush", "id": "cranberry_bush_0", "x": 2.5, "z": 2.5 }],
     "npcs": [{ "defId": "gorila", "x": -4, "z": 3 }],
-    "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }],
+    "groundItems": [{ "item": "wild_berry", "x": 2, "z": 0, "count": 5 }],
     "enemies": [{ "kind": "goblin", "x": 8, "z": 0, "level": 1 }]
   },
   "player": {
@@ -42,20 +43,26 @@ write wins.
     "stats": { "level": 5, "hunger": 40 },          // whitelisted Player fields (#72 incl.)
     "position": { "x": 0, "z": 0 }
   },
-  "systems": { "events": false },                   // the realm event; DEFAULT off in a scenario
-  "tuning": { "enemyMaxHp": 20 },                   // any DevTuningKey → the pinned tweak knobs
+  "systems": { "events": false, "spawners": false }, // realm event/spawners; DEFAULT event off
+  "tuning": { "hungerDrainPerMin": 6 },              // any DevTuningKey → seeded knob values
+  "tweaks": ["starvationDamagePerSec"],              // extra pinned knobs using current defaults
   "timeScale": 2,                                   // 0..TIME_SCALE_MAX (16)
   "bots": [{ "behavior": "eat_when_low", "count": 1 }]
 }
 ```
 
-(`world.props` is reserved for a client-side overlay — not server-staged in v1.)
+(`world.props` is reserved for a client-side overlay — not server-staged in v1.
+`world.resources` accepts `tree`, `rock`, and the Hunger Lab `bush`; older
+`world.wavesEnabled` / `laCryptaDefense` / `spawnersEnabled` flags are still
+accepted as aliases for the `systems` toggles.)
 
 Worked examples that define the bar (in [scenarios/](../scenarios/README.md)):
 
 - **`scenarios/bot-arena.json`** — the bot driver's own self-test: an aggro bot
   clears staged goblins while a loot bot collects the staged bananas;
   `botArena.test.ts` is the headless template every feature copies.
+- **`scenarios/hunger.json`** — Hunger Lab: no realm event or ambient spawners,
+  a cranberry bush resource, staged food, and survival food multipliers pinned.
 - **`scenarios/wave-siege.json`** — the La Crypta Defense event with the
   difficulty knobs (#64) pinned for slider tuning.
 - **`scenarios/baseline.json`** — the empty-sandbox e2e smoke stage.
@@ -68,8 +75,8 @@ pnpm scenario sandbox       # default open-realm fixture: no home objective, no 
 ```
 
 - The runner sets `GORILATOR_SCENARIO` (the server-side source of truth) and
-  prints the ready-to-play `?scenario=` link; on open dev servers the URL param
-  alone also selects it for a freshly created room.
+  prints the ready-to-play `?scenario=...&autojoin=...` link; on open dev
+  servers the URL param alone also selects it for a freshly created room.
 - `?scenario=hunger` auto-joins single-player (no splash); the realm event
   module stays off unless the manifest sets `"systems": {"events": true}`.
 - Merge order (binding): defaults → realm.json → scenario → `GORILATOR_TEST` →

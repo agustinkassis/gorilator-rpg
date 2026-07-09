@@ -142,6 +142,53 @@ describe("useItemFromSlot characterization", () => {
     expect(h.berserkerBase.size).toBe(0);
   });
 
+  it("food restores hunger/HP/stamina, consumes, broadcasts, and syncs", () => {
+    const h = makeHarness([{ type: "wild_berry", count: 2 }]);
+    h.p.hunger = 30;
+    h.p.maxHunger = 100;
+    h.p.hp = 90;
+    h.p.maxHp = 100;
+    h.p.stamina = 40;
+    h.p.maxStamina = 100;
+    useItemFromSlot(h.state, "p1", 0, h.deps);
+
+    expect(h.p.hunger).toBe(48);
+    expect(h.p.hp).toBe(94);
+    expect(h.p.stamina).toBe(48);
+    expect(h.inv[0]).toEqual({ type: "wild_berry", count: 1 });
+    expect(h.broadcasts).toEqual([
+      {
+        type: "food",
+        payload: {
+          playerId: "p1",
+          item: "wild_berry",
+          hungerRestored: 18,
+          fromHunger: 30,
+          toHunger: 48,
+          durationMs: 4000,
+        },
+      },
+      { type: "heal", payload: { targetId: "p1", amount: 4 } },
+    ]);
+    expect(h.inventorySends).toEqual(["p1"]);
+  });
+
+  it("food is not wasted when all affected meters are full or the item is not edible", () => {
+    const full = makeHarness([{ type: "wild_berry", count: 1 }]);
+    full.p.hunger = full.p.maxHunger;
+    full.p.hp = full.p.maxHp;
+    full.p.stamina = full.p.maxStamina;
+    useItemFromSlot(full.state, "p1", 0, full.deps);
+    expect(full.inv[0]).toEqual({ type: "wild_berry", count: 1 });
+    expect(full.broadcasts).toHaveLength(0);
+
+    const invalid = makeHarness([{ type: "log", count: 1 }]);
+    invalid.p.hunger = 10;
+    useItemFromSlot(invalid.state, "p1", 0, invalid.deps);
+    expect(invalid.inv[0]).toEqual({ type: "log", count: 1 });
+    expect(invalid.broadcasts).toHaveLength(0);
+  });
+
   it("a plugin-registered behavior overrides the builtin id and gets a working ctx", () => {
     const h = makeHarness([{ type: "potion", count: 2 }]);
     const seen: string[] = [];

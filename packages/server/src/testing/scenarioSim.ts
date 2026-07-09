@@ -13,6 +13,7 @@ import { registerBuiltinBotBehaviors } from "../systems/bots/behaviors";
 import { type BotIO, type BotRuntime, botStatuses, botSystem, clearBots, spawnBot } from "../systems/bots/driver";
 import { combatSystem } from "../systems/combat";
 import { goblinAiSystem } from "../systems/goblins";
+import { hungerSystem } from "../systems/hunger";
 import { addItem } from "../systems/inventory";
 import { movementSystem } from "../systems/movement";
 import { potionRespawnSystem } from "../systems/pickups";
@@ -116,6 +117,7 @@ export function createScenarioSim(opts: ScenarioSimOptions = {}): ScenarioSim {
     step() {
       const dt = (stepMs * state.timeScale) / 1000;
       botSystem(state, dt, io);
+      hungerSystem(state, dt);
       staminaSystem(state, dt);
       movementSystem(state, dt);
       combatSystem(state, dt, emitDamage, emitKill, emitXp, emitHeal);

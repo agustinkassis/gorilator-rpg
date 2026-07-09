@@ -52,6 +52,7 @@ import {
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
 import { staminaSystem } from "../systems/stamina";
+import { hungerSystem } from "../systems/hunger";
 import {
   combatSystem,
   handleAttack,
@@ -127,6 +128,8 @@ interface TakeoverState {
   maxHp: number;
   stamina: number;
   maxStamina: number;
+  hunger: number;
+  maxHunger: number;
   level: number;
   xp: number;
   attack: number;
@@ -614,6 +617,7 @@ export class GameRoom extends Room<GameState> {
       // Bots first: their intents (destinations, attack targets, item uses) are
       // consumed by movement/combat in the SAME tick. Early-outs at zero bots.
       perfTracker.span("bots", () => botSystem(this.state, dt, this.botIO()));
+      perfTracker.span("hunger", () => hungerSystem(this.state, dt)); // drains hunger; starvation can kill before movement/combat
       perfTracker.span("stamina", () => staminaSystem(this.state, dt)); // sets p.sprinting; movement reads it for the speed boost
       perfTracker.span("movement", () => movementSystem(this.state, dt));
       // Paused: normal movement is frozen, but the local player roams as a ghost
@@ -1057,6 +1061,8 @@ export class GameRoom extends Room<GameState> {
       p.hp = restore.hp > 0 ? restore.hp : restore.maxHp; // don't arrive dead
       p.maxStamina = restore.maxStamina;
       p.stamina = restore.stamina;
+      p.maxHunger = restore.maxHunger;
+      p.hunger = restore.hunger;
       p.level = restore.level;
       p.xp = restore.xp;
       p.attack = restore.attack;
@@ -1109,6 +1115,7 @@ export class GameRoom extends Room<GameState> {
         name: this.scenario.name,
         description: this.scenario.description,
         tuning: this.scenario.tuning ?? {},
+        tweaks: this.scenario.tweaks,
       };
       client.send("scenario", info);
     }
@@ -1145,6 +1152,8 @@ export class GameRoom extends Room<GameState> {
         maxHp: existing.maxHp,
         stamina: existing.stamina,
         maxStamina: existing.maxStamina,
+        hunger: existing.hunger,
+        maxHunger: existing.maxHunger,
         level: existing.level,
         xp: existing.xp,
         attack: existing.attack,
