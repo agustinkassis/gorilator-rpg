@@ -192,6 +192,10 @@ export class GameRoom extends Room<GameState> {
     });
     loadSpawners(); // dev-placed goblin spawners (+ live reload of spawners.json)
     loadWaves(); // dev-authored custom wave compositions (+ live reload of waves.json)
+    // realm.json + optional scenario layer: seed tuning/policy and decide
+    // whether the event module starts, before any event runtime is created.
+    applyRealmConfig();
+    if (this.scenario) applyScenarioConfig(this.state, this.scenario);
     // per-kind tree/rock drop config (+ live reload of resources.json). The callback
     // re-applies the configured HP to every existing tree/rock on each edit.
     loadResourceDrops(() => applyResourceConfig(this.state));
@@ -208,14 +212,6 @@ export class GameRoom extends Room<GameState> {
     // Deterministic test mode (e2e smoke tests, `pnpm bench` scenarios): no goblin
     // waves, so room state only changes when a test drives it. Uses the existing
     // devTuning knobs — every other system runs exactly as in production.
-    // realm.json (per-realm/fork config): seed the live tuning knobs before any
-    // mode-specific overrides. Absent file = current defaults, untouched.
-    applyRealmConfig();
-
-    // Scenario config layers over realm.json (tuning, timeScale, events toggle);
-    // GORILATOR_TEST below and live dev_tune still win over the scenario.
-    if (this.scenario) applyScenarioConfig(this.state, this.scenario);
-
     if (process.env.GORILATOR_TEST === "1") {
       // No event module → no house, no waves, no wipe: room state only changes
       // when a test drives it (replaces the old wave-size-0 tuning hack).

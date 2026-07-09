@@ -21,6 +21,10 @@ export interface BabylonProbes {
   dispose(): void;
 }
 
+interface BabylonProbeOptions {
+  fps?: () => number;
+}
+
 const GEO_RECOMPUTE_MS = 250; // re-scan meshes for per-kind geometry tags this often
 
 type GpuTimingEngine = Engine & { getGPUFrameTimeCounter?: unknown };
@@ -44,6 +48,7 @@ export function attachBabylonProbes(
   engine: Engine,
   scene: Scene,
   perf: PerfTracker,
+  options: BabylonProbeOptions = {},
 ): BabylonProbes {
   const engineInstr = new EngineInstrumentation(engine);
   const sceneInstr = new SceneInstrumentation(scene);
@@ -131,7 +136,7 @@ export function attachBabylonProbes(
     }
 
     perf.setFrameMetrics({
-      fps: engine.getFps(),
+      fps: options.fps?.() ?? engine.getFps(),
       frameMs: heavy ? sceneInstr.frameTimeCounter.current : null,
       gpuMs: gpuNs > 0 ? gpuNs / 1e6 : null, // ns → ms
       drawCalls: sceneInstr.drawCallsCounter.current,

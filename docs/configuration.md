@@ -2,12 +2,33 @@
 
 Four layers: **compile-time constants** (`@rpg/shared`), **environment variables**
 (deploy/identity), **`realm.json`** (per-realm rules: plugin toggles, tuning seeds,
-death/progression policy — see [plugins.md](plugins.md#realmjson-per-realm--per-fork-config)),
+event/world mode, death/progression policy — see [plugins.md](plugins.md#realmjson-per-realm--per-fork-config)),
 and **runtime JSON files** (live-reloaded content).
 
 > The `realm.json` `policy` block decides what death costs (`none` / `xp-penalty` /
 > `hardcore`) and whether progression + inventory persist across realm resets
 > (both default to **on**: level persists, death hurts but does not erase).
+
+The committed default `realm.json` starts an **open sandbox**:
+
+```json
+{
+  "events": { "enabled": [], "autoStart": false },
+  "world": { "homeObjective": false, "waves": false }
+}
+```
+
+To run La Crypta Defense as the active event again, enable it explicitly:
+
+```json
+{
+  "events": { "enabled": ["la-crypta-defense"], "autoStart": true },
+  "world": { "homeObjective": true, "waves": true }
+}
+```
+
+Feature Lab fixtures can layer on top of `realm.json`; for this default loop:
+`pnpm scenario sandbox`.
 
 ## 1. Tuning constants — `packages/shared/src/constants.ts`
 

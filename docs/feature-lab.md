@@ -64,6 +64,7 @@ Worked examples that define the bar (in [scenarios/](../scenarios/README.md)):
 
 ```bash
 pnpm scenario hunger        # boots the dev stack with scenarios/hunger.json layered in
+pnpm scenario sandbox       # default open-realm fixture: no home objective, no waves
 ```
 
 - The runner sets `GORILATOR_SCENARIO` (the server-side source of truth) and

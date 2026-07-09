@@ -1,8 +1,12 @@
 # Game dynamics
 
-Gorilator is a **co-op tower defense**. You are a gorilla; the objective is **La
-Crypta**, the house at the map centre. Goblins besiege it in escalating waves; you
-defend. Lose La Crypta and the realm wipes.
+Gorilator now boots into an **open RPG sandbox** by default. You are a gorilla in a
+shared realm: roam, gather resources, fight ambient enemies, level up, and keep
+your character progression across realm cycles.
+
+**La Crypta Defense** is still available as the first event module. When a realm
+enables it in `realm.json`, the house objective appears at the map centre and
+waves besiege it.
 
 ## Controls
 
@@ -48,9 +52,20 @@ Dying costs XP per the realm's **death policy** (`realm.json` `policy.death`):
 default is an **XP penalty** (configurable fraction, 30% stock); `none` and
 `hardcore` (reset to level 1) are config options.
 
-## The siege — waves
+## Open sandbox loop
 
-A horde spawns roughly a **30-second march** from La Crypta (≈108 units out,
+The default `realm.json` disables event autostart:
+
+- no central home objective is spawned;
+- the wave clock stays off;
+- ambient spawners, resources, pickups, authored props, and NPCs remain active;
+- no game-over countdown fires just because no house exists.
+
+Run the isolated Feature Lab fixture with `pnpm scenario sandbox`.
+
+## La Crypta Defense — waves
+
+When La Crypta Defense is enabled, a horde spawns roughly a **30-second march** from La Crypta (≈108 units out,
 `WAVE_SPAWN_DISTANCE = GOBLIN_CHASE_SPEED × WAVE_MARCH_SECONDS`) and converges on the
 house.
 
@@ -76,7 +91,7 @@ past `GOBLIN_DEAGGRO_RADIUS` — then it resumes the march. So goblins attack th
 
 ## The wipe & realms
 
-When La Crypta's HP hits 0 it **collapses → a round wipe fires** (once):
+When La Crypta Defense is enabled and La Crypta's HP hits 0 it **collapses → a round wipe fires** (once):
 
 1. **The world resets; the character endures** (default policy). Every player
    dies and respawns at full HP — **keeping level, XP, stats, and inventory**.
@@ -88,11 +103,11 @@ When La Crypta's HP hits 0 it **collapses → a round wipe fires** (once):
 3. A "🏛 La Crypta has fallen" banner flashes for everyone — its copy reflects
    the active policy ("your character endures" vs. the legacy level-1 reset).
 
-A **realm** is one **event/world cycle**, not the whole game: it starts when a
-player is present and alive, and ends when La Crypta falls (or the room empties).
-The world is reborn each cycle; by default character progression persists across
-cycles — see [nostr.md](nostr.md) and [`../REALMS.md`](../REALMS.md) for how
-realms are tracked, counted, and published for external discovery.
+A **realm** is one world cycle, not the whole game. In the default sandbox it can
+stay live without a home objective; event modules may add their own end
+conditions. By default character progression persists across cycles — see
+[nostr.md](nostr.md) and [`../REALMS.md`](../REALMS.md) for how realms are tracked,
+counted, and published for external discovery.
 
 ## Resources & economy
 
