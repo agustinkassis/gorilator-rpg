@@ -1766,6 +1766,8 @@ async function start() {
       inventory.setInventory(slots);
       hotkeyBar.setInventory(slots);
     },
+    // Feature Lab: pin the scenario's tweak knobs in the Dev Mode gameplay panel.
+    onScenario: (info) => devMode?.setScenario(info),
     onWipe: (ev) => topBar.flashDefeat(ev.wave, ev.persist), // La Crypta fell → defeat flash (state sync carries the reset)
     onError: (message) => {
       statusEl.textContent = message;
@@ -1773,13 +1775,18 @@ async function start() {
     },
   };
 
+  // Feature Lab (#66): ?scenario=<name> auto-joins single-player — no splash
+  // credentials. The join option also selects the scenario for a freshly
+  // created room on open dev servers (`pnpm scenario` pins it via env anyway).
+  const scenarioName = new URLSearchParams(location.search).get("scenario");
+
   while (true) {
     // Wait for the player to commit: a name, and optionally a verified Nostr id.
     // Progress persistence is fully server-side now: the server signs/owns each
     // Nostr player's save (kind 30078) and recovers it on join — the client only
     // proves the pubkey. A duplicate login is kicked by the server (the takeover
     // close code, handled in NetworkClient.onLeave).
-    const creds = await splash.awaitCredentials();
+    const creds = scenarioName ? { name: "dev" } : await splash.awaitCredentials();
 
     // Make sure every known asset task has settled before we reveal the world. A
     // preload failure isn't fatal — the model builders fall back gracefully — so
@@ -1809,7 +1816,20 @@ async function start() {
         name: creds.name,
         // Only the signed auth + profile go to the server; it owns the save.
         nostr: nostrPayload,
+        scenario: scenarioName ?? undefined,
       });
+
+      // Runtime lab switch: joining an EXISTING room doesn't re-stage — if the
+      // server is running a different scenario than the URL asks for, request a
+      // room recycle (dev_scenario). Our onLeave reloads into the fresh lab.
+      if (scenarioName) {
+        void fetch(`${net.httpBase()}/api/status`)
+          .then((res) => res.json() as Promise<{ activeScenario?: string | null }>)
+          .then((status) => {
+            if ((status.activeScenario ?? null) !== scenarioName) net.switchScenario(scenarioName);
+          })
+          .catch(() => {}); // status probe is best-effort — a cold room staged us already
+      }
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -1961,11 +1981,13 @@ engine.runRenderLoop(() => {
   // Keep the audio listener on the player so spatial SFX pan + attenuate correctly.
   audio.updateListener(camera, me ? { x: me.x, z: me.z } : null);
 
-  // TopBar: event realms show the home (first house) HP + wave state. Open
-  // sandbox realms have no home objective, so show a stable realm status instead
-  // of a permanent "fallen" siege bar.
+  // TopBar: event realms show the home HP + wave state. Open sandbox realms
+  // have no event objective, so show a stable realm status instead of a
+  // permanent "fallen" siege bar.
   const st = net.room?.state;
   if (topBar && st) {
+    const sandbox = !st.eventId && st.houses.size === 0 && homeMaxHp <= 0;
+    topBar.setVisible(true);
     let home: { hp: number; maxHp: number; alive: boolean } | undefined;
     st.houses.forEach((h) => {
       if (!home) home = h;
@@ -1973,6 +1995,9 @@ engine.runRenderLoop(() => {
     if (home) {
       homeMaxHp = home.maxHp;
       topBar.setHouse(home.hp, home.maxHp, home.alive);
+    } else if (sandbox && st.restartTimerMs <= 0) {
+      homeMaxHp = 0;
+      topBar.setSandbox();
     } else if (!st.wavesEnabled && st.restartTimerMs <= 0) {
       homeMaxHp = 0;
       topBar.setSandbox();

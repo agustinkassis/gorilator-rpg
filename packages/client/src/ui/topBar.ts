@@ -47,6 +47,12 @@ export class TopBar {
     document.body.appendChild(this.root);
   }
 
+  /** Hide the whole banner when no event module runs (open sandbox / scenario
+   *  lab): there is no objective or wave clock to report. */
+  setVisible(on: boolean) {
+    this.root.style.display = on ? "" : "none";
+  }
+
   /** Update the home's HP bar (alive=false → collapsed). */
   setHouse(hp: number, maxHp: number, alive: boolean) {
     this.sandbox = false;

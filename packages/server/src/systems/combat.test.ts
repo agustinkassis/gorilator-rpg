@@ -11,12 +11,14 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clampToWorld, combatSystem, handleAttack, isImmune } from "./combat";
 import { devTuning, resetDevTuning } from "./devTuning";
+import { installFixedRng } from "./rng";
 
 // Characterization tests for the player-attack flow (queue → windup → connect).
 // They pin today's behavior so the plugin-registry refactor of GameRoom/goblins
 // can be verified against an unchanged damage pipeline.
-// Math.random is pinned to 0.5: attack variance = ±0 and (with critChance 0)
-// no crits, so the damage roll is exactly attack · (1 − armor/(armor+ARMOR_K)) / divisor.
+// The seeded RNG is pinned to 0.5 (installFixedRng): attack variance = ±0 and
+// (with critChance 0) no crits, so the damage roll is exactly
+// attack · (1 − armor/(armor+ARMOR_K)) / divisor.
 
 function makePlayer(id: string, x: number, z: number): Player {
   const p = new Player();
@@ -48,6 +50,7 @@ function makeDummy(id: string, x: number, z: number, hp = 50): Enemy {
 
 function makeState(p: Player, e?: Enemy): GameState {
   const state = new GameState();
+  installFixedRng(state, 0.5); // every gameplay roll returns 0.5 — deterministic damage
   state.players.set(p.id, p);
   if (e) state.enemies.set(e.id, e);
   return state;
@@ -64,7 +67,6 @@ function expectedDamage(attack: number, armor: number): number {
 describe("combat characterization", () => {
   beforeEach(() => {
     resetDevTuning();
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
   });
   afterEach(() => {
     vi.restoreAllMocks();

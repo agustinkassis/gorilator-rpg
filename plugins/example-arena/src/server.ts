@@ -75,6 +75,12 @@ const plugin: ServerPlugin = {
     });
     ctx.on("wave:start", (payload) => ctx.log(`wave ${String(payload.wave)} begins`));
     ctx.on("wave:end", (payload) => ctx.log(`wave ${String(payload.wave)} survived`));
+    // API 1.1 lifecycle: hear the realm's event module come and go. (This
+    // manifest still declares ^1.0.0 — living proof the 1.1 bump is additive.)
+    ctx.on("event:start", (payload) => ctx.log(`event "${String(payload.eventId)}" started`));
+    ctx.on("event:end", (payload) =>
+      ctx.log(`event "${String(payload.eventId)}" ended (${String(payload.result)})`),
+    );
 
     ctx.log("arena ready — kamikaze brain, arena_horn item, kill feed");
   },

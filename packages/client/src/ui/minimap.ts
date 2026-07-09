@@ -476,7 +476,13 @@ export class Minimap {
       return b.level - a.level || a.name.localeCompare(b.name); // then by level, then name
     });
 
-    const sig = rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.deaths}:${r.verified ? 1 : 0}`).join("|");
+    // Admins get a kick button on every OTHER row — players and scripted bots
+    // alike (the server routes admin_kick to client.leave() or removeBot).
+    const isAdmin = !!(selfId && state?.players.get(selfId)?.isAdmin);
+
+    const sig =
+      (isAdmin ? "adm|" : "") +
+      rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.deaths}:${r.verified ? 1 : 0}`).join("|");
     if (sig === this.lastPlayerSig) return; // nothing changed → keep the DOM (stable links)
 
     const head = `<div id="mmPHead">Players · ${rows.length}</div>`;
@@ -497,7 +503,11 @@ export class Minimap {
           ? `<a class="mmLink" href="https://njump.me/${npub}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>`
           : `<span>${esc(r.name)}</span>`;
         const you = r.id === selfId ? `<span class="mmYou">(you)</span>` : "";
-        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span><span class="mmDeaths" title="times of death">☠ ${r.deaths}</span></div>`;
+        const kick =
+          isAdmin && r.id !== selfId
+            ? `<button class="mmKick" data-kick="${esc(r.id)}" title="Kick ${esc(r.name)} from the realm">✕</button>`
+            : "";
+        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span><span class="mmDeaths" title="times of death">☠ ${r.deaths}</span>${kick}</div>`;
       })
       .join("");
     this.playerList.innerHTML = head + body;
@@ -740,6 +750,14 @@ export class Minimap {
     // connected-players panel (name · level · nostr), top-left of the map
     const playerList = document.createElement("div");
     playerList.id = "mmPlayers";
+    // Admin kick (✕ per row, delegated — the list is rebuilt as the roster
+    // changes). The server enforces the ADMIN_NPUBS gate; the button is only
+    // rendered for admins in the first place.
+    playerList.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest?.("[data-kick]");
+      const id = btn?.getAttribute("data-kick");
+      if (id) this.net.sendAdminKick(id);
+    });
 
     panel.append(overlayCanvas, title, legend, playerList);
     overlay.append(panel);
@@ -778,6 +796,10 @@ export class Minimap {
       ".mmLink{color:#c08bff;text-decoration:none}" +
       ".mmLink:hover{text-decoration:underline;color:#d7b3ff}" +
       ".mmYou{color:#79e0ff;margin-left:5px;font-size:11px}" +
+      ".mmKick{margin-left:8px;width:18px;height:18px;line-height:1;cursor:pointer;flex:none;" +
+      "background:#3a1d1d;color:#e0726a;border:1px solid #7a3a34;border-radius:5px;" +
+      "font:700 11px system-ui,sans-serif;padding:0}" +
+      ".mmKick:hover{background:#5a2724;color:#ffd8d3;border-color:#a34a3a}" +
       "#mmTooltip{position:fixed;z-index:70;display:none;pointer-events:none;" +
       "background:rgba(12,10,14,0.96);border:1px solid #6b4f2e;border-radius:7px;" +
       "padding:6px 9px;font:12px system-ui,sans-serif;color:#e8e3d6;max-width:240px;" +

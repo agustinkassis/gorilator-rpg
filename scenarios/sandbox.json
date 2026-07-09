@@ -2,7 +2,7 @@
   "name": "sandbox",
   "description": "Open realm with La Crypta Defense disabled: no home objective, no wave game-over, ambient spawners/resources/NPCs enabled.",
   "events": {
-    "enabled": [],
+    "enabled": false,
     "autoStart": false
   },
   "world": {

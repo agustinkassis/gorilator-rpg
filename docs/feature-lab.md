@@ -1,8 +1,11 @@
 # Feature Lab — scenario harness + AI dev pipeline
 
 The testing/automation layer every [ROADMAP.md](../ROADMAP.md) Phase 3+ feature
-depends on. This is the **design doc**; implementation lands as Phase 2.5,
-before any Phase 3 feature starts.
+depends on. **Implemented** (Phase 2.5): scenario loader
+(`packages/server/src/systems/scenario.ts`), runner (`pnpm scenario`), bot
+driver (`packages/server/src/systems/bots/`), headless harness
+(`packages/server/src/testing/scenarioSim.ts`), Scenario-tweaks panel +
+bake (Dev Mode), and the `/feature-dev` skill.
 
 The core idea: **every feature ships with an isolated simulation scenario** —
 a single-player test map staging exactly that feature, with developer tweak
@@ -27,32 +30,35 @@ write wins.
 {
   "name": "hunger",
   "description": "Hunger drain + eating. Food scattered around spawn.",
+  "seed": 1234,                           // pin the cycle RNG → reproducible runs
   "world": {
-    "props": [],                          // extra/override props
-    "resources": [{ "type": "berry_bush", "x": 5, "z": 5 }],
-    "npcs": [],
-    "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }]
+    "resources": [{ "type": "tree", "x": 5, "z": 5 }],       // v1: tree | rock
+    "npcs": [{ "defId": "gorila", "x": -4, "z": 3 }],
+    "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }],
+    "enemies": [{ "kind": "goblin", "x": 8, "z": 0, "level": 1 }]
   },
   "player": {
-    "loadout": [{ "item": "cooked_meal", "count": 3 }],
-    "stats": { "level": 5, "hunger": 40 },
+    "loadout": [{ "item": "potion", "count": 3 }],  // replaces the starter inventory
+    "stats": { "level": 5, "hunger": 40 },          // whitelisted Player fields (#72 incl.)
     "position": { "x": 0, "z": 0 }
   },
-  "systems": { "events": false, "hunger": true },   // off-list everything unrelated
-  "tuning": { "hungerDrainPerMin": 30 },            // any DevTuningKey
-  "timeScale": 1,
-  "bots": [{ "behavior": "eat_when_hungry", "count": 1 }]
+  "systems": { "events": false },                   // the realm event; DEFAULT off in a scenario
+  "tuning": { "enemyMaxHp": 20 },                   // any DevTuningKey → the pinned tweak knobs
+  "timeScale": 2,                                   // 0..TIME_SCALE_MAX (16)
+  "bots": [{ "behavior": "eat_when_low", "count": 1 }]
 }
 ```
 
-Worked examples that define the bar:
+(`world.props` is reserved for a client-side overlay — not server-staged in v1.)
 
-- **`scenarios/hunger.json`** — events off, food scattered around spawn, drain
-  rate cranked so the full hungry → eat → restored loop plays out in under a
-  minute.
-- **`scenarios/farming.json`** — seeds in the starting inventory, tilled plots
-  staged near spawn, `timeScale: 20` so crops grow in seconds instead of
-  minutes.
+Worked examples that define the bar (in [scenarios/](../scenarios/README.md)):
+
+- **`scenarios/bot-arena.json`** — the bot driver's own self-test: an aggro bot
+  clears staged goblins while a loot bot collects the staged bananas;
+  `botArena.test.ts` is the headless template every feature copies.
+- **`scenarios/wave-siege.json`** — the La Crypta Defense event with the
+  difficulty knobs (#64) pinned for slider tuning.
+- **`scenarios/baseline.json`** — the empty-sandbox e2e smoke stage.
 
 ## Runner
 
@@ -61,56 +67,65 @@ pnpm scenario hunger        # boots the dev stack with scenarios/hunger.json lay
 pnpm scenario sandbox       # default open-realm fixture: no home objective, no waves
 ```
 
-- Also reachable as a dev URL param: `?scenario=hunger` (composable with the
-  existing dev params like `?mocknostr=`).
-- Auto-joins single-player; the wave/event machinery stays off unless the
-  manifest turns it on.
-- Builds on what exists: the `GORILATOR_TEST` isolation flag, the
-  `applyRealmConfig`/DevTuning seeding path, and per-worktree ports — a
-  scenario in one worktree never collides with the game in another.
-- Scenarios become **fully reproducible** (same scenario + same seed → same
-  run) once the seeded RNG service lands
-  ([engineering.md](engineering.md) §3).
+- The runner sets `GORILATOR_SCENARIO` (the server-side source of truth) and
+  prints the ready-to-play `?scenario=` link; on open dev servers the URL param
+  alone also selects it for a freshly created room.
+- `?scenario=hunger` auto-joins single-player (no splash); the realm event
+  module stays off unless the manifest sets `"systems": {"events": true}`.
+- Merge order (binding): defaults → realm.json → scenario → `GORILATOR_TEST` →
+  live `dev_tune`. Per-worktree ports keep labs from colliding.
+- **Fully reproducible**: the manifest `seed` (or `GORILATOR_SEED`) pins the
+  cycle RNG ([engineering.md](engineering.md) §3); `/api/status` reports
+  `activeScenario` + `cycleSeed`.
 
 ## Time shift
 
-`state.timeScale` already exists in the schema (Dev Mode pause/slow-mo).
-Phase 2.5 promotes it to a first-class tuning knob and **audits every gameplay
-timer** — growth, regrow, hunger drain, craft times, ability cooldowns — to
-respect it, so accelerated simulation works end-to-end: grow crops in seconds,
-run a "day" of hunger in a minute, fast-forward a craft queue.
+Every gameplay timer runs on the timeScale-scaled tick delta (audited in #67;
+equivalence-tested in `timeScale.test.ts`), so accelerated simulation works
+end-to-end — cap `TIME_SCALE_MAX = 16` (the Dev Mode time bar goes to 16×;
+above that a 20Hz tick starts tunnelling, sub-stepping is the follow-up).
+Bot `waitFor`/`waitUntil` run on sim time, so accelerated labs fast-forward
+bot programs too.
 
 ## Tweak panel
 
-Each scenario declares the tuning keys it is about. The Dev Mode tuning panel
-pins them in a **"Scenario tweaks"** section at the top — the human's final
-gameplay pass happens on sliders, in the running scenario, not in a config
-file. A **"bake values"** export writes the tuned numbers back out (to
-`realm.json` or as a `constants.ts` suggestion) so tuning survives the
-session.
+The manifest's `tuning` keys ARE the declared tweak knobs: the server sends a
+`"scenario"` message on join and the Dev Mode gameplay panel pins them in a
+**"Scenario tweaks"** section at the top (sliders seeded with the manifest
+values, applied live via `dev_tune`; keys without a slider definition get a
+numeric input). The **"Bake values"** button POSTs `/__scenario/bake`, which
+read-merge-writes ONLY the `tuning` block of the repo-root `realm.json` — the
+tuned numbers survive the session. A **"Bots"** section spawns/clears scripted
+players live (`dev_bot`).
 
 ## Bot player simulation
 
 Scripted simulated players that run **server-side**, reusing the brain
 registry and the bench harness patterns:
 
-- **Behavior primitives:** `moveTo`, `pickup`, `eat`, `plant`, `craft`,
-  `equip`, `attack`, `cast` — composed into named behaviors
-  (`eat_when_hungry`, `farm_loop`, `tank_and_taunt`).
-- **State assertions:** behaviors pair with checks over `GameState` — *bot
-  eats → hunger refills*, *bot plants → resource appears → harvest yields
-  seeds*. Inspection, not pixels — per the repo's DOM-not-canvas verification
-  rule ([TESTING.md](TESTING.md)).
-- **Two run modes:** **headless** (Vitest integration tests — a scenario + bot
-  + assertions is a test case) and **live** (bots join the running scenario so
-  a human watches the loop while tuning it).
+- **Behavior primitives** (`systems/bots/driver.ts`): `moveTo`,
+  `pickupNearest`, `attackNearest`, `eat`, `waitFor`, `waitUntil`, `say`,
+  composed with `seq`/`loop`; `craft`/`equip`/`cast`/`plant` are **reserved**
+  (they fail loudly until their systems land — each Phase 3 feature adds its
+  primitive alongside the system). Builtins: `wander`, `aggro`, `loot`,
+  `eat_when_low` (`BUILTIN_BOT_BEHAVIORS`); register more via
+  `registerBotBehavior`. Every primitive carries a sim-time timeout →
+  `"failed"` in `botStatuses()` instead of a hung test.
+- **State assertions:** checks over `GameState` — *bot eats → hunger refills*.
+  Inspection, not pixels — per the repo's DOM-not-canvas verification rule
+  ([TESTING.md](TESTING.md)).
+- **Two run modes:** **headless** — `createScenarioSim` composes the real
+  systems in GameRoom tick order (a scenario + bots + assertions is a Vitest
+  case; template: `systems/bots/botArena.test.ts`) — and **live**: scenarios
+  auto-spawn their `bots[]`, and the `dev_bot` message / the panel's Bots
+  section spawns them ad hoc.
 
 Bots are how an AI agent self-verifies a feature before a human ever loads the
 game.
 
 ## AI dev pipeline
 
-A new `.claude/skills/feature-dev` skill turns a GitHub feature issue into a
+The `.claude/skills/feature-dev` skill turns a GitHub feature issue into a
 ready-to-play test instance:
 
 ```

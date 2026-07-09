@@ -37,6 +37,9 @@ export function setRealmWorldConfig(rawWorld?: unknown, rawEvents?: unknown): Re
       const laCryptaEnabled = enabled.has("la-crypta-defense");
       next.homeObjective = laCryptaEnabled;
       next.waves = laCryptaEnabled && events.autoStart !== false;
+    } else if (events.enabled === false) {
+      next.homeObjective = false;
+      next.waves = false;
     } else if (events.autoStart === false) {
       next.waves = false;
     }
@@ -81,12 +84,17 @@ export function shouldEndRealmForHomeObjective(
  *   {
  *     "name": "my-realm",
  *     "plugins": { "disabled": ["example-arena"] },   // read by plugin discovery
- *     "events": { "enabled": ["la-crypta-defense"], "autoStart": true },
  *     "world": { "homeObjective": true, "waves": true },
  *     "tuning": { "waveSizeBase": 8, "playerMaxHp": 150 },  // any DevTuningKey
  *     "policy": {                                     // death + progression rules
  *       "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
  *       "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+ *     },
+ *     "events": {                                     // pluggable game loops (API 1.1)
+ *       "enabled": true,                              // false → open sandbox, no event
+ *       "autoStart": true,                            // start the module with the realm
+ *       "module": "la-crypta-defense",                // default: the flagship module
+ *       "config": { "difficultyMult": 1 }             // per-event overrides
  *     }
  *   }
  *
@@ -94,6 +102,59 @@ export function shouldEndRealmForHomeObjective(
  * devTuning knobs the in-game Gameplay Options panel edits; the policy block
  * seeds the realm policy (see ./policy.ts for defaults).
  */
+
+export interface RealmEventsConfig {
+  enabled: boolean;
+  autoStart: boolean;
+  /** Explicit module id; default: the single registered module, else la-crypta-defense. */
+  module?: string;
+  config: Record<string, unknown>;
+}
+
+const eventsDefaults = (): RealmEventsConfig => ({ enabled: true, autoStart: true, config: {} });
+
+let currentEvents: RealmEventsConfig = eventsDefaults();
+
+export function realmEvents(): RealmEventsConfig {
+  return currentEvents;
+}
+
+/** Override the events config (realm.json block, GORILATOR_TEST, scenarios).
+ *  Partial input merges over the current values; unknown fields are ignored. */
+export function setRealmEvents(raw: unknown): RealmEventsConfig {
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    currentEvents = {
+      enabled: eventEnabled(r.enabled, currentEvents.enabled),
+      autoStart: r.autoStart === undefined ? currentEvents.autoStart : Boolean(r.autoStart),
+      module: eventModule(r, currentEvents.module),
+      config:
+        r.config && typeof r.config === "object"
+          ? { ...currentEvents.config, ...(r.config as Record<string, unknown>) }
+          : currentEvents.config,
+    };
+  }
+  return currentEvents;
+}
+
+/** Test hook — back to the defaults (enabled + autoStart). */
+export function resetRealmEvents(): RealmEventsConfig {
+  currentEvents = eventsDefaults();
+  return currentEvents;
+}
+
+function eventEnabled(value: unknown, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (Array.isArray(value)) return value.length > 0;
+  return Boolean(value);
+}
+
+function eventModule(raw: Record<string, unknown>, fallback?: string): string | undefined {
+  if (raw.module !== undefined) return raw.module ? String(raw.module) : undefined;
+  if (Array.isArray(raw.enabled)) return raw.enabled.length === 1 ? String(raw.enabled[0]) : undefined;
+  return fallback;
+}
+
 export function applyRealmConfig(): void {
   const sources = realmConfigSources();
   const merged = sources.reduce<Record<string, unknown>>(
@@ -101,6 +162,7 @@ export function applyRealmConfig(): void {
     {},
   );
   setRealmWorldConfig(merged.world, merged.events);
+  if (merged.events) setRealmEvents(merged.events);
 
   if (sources.length === 0) return;
   try {
@@ -128,6 +190,13 @@ export function applyRealmConfig(): void {
     }
     const world = realmWorldConfig();
     console.log(`[realm] world: homeObjective=${world.homeObjective} waves=${world.waves}`);
+    if (realm?.events) {
+      const applied = realmEvents();
+      console.log(
+        `[realm] events: enabled=${applied.enabled} autoStart=${applied.autoStart}` +
+          (applied.module ? ` module=${applied.module}` : ""),
+      );
+    }
   } catch (err) {
     console.warn("[realm] failed to read realm.json", err);
   }

@@ -29,7 +29,7 @@ const BLOCK_SIZE = 10;
 // starts the game server with this in ADMIN_NPUBS so the Esc-menu Admin controls
 // and /api/admin/* work out of the box in any worktree. Local dev only — deployed
 // servers get ADMIN_NPUBS from their install .env (gorilator setup).
-const DEV_ADMIN_NPUBS = "npub19tv378w29hx4ljy7wgydreg9nu96czrs6clu8wkzr3af8z86rr7sujx4xe";
+export const DEV_ADMIN_NPUBS = "npub19tv378w29hx4ljy7wgydreg9nu96czrs6clu8wkzr3af8z86rr7sujx4xe";
 
 export function portsFor(dir) {
   const h = parseInt(createHash("sha1").update(dir).digest("hex").slice(0, 8), 16);
