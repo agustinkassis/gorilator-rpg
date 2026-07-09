@@ -100,6 +100,7 @@ import { initNostrContent } from "../systems/plugins/nostrContent";
 import { applyRealmConfig } from "../systems/realm";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
+import { applyFeatureLabPlayerScenario, applyFeatureLabScenario } from "../systems/featureLab";
 
 /** A kicked session's gameplay state, handed to the new login that takes it over. */
 interface TakeoverState {
@@ -194,6 +195,7 @@ export class GameRoom extends Room<GameState> {
     // realm.json (per-realm/fork config): seed the live tuning knobs before any
     // mode-specific overrides. Absent file = current defaults, untouched.
     applyRealmConfig();
+    applyFeatureLabScenario(this.state);
 
     if (process.env.GORILATOR_TEST === "1") {
       setDevTuning("waveSizeBase", 0);
@@ -1014,6 +1016,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.set(client.sessionId, p);
+    applyFeatureLabPlayerScenario(this.state, p);
     serverPluginHost.fire(
       "player:spawn",
       { playerId: client.sessionId, name: p.name, pubkey: p.pubkey },

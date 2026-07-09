@@ -18,6 +18,7 @@ import { adminCount, isAdmin, listAdminNpubs } from "./systems/admins";
 import { requireAdmin, verifyNip98, type AdminRequest } from "./systems/nip98";
 import { canSelfUpdate, startSelfUpdate } from "./systems/selfUpdate";
 import { createDevEditorRouter } from "./dev/editorApi";
+import { featureLabScenario, featureLabScenarioName } from "./systems/featureLab";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -80,7 +81,9 @@ app.get("/nostr/challenge", (_req, res) => {
 // Public discovery/stats API for external apps + dashboards (see REALMS.md).
 //  GET /api/status — server identity + lifetime stats + the live realm
 //  GET /api/realm  — the current realm to join (+ players already in it)
-app.get("/api/status", (_req, res) => res.json(realmTracker.status()));
+app.get("/api/status", (_req, res) =>
+  res.json({ ...realmTracker.status(), activeScenario: featureLabScenario()?.name ?? (featureLabScenarioName() || null) }),
+);
 app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
 
 // Live server performance snapshot (latest tick + a 5s rolling summary + per-system

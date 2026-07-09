@@ -1,0 +1,14 @@
+{
+  "name": "persistence-default",
+  "description": "Phase 2 persistence check: La Crypta can fall while character progression and inventory survive the realm reset.",
+  "policy": {
+    "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
+    "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+  },
+  "tuning": {
+    "waveSizeBase": 1,
+    "waveSizePerPlayer": 0,
+    "waveSizePerWave": 0
+  },
+  "timeScale": 1
+}

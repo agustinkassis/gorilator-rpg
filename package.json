@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "start": "node scripts/dev.mjs",
+    "scenario": "node scripts/scenario.mjs",
     "bootstrap": "node scripts/setup.mjs",
     "wt": "node scripts/wt.mjs",
     "wt:launch": "node scripts/wt-launch.mjs",
@@ -15,7 +16,8 @@
     "build": "node scripts/build-plugins.mjs && turbo run build",
     "build:plugins": "node scripts/build-plugins.mjs",
     "build:shared": "turbo run build --filter=@rpg/shared",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "node scripts/check-realm.mjs && turbo run typecheck",
+    "realm:check": "node scripts/check-realm.mjs",
     "lint": "turbo run lint && biome lint scripts plugins tests playwright.config.ts",
     "format": "biome format --write .",
     "test": "turbo run test",
@@ -27,7 +29,9 @@
     "bump": "node scripts/bump.mjs",
     "version:check": "node scripts/check-versions.mjs",
     "deploy": "node packages/cli/gorilator.cjs install",
-    "gorilator": "node packages/cli/gorilator.cjs"
+    "gorilator": "node packages/cli/gorilator.cjs",
+    "dashboard": "node scripts/dashboard/server.mjs",
+    "test:dashboard": "vitest run scripts/dashboard"
   },
   "dependencies": {
     "@rpg/shared": "workspace:*"

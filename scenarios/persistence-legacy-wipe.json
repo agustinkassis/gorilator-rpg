@@ -1,0 +1,14 @@
+{
+  "name": "persistence-legacy-wipe",
+  "description": "Phase 2 legacy comparison: La Crypta falling performs the old full character wipe.",
+  "policy": {
+    "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
+    "progression": { "persistAcrossWipes": false, "keepInventoryOnWipe": false }
+  },
+  "tuning": {
+    "waveSizeBase": 1,
+    "waveSizePerPlayer": 0,
+    "waveSizePerWave": 0
+  },
+  "timeScale": 1
+}

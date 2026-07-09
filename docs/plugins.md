@@ -175,6 +175,12 @@ model as the kind-30333 community entities in `docs/community-entities` spec).
 
 ## realm.json (per-realm / per-fork config)
 
+The full typed schema is documented in
+[configuration.md](configuration.md#3-realmjson--typed-per-realm-config) and
+backed by `RealmConfig` in `packages/shared/src/realmConfig.ts`. Root
+`pnpm typecheck` runs `scripts/check-realm.mjs`, so bad `realm.json` files and
+bad Feature Lab scenario overlays fail the normal gate.
+
 ```json
 {
   "name": "my-realm",

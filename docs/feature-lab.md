@@ -21,7 +21,9 @@ rule) · [configuration.md](configuration.md) (realm.json + tuning) ·
 A scenario is a JSON file in `scenarios/<feature>.json`: an isolated,
 single-player-by-default test map that stages **one feature** and nothing
 else. It layers over `realm.json`/DevTuning at boot — same merge order, last
-write wins.
+write wins. Scenario manifests extend the same `RealmConfig` type used by
+`realm.json`, so their `plugins`, `tuning`, and `policy` blocks are validated by
+the root `pnpm typecheck` gate.
 
 ```jsonc
 {
@@ -31,11 +33,21 @@ write wins.
     "props": [],                          // extra/override props
     "resources": [{ "type": "berry_bush", "x": 5, "z": 5 }],
     "npcs": [],
-    "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }]
+    "groundItems": [{ "item": "banana", "x": 2, "z": 0, "count": 5 }],
+    "enemies": [
+      {
+        "kind": "goblin",
+        "count": 3,
+        "brain": "war_seeker",
+        "offsetFromPlayer": { "x": 0, "z": 6 },
+        "spread": 2
+      }
+    ]
   },
   "player": {
-    "loadout": [{ "item": "cooked_meal", "count": 3 }],
-    "stats": { "level": 5, "hunger": 40 },
+    "level": 5,
+    "xp": 200,
+    "hp": 180,
     "position": { "x": 0, "z": 0 }
   },
   "systems": { "events": false, "hunger": true },   // off-list everything unrelated
@@ -47,6 +59,10 @@ write wins.
 
 Worked examples that define the bar:
 
+- **`scenarios/death-penalty-l10.json`** — starts the player at level 10 with
+  1200 XP progress, disables normal waves, and spawns a close `war_seeker`
+  goblin pack so the death penalty can be checked visually. On death, the XP
+  bar drains and reports the exact EXP lost.
 - **`scenarios/hunger.json`** — events off, food scattered around spawn, drain
   rate cranked so the full hungry → eat → restored loop plays out in under a
   minute.
@@ -60,8 +76,13 @@ Worked examples that define the bar:
 pnpm scenario hunger        # boots the dev stack with scenarios/hunger.json layered in
 ```
 
-- Also reachable as a dev URL param: `?scenario=hunger` (composable with the
-  existing dev params like `?mocknostr=`).
+- Current minimal implementation: `pnpm scenario <name>` sets
+  `GORILATOR_SCENARIO=<name>` and starts the normal dev stack. The server loads
+  `scenarios/<name>.json` as a `realm.json` overlay for `policy`, `tuning`, and
+  `timeScale`. Dashboard scenario cards use the same path.
+- Dashboard scenario cards open the game with `?scenario=<name>` after the
+  stack is running under `GORILATOR_SCENARIO`; URL-only convergence is still a
+  follow-up.
 - Auto-joins single-player; the wave/event machinery stays off unless the
   manifest turns it on.
 - Builds on what exists: the `GORILATOR_TEST` isolation flag, the

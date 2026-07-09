@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { DevTuningKey } from "@rpg/shared";
+import type { DevTuningKey, RealmConfig } from "@rpg/shared";
 import { setDevTuning } from "./devTuning";
 import { setRealmPolicy } from "./policy";
 
@@ -27,7 +27,7 @@ export function applyRealmConfig(): void {
   const file = candidates.find((p) => existsSync(p));
   if (!file) return;
   try {
-    const realm = JSON.parse(readFileSync(file, "utf8"));
+    const realm = JSON.parse(readFileSync(file, "utf8")) as RealmConfig;
     if (realm?.name) console.log(`[realm] config "${realm.name}" loaded (${file})`);
     const tuning = realm?.tuning;
     if (tuning && typeof tuning === "object") {
