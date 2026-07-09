@@ -64,6 +64,30 @@ const respawnOverlay = document.getElementById("respawnOverlay") as HTMLDivEleme
 const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDivElement;
 const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
 const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
+const PERF_FPS_LIMIT_STORAGE_KEY = "gorilator.perf.fpsLimit";
+const PERF_FPS_LIMIT_MAX = 240;
+
+function normalizePerfFpsLimit(value: unknown): number {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(PERF_FPS_LIMIT_MAX, Math.round(n));
+}
+
+function loadStoredPerfFpsLimit(): number {
+  try {
+    return normalizePerfFpsLimit(localStorage.getItem(PERF_FPS_LIMIT_STORAGE_KEY));
+  } catch {
+    return 0;
+  }
+}
+
+function storePerfFpsLimit(limit: number) {
+  try {
+    localStorage.setItem(PERF_FPS_LIMIT_STORAGE_KEY, String(limit));
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Re-render the footer version popup, optionally flagging packages whose remote
  *  (latest release) version is newer than the local build. Reassigned by
@@ -1243,8 +1267,24 @@ new PlayerMenu({
 // a benchmark is active). Toggle the on-screen HUD with F3 or `?perf`; drive it
 // from the console via window.__perf (see docs/performance.md).
 const perf = new PerfTracker();
-const perfProbes = attachBabylonProbes(engine, scene, perf);
-const perfOverlay = new PerfOverlay(perf, perfProbes, net.httpBase());
+let currentClientFps = engine.getFps();
+const perfProbes = attachBabylonProbes(engine, scene, perf, { fps: () => currentClientFps });
+const perfMode = new URLSearchParams(location.search).has("perf");
+let perfFpsLimit = perfMode ? loadStoredPerfFpsLimit() : 0;
+const perfOverlay = new PerfOverlay(
+  perf,
+  perfProbes,
+  net.httpBase(),
+  perfMode
+    ? {
+        get: () => perfFpsLimit,
+        set: (limit) => {
+          perfFpsLimit = normalizePerfFpsLimit(limit);
+          storePerfFpsLimit(perfFpsLimit);
+        },
+      }
+    : undefined,
+);
 // "What's heavy" drill-down + FPS-dip culprit capture: render load + elements come
 // from the live scene, entities from the game's per-category counts; reasons are the
 // perf spans (incl. the scene.render sub-phases). The render profile pairs those
@@ -1252,7 +1292,7 @@ const perfOverlay = new PerfOverlay(perf, perfProbes, net.httpBase());
 perf.setBreakdownProvider(() => buildResourceBreakdown(scene, game.debugStats(), perf.latest()));
 perf.setRenderProfileProvider(() => buildRenderProfile(scene, perfProbes.renderPhases(), perf.latest(), perf.meta));
 (window as Window & { __perf?: unknown }).__perf = perf;
-if (new URLSearchParams(location.search).has("perf")) perfOverlay.toggle();
+if (perfMode) perfOverlay.toggle();
 
 // Client plugins: item models, per-frame systems, dev panels. Discovered via
 // /plugins/manifest.json (pluginBundler); quietly a no-op when none exist.
@@ -1836,9 +1876,16 @@ if (import.meta.env.DEV) {
   });
 }
 
+let lastClientFrameAt = performance.now();
 engine.runRenderLoop(() => {
+  const now = performance.now();
+  if (perfFpsLimit > 0 && now - lastClientFrameAt < 1000 / perfFpsLimit) return;
+
   const frameStartedAt = debugStats.beginFrame();
-  const dt = Math.min(engine.getDeltaTime() / 1000, 0.1);
+  const elapsedMs = frameStartedAt - lastClientFrameAt;
+  const dt = Math.min(elapsedMs / 1000, 0.1);
+  lastClientFrameAt = frameStartedAt;
+  currentClientFps = elapsedMs > 0 ? 1000 / elapsedMs : engine.getFps();
 
   // While the intro is up, draw the hero scene instead of the game world. The
   // launch flips `active` (under the white flash) to hand off to the game.
@@ -1849,7 +1896,7 @@ engine.runRenderLoop(() => {
     splash.scene.render();
     const frameEndedAt = performance.now();
     perf.setFrameMetrics({
-      fps: engine.getFps(),
+      fps: currentClientFps,
       frameMs: frameEndedAt - frameStartedAt,
       gpuMs: null,
       drawCalls: 0,
