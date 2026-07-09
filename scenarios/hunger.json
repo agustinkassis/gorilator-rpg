@@ -1,0 +1,45 @@
+{
+  "name": "hunger",
+  "description": "Hunger drain, starvation pressure, and eating food near spawn.",
+  "world": {
+    "clearPickups": true,
+    "wavesEnabled": false,
+    "laCryptaDefense": false,
+    "spawnersEnabled": false,
+    "resources": [
+      { "kind": "bush", "id": "cranberry_bush_0", "x": 2.5, "z": 2.5, "scale": 0.75, "hp": 24 }
+    ],
+    "groundItems": [
+      { "item": "wild_berry", "x": 2, "z": 0, "count": 4 },
+      { "item": "roasted_banana", "x": 4, "z": 1, "count": 2 },
+      { "item": "trail_ration", "x": 6, "z": -1, "count": 1 }
+    ]
+  },
+  "systems": {
+    "events": false,
+    "spawners": false
+  },
+  "player": {
+    "position": { "x": 0, "z": 0 },
+    "stats": { "hunger": 32, "maxHunger": 100, "hp": 70, "stamina": 55 },
+    "loadout": [
+      { "item": "wild_berry", "count": 2 },
+      { "item": "trail_ration", "count": 1 }
+    ]
+  },
+  "tuning": {
+    "hungerDrainPerMin": 6,
+    "starvationDamagePerSec": 1,
+    "foodHungerMult": 1,
+    "foodHpMult": 1,
+    "foodStaminaMult": 1
+  },
+  "timeScale": 1,
+  "tweaks": [
+    "hungerDrainPerMin",
+    "starvationDamagePerSec",
+    "foodHungerMult",
+    "foodHpMult",
+    "foodStaminaMult"
+  ]
+}

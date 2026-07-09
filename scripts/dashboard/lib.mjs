@@ -20,7 +20,6 @@ export const TEST_TYPES = ["scenario", "cli", "doc", "manual"];
 export const RUN_ALLOWLIST = [
   /^pnpm (test|typecheck|lint|e2e|e2e:game|bench|version:check|test:dashboard)$/,
   /^pnpm --filter @rpg\/(server|shared|client) (test|typecheck|lint)$/,
-  /^pnpm --filter @rpg\/(server|shared|client) test [\w./][\w./-]*(?: [\w./][\w./-]*)*$/,
   /^node scripts\/(bench|perf-analyze|check-versions)\.mjs((?: [\w.@:=/-]+)*)$/,
 ];
 

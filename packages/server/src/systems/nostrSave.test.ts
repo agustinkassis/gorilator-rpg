@@ -1,6 +1,34 @@
 import { Player } from "@rpg/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sanitizeSaveContent } from "./nostr";
 import { buildServerSave } from "./nostrSave";
+
+describe("player save hunger compatibility", () => {
+  it("loads v1 saves with default hunger", () => {
+    const save = sanitizeSaveContent(JSON.stringify({ v: 1, hp: 50, maxHp: 100, stamina: 20, maxStamina: 100 }));
+    expect(save?.v).toBe(1);
+    expect(save?.hunger).toBe(100);
+    expect(save?.maxHunger).toBe(100);
+  });
+
+  it("sanitizes v2 hunger values", () => {
+    const save = sanitizeSaveContent(JSON.stringify({ v: 2, hunger: 120, maxHunger: 80 }));
+    expect(save?.v).toBe(2);
+    expect(save?.hunger).toBe(80);
+    expect(save?.maxHunger).toBe(80);
+  });
+
+  it("publishes v2 saves with hunger fields", () => {
+    const p = new Player();
+    p.pubkey = "abc";
+    p.hunger = 44;
+    p.maxHunger = 90;
+    const save = buildServerSave(p, []);
+    expect(save.v).toBe(2);
+    expect(save.hunger).toBe(44);
+    expect(save.maxHunger).toBe(90);
+  });
+});
 
 describe("buildServerSave", () => {
   afterEach(() => {
@@ -19,6 +47,8 @@ describe("buildServerSave", () => {
     p.maxHp = 140;
     p.stamina = 12;
     p.maxStamina = 33;
+    p.hunger = 77;
+    p.maxHunger = 120;
     p.x = 4;
     p.z = -9;
     p.rotY = 1.25;
@@ -42,7 +72,7 @@ describe("buildServerSave", () => {
     );
 
     expect(save).toMatchObject({
-      v: 1,
+      v: 2,
       playerPubkey: "abc123",
       reason: "realm-end",
       realm: { id: "realm-1", startedAt: 1234, wave: 6 },
@@ -52,6 +82,8 @@ describe("buildServerSave", () => {
       maxHp: 140,
       stamina: 12,
       maxStamina: 33,
+      hunger: 77,
+      maxHunger: 120,
       x: 4,
       z: -9,
       rotY: 1.25,

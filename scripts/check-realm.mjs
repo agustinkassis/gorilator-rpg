@@ -38,6 +38,23 @@ const sourceFile = ts.createSourceFile(
 );
 const deathModes = new Set(exportedStringArray(sourceFile, "REALM_DEATH_MODES"));
 const tuningKeys = new Set(exportedStringArray(sourceFile, "REALM_TUNING_KEYS"));
+const playerStats = new Set([
+  "level",
+  "xp",
+  "hp",
+  "maxHp",
+  "stamina",
+  "maxStamina",
+  "attack",
+  "armor",
+  "critChance",
+  "moveSpeed",
+  "throwPower",
+  "mana",
+  "maxMana",
+  "hunger",
+  "maxHunger",
+]);
 const errors = [];
 
 function addError(file, path, message) {
@@ -58,18 +75,38 @@ function unknownKeys(file, path, value, allowed) {
   }
 }
 
-function validatePoint(file, path, value, { rotY = false } = {}) {
+function validateString(file, path, value, { optional = true, nonEmpty = false } = {}) {
+  if (value === undefined && optional) return;
+  if (typeof value !== "string" || (nonEmpty && !value.trim())) addError(file, path, "must be a string");
+}
+
+function validateFinite(file, path, value, { optional = true } = {}) {
+  if (value === undefined && optional) return;
+  if (!finiteNumber(value)) addError(file, path, "must be a finite number");
+}
+
+function validateBoolean(file, path, value, { optional = true } = {}) {
+  if (value === undefined && optional) return;
+  if (typeof value !== "boolean") addError(file, path, "must be a boolean");
+}
+
+function validateStringArray(file, path, value, { optional = true } = {}) {
+  if (value === undefined && optional) return;
+  if (!Array.isArray(value)) {
+    addError(file, path, "must be an array of strings");
+    return;
+  }
+  value.forEach((entry, index) => validateString(file, `${path}[${index}]`, entry, { optional: false, nonEmpty: true }));
+}
+
+function validatePoint(file, path, value) {
   if (!isObject(value)) {
     addError(file, path, "must be an object");
     return;
   }
-  unknownKeys(file, path, value, new Set(rotY ? ["x", "z", "rotY"] : ["x", "z"]));
-  for (const key of ["x", "z"]) {
-    if (!finiteNumber(value[key])) addError(file, `${path}.${key}`, "must be a finite number");
-  }
-  if (rotY && value.rotY !== undefined && !finiteNumber(value.rotY)) {
-    addError(file, `${path}.rotY`, "must be a finite number");
-  }
+  unknownKeys(file, path, value, new Set(["x", "z"]));
+  validateFinite(file, `${path}.x`, value.x, { optional: false });
+  validateFinite(file, `${path}.z`, value.z, { optional: false });
 }
 
 function validatePolicy(file, value) {
@@ -88,9 +125,7 @@ function validatePolicy(file, value) {
       if (value.death.mode !== undefined && !deathModes.has(value.death.mode)) {
         addError(file, "policy.death.mode", `must be one of ${[...deathModes].join(", ")}`);
       }
-      if (value.death.xpPenalty !== undefined && !finiteNumber(value.death.xpPenalty)) {
-        addError(file, "policy.death.xpPenalty", "must be a finite number");
-      }
+      validateFinite(file, "policy.death.xpPenalty", value.death.xpPenalty);
     }
   }
 
@@ -104,11 +139,8 @@ function validatePolicy(file, value) {
         value.progression,
         new Set(["persistAcrossWipes", "keepInventoryOnWipe"]),
       );
-      for (const key of ["persistAcrossWipes", "keepInventoryOnWipe"]) {
-        if (value.progression[key] !== undefined && typeof value.progression[key] !== "boolean") {
-          addError(file, `policy.progression.${key}`, "must be a boolean");
-        }
-      }
+      validateBoolean(file, "policy.progression.persistAcrossWipes", value.progression.persistAcrossWipes);
+      validateBoolean(file, "policy.progression.keepInventoryOnWipe", value.progression.keepInventoryOnWipe);
     }
   }
 }
@@ -121,7 +153,7 @@ function validateTuning(file, value) {
   }
   for (const [key, raw] of Object.entries(value)) {
     if (!tuningKeys.has(key)) addError(file, `tuning.${key}`, "unknown tuning key");
-    if (!finiteNumber(raw)) addError(file, `tuning.${key}`, "must be a finite number");
+    validateFinite(file, `tuning.${key}`, raw, { optional: false });
   }
 }
 
@@ -132,17 +164,34 @@ function validatePlugins(file, value) {
     return;
   }
   unknownKeys(file, "plugins", value, new Set(["disabled"]));
-  if (value.disabled !== undefined) {
-    if (!Array.isArray(value.disabled)) {
-      addError(file, "plugins.disabled", "must be an array of plugin names");
-    } else {
-      value.disabled.forEach((entry, index) => {
-        if (typeof entry !== "string" || !entry.trim()) {
-          addError(file, `plugins.disabled[${index}]`, "must be a non-empty string");
-        }
-      });
-    }
+  validateStringArray(file, "plugins.disabled", value.disabled);
+}
+
+function validateEvents(file, value) {
+  if (value === undefined) return;
+  if (!isObject(value)) {
+    addError(file, "events", "must be an object");
+    return;
   }
+  unknownKeys(file, "events", value, new Set(["enabled", "autoStart", "module", "config"]));
+  if (value.enabled !== undefined && typeof value.enabled !== "boolean" && !Array.isArray(value.enabled)) {
+    addError(file, "events.enabled", "must be a boolean or an array of module ids");
+  }
+  if (Array.isArray(value.enabled)) validateStringArray(file, "events.enabled", value.enabled, { optional: false });
+  validateBoolean(file, "events.autoStart", value.autoStart);
+  validateString(file, "events.module", value.module);
+  if (value.config !== undefined && !isObject(value.config)) addError(file, "events.config", "must be an object");
+}
+
+function validateRealmWorld(file, value) {
+  if (value === undefined) return;
+  if (!isObject(value)) {
+    addError(file, "world", "must be an object");
+    return;
+  }
+  unknownKeys(file, "world", value, new Set(["homeObjective", "waves"]));
+  validateBoolean(file, "world.homeObjective", value.homeObjective);
+  validateBoolean(file, "world.waves", value.waves);
 }
 
 function validateStats(file, path, value) {
@@ -151,11 +200,26 @@ function validateStats(file, path, value) {
     addError(file, path, "must be an object");
     return;
   }
-  const allowed = new Set(["maxHp", "attack", "armor", "critChance", "moveSpeed", "throwPower", "level", "xp"]);
-  unknownKeys(file, path, value, allowed);
-  for (const [key, raw] of Object.entries(value)) {
-    if (!finiteNumber(raw)) addError(file, `${path}.${key}`, "must be a finite number");
+  unknownKeys(file, path, value, playerStats);
+  for (const [key, raw] of Object.entries(value)) validateFinite(file, `${path}.${key}`, raw, { optional: false });
+}
+
+function validateLoadout(file, path, value) {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    addError(file, path, "must be an array");
+    return;
   }
+  value.forEach((entry, index) => {
+    const p = `${path}[${index}]`;
+    if (!isObject(entry)) {
+      addError(file, p, "must be an object");
+      return;
+    }
+    unknownKeys(file, p, entry, new Set(["item", "count"]));
+    validateString(file, `${p}.item`, entry.item, { optional: false, nonEmpty: true });
+    validateFinite(file, `${p}.count`, entry.count);
+  });
 }
 
 function validateScenarioPlayer(file, value) {
@@ -164,13 +228,49 @@ function validateScenarioPlayer(file, value) {
     addError(file, "player", "must be an object");
     return;
   }
-  unknownKeys(file, "player", value, new Set(["level", "xp", "hp", "maxHp", "position"]));
-  for (const key of ["level", "xp", "hp", "maxHp"]) {
-    if (value[key] !== undefined && !finiteNumber(value[key])) {
-      addError(file, `player.${key}`, "must be a finite number");
-    }
+  unknownKeys(file, "player", value, new Set(["loadout", "stats", "position"]));
+  validateLoadout(file, "player.loadout", value.loadout);
+  validateStats(file, "player.stats", value.stats);
+  if (value.position !== undefined) validatePoint(file, "player.position", value.position);
+}
+
+function validateScenarioResource(file, path, value) {
+  if (!isObject(value)) {
+    addError(file, path, "must be an object");
+    return;
   }
-  if (value.position !== undefined) validatePoint(file, "player.position", value.position, { rotY: true });
+  unknownKeys(file, path, value, new Set(["type", "kind", "id", "x", "z", "count", "scale", "rotY", "hp"]));
+  validateString(file, `${path}.type`, value.type);
+  validateString(file, `${path}.kind`, value.kind);
+  validateString(file, `${path}.id`, value.id);
+  validateFinite(file, `${path}.x`, value.x, { optional: false });
+  validateFinite(file, `${path}.z`, value.z, { optional: false });
+  for (const key of ["count", "scale", "rotY", "hp"]) validateFinite(file, `${path}.${key}`, value[key]);
+}
+
+function validateScenarioGroundItem(file, path, value) {
+  if (!isObject(value)) {
+    addError(file, path, "must be an object");
+    return;
+  }
+  unknownKeys(file, path, value, new Set(["item", "x", "z", "count"]));
+  validateString(file, `${path}.item`, value.item, { optional: false, nonEmpty: true });
+  validateFinite(file, `${path}.x`, value.x, { optional: false });
+  validateFinite(file, `${path}.z`, value.z, { optional: false });
+  validateFinite(file, `${path}.count`, value.count);
+}
+
+function validateScenarioNpc(file, path, value) {
+  if (!isObject(value)) {
+    addError(file, path, "must be an object");
+    return;
+  }
+  unknownKeys(file, path, value, new Set(["defId", "x", "z", "brain", "level"]));
+  validateString(file, `${path}.defId`, value.defId, { optional: false, nonEmpty: true });
+  validateFinite(file, `${path}.x`, value.x, { optional: false });
+  validateFinite(file, `${path}.z`, value.z, { optional: false });
+  validateString(file, `${path}.brain`, value.brain);
+  validateFinite(file, `${path}.level`, value.level);
 }
 
 function validateScenarioEnemy(file, path, value) {
@@ -178,28 +278,21 @@ function validateScenarioEnemy(file, path, value) {
     addError(file, path, "must be an object");
     return;
   }
-  unknownKeys(
-    file,
-    path,
-    value,
-    new Set(["idPrefix", "kind", "count", "level", "brain", "stats", "position", "offsetFromPlayer", "spread", "aggro"]),
-  );
-  for (const key of ["idPrefix", "kind", "brain"]) {
-    if (value[key] !== undefined && typeof value[key] !== "string") {
-      addError(file, `${path}.${key}`, "must be a string");
-    }
+  unknownKeys(file, path, value, new Set(["kind", "x", "z", "level", "brain"]));
+  validateString(file, `${path}.kind`, value.kind, { optional: false, nonEmpty: true });
+  validateFinite(file, `${path}.x`, value.x, { optional: false });
+  validateFinite(file, `${path}.z`, value.z, { optional: false });
+  validateFinite(file, `${path}.level`, value.level);
+  validateString(file, `${path}.brain`, value.brain);
+}
+
+function validateArrayEntries(file, path, value, validator) {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    addError(file, path, "must be an array");
+    return;
   }
-  for (const key of ["count", "level", "spread"]) {
-    if (value[key] !== undefined && !finiteNumber(value[key])) {
-      addError(file, `${path}.${key}`, "must be a finite number");
-    }
-  }
-  if (value.aggro !== undefined && typeof value.aggro !== "boolean") {
-    addError(file, `${path}.aggro`, "must be a boolean");
-  }
-  if (value.position !== undefined) validatePoint(file, `${path}.position`, value.position, { rotY: true });
-  if (value.offsetFromPlayer !== undefined) validatePoint(file, `${path}.offsetFromPlayer`, value.offsetFromPlayer, { rotY: true });
-  validateStats(file, `${path}.stats`, value.stats);
+  value.forEach((entry, index) => validator(file, `${path}[${index}]`, entry));
 }
 
 function validateScenarioWorld(file, value) {
@@ -208,28 +301,52 @@ function validateScenarioWorld(file, value) {
     addError(file, "world", "must be an object");
     return;
   }
-  unknownKeys(file, "world", value, new Set(["clearEnemies", "enemies", "props", "resources", "npcs", "groundItems"]));
-  if (value.clearEnemies !== undefined && typeof value.clearEnemies !== "boolean") {
-    addError(file, "world.clearEnemies", "must be a boolean");
+  unknownKeys(
+    file,
+    "world",
+    value,
+    new Set([
+      "clearPickups",
+      "wavesEnabled",
+      "waves",
+      "homeObjective",
+      "laCryptaDefense",
+      "spawnersEnabled",
+      "enemies",
+      "props",
+      "resources",
+      "npcs",
+      "groundItems",
+    ]),
+  );
+  for (const key of ["clearPickups", "wavesEnabled", "waves", "homeObjective", "laCryptaDefense", "spawnersEnabled"]) {
+    validateBoolean(file, `world.${key}`, value[key]);
   }
-  if (value.enemies !== undefined) {
-    if (!Array.isArray(value.enemies)) {
-      addError(file, "world.enemies", "must be an array");
-    } else {
-      value.enemies.forEach((enemy, index) => validateScenarioEnemy(file, `world.enemies[${index}]`, enemy));
-    }
+  validateArrayEntries(file, "world.resources", value.resources, validateScenarioResource);
+  validateArrayEntries(file, "world.groundItems", value.groundItems, validateScenarioGroundItem);
+  validateArrayEntries(file, "world.npcs", value.npcs, validateScenarioNpc);
+  validateArrayEntries(file, "world.enemies", value.enemies, validateScenarioEnemy);
+  if (value.props !== undefined && !Array.isArray(value.props)) addError(file, "world.props", "must be an array");
+}
+
+function validateScenarioBot(file, path, value) {
+  if (!isObject(value)) {
+    addError(file, path, "must be an object");
+    return;
   }
-  for (const key of ["props", "resources", "npcs", "groundItems"]) {
-    if (value[key] !== undefined && !Array.isArray(value[key])) {
-      addError(file, `world.${key}`, "must be an array");
-    }
-  }
+  unknownKeys(file, path, value, new Set(["behavior", "count", "name", "position", "loadout", "stats", "assertions"]));
+  validateString(file, `${path}.behavior`, value.behavior, { optional: false, nonEmpty: true });
+  validateFinite(file, `${path}.count`, value.count);
+  validateString(file, `${path}.name`, value.name);
+  if (value.position !== undefined) validatePoint(file, `${path}.position`, value.position);
+  validateLoadout(file, `${path}.loadout`, value.loadout);
+  validateStats(file, `${path}.stats`, value.stats);
+  validateStringArray(file, `${path}.assertions`, value.assertions);
 }
 
 function validateScenarioExtras(file, value) {
-  if (value.timeScale !== undefined && !finiteNumber(value.timeScale)) {
-    addError(file, "timeScale", "must be a finite number");
-  }
+  validateFinite(file, "seed", value.seed);
+  validateFinite(file, "timeScale", value.timeScale);
   if (value.systems !== undefined) {
     if (!isObject(value.systems)) {
       addError(file, "systems", "must be an object");
@@ -239,9 +356,16 @@ function validateScenarioExtras(file, value) {
       }
     }
   }
-  if (value.bots !== undefined && !Array.isArray(value.bots)) {
-    addError(file, "bots", "must be an array");
+  if (value.tweaks !== undefined) {
+    if (!Array.isArray(value.tweaks)) {
+      addError(file, "tweaks", "must be an array");
+    } else {
+      value.tweaks.forEach((key, index) => {
+        if (typeof key !== "string" || !tuningKeys.has(key)) addError(file, `tweaks[${index}]`, "must be a known tuning key");
+      });
+    }
   }
+  validateArrayEntries(file, "bots", value.bots, validateScenarioBot);
   validateScenarioPlayer(file, value.player);
   validateScenarioWorld(file, value.world);
 }
@@ -252,17 +376,31 @@ function validateConfig(file, value, { scenario = false } = {}) {
     return;
   }
   const allowed = scenario
-    ? new Set(["name", "description", "plugins", "tuning", "policy", "timeScale", "world", "player", "systems", "bots"])
-    : new Set(["name", "plugins", "tuning", "policy"]);
+    ? new Set([
+        "name",
+        "description",
+        "seed",
+        "plugins",
+        "tuning",
+        "policy",
+        "events",
+        "timeScale",
+        "world",
+        "player",
+        "systems",
+        "bots",
+        "tweaks",
+      ])
+    : new Set(["name", "plugins", "world", "events", "tuning", "policy"]);
   unknownKeys(file, "", value, allowed);
-  if (value.name !== undefined && typeof value.name !== "string") addError(file, "name", "must be a string");
-  if (scenario && value.description !== undefined && typeof value.description !== "string") {
-    addError(file, "description", "must be a string");
-  }
+  validateString(file, "name", value.name);
+  if (scenario) validateString(file, "description", value.description);
   validatePlugins(file, value.plugins);
+  validateEvents(file, value.events);
   validateTuning(file, value.tuning);
   validatePolicy(file, value.policy);
   if (scenario) validateScenarioExtras(file, value);
+  else validateRealmWorld(file, value.world);
 }
 
 function readJson(file, { scenario = false } = {}) {

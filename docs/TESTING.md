@@ -1,6 +1,6 @@
 # Testing
 
-Four layers, all wired into `turbo` (cached — unchanged packages skip) and CI.
+Five layers, all wired into `turbo` (cached — unchanged packages skip) and CI.
 
 ## 1. Unit tests (Vitest)
 
@@ -18,11 +18,35 @@ pnpm --filter @rpg/server exec vitest   # watch mode for one package
 - Decorator-free shared modules (`perf.ts`, `obstacles.ts`, `entityFeatures.ts`)
   are imported from source.
 - `combat.test.ts` / `movement.test.ts` are **characterization tests**: they pin
-  the damage formula, windup flow, movement and spawn keep-out behavior
-  (`Math.random` is mocked for determinism). If you intentionally change game
-  balance, update them in the same PR.
-- The plugin seam is covered by `packages/server/src/systems/plugins/plugins.test.ts`,
-  which loads the worked-example plugin against the real host registries.
+  the damage formula, windup flow, movement and spawn keep-out behavior. If you
+  intentionally change game balance, update them in the same PR.
+- **Determinism**: gameplay rolls go through the seeded RNG service
+  ([engineering.md](engineering.md) §3) — tests pin every roll with
+  `installFixedRng(state, 0.5)` instead of spying on `Math.random` (a guard
+  test in `rng.test.ts` rejects new `Math.random` calls in gameplay code).
+- The plugin seam is covered by `packages/server/src/systems/plugins/plugins.test.ts`
+  (worked-example plugin against the real host registries), the event-module
+  runtime by `plugins/events.test.ts`, and the extracted La Crypta Defense by
+  the wave/house characterization suites, which drive the plugin through the
+  real `EventRuntime`.
+
+## 1½. Headless scenario tests (bot self-tests)
+
+The Feature Lab layer between unit and e2e ([feature-lab.md](feature-lab.md)):
+`createScenarioSim` (packages/server/src/testing/scenarioSim.ts) composes the
+REAL systems in GameRoom tick order — no Colyseus, no ports — so a scenario +
+bots + assertions is a plain Vitest case:
+
+```ts
+const sim = createScenarioSim({ scenario: loadScenario("bot-arena")! });
+sim.runUntil((state) => allEnemiesDead(state));
+expect(countItem(sim.inventories.get(botId)!, "banana")).toBe(3);
+sim.dispose(); // ALWAYS — devTuning/realmEvents are module-global
+```
+
+Template: `packages/server/src/systems/bots/botArena.test.ts` (includes a
+same-seed reproducibility proof). This is the "bot self-test" artifact of every
+feature's Definition of Done.
 
 ## 2. E2E (Playwright)
 
@@ -33,14 +57,18 @@ pnpm e2e             # same game smoke through the default Playwright project se
 
 - Config: `playwright.config.ts`. Fixed ports 1462x (never collide with dev).
 - The game project boots the server with `GORILATOR_TEST=1` — deterministic
-  room: no goblin waves, room pre-created — and headless Chromium with
-  swiftshader for software WebGL.
+  room: no goblin waves, room pre-created — plus `GORILATOR_SCENARIO=hunger`
+  for the Feature Lab smoke, and headless Chromium with swiftshader for
+  software WebGL.
 - **The cardinal rule: assert on DOM / network / `window.__perf` — never canvas
   pixels.** The Babylon frame is timing-dependent, and HMR used to stack
   `main.ts` instances (now guarded by an `import.meta.hot.dispose` teardown, but
   the rule stands).
 - The game smoke proves: WS to the Colyseus port opens, `/api/status` registers
   the player, `__perf.latest().fps > 0` (the render loop is alive).
+- The Hunger Lab smoke opens `?scenario=hunger&autojoin=HungerBot` with waves,
+  La Crypta defense, and authored spawners disabled; it polls synced hunger,
+  uses food from slot 0, and verifies hunger rises.
 
 ## 3. Benchmark gate
 

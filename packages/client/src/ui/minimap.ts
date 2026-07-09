@@ -3,6 +3,7 @@ import type { GameState } from "@rpg/shared";
 import { npubEncode } from "nostr-tools/nip19";
 import type { NetworkClient } from "../net/NetworkClient";
 import type { PropManager } from "../dev/PropManager";
+import { itemIcon, itemName, loadItemDefs } from "../items/itemRegistry";
 
 /** Escape user-provided text before putting it in innerHTML (names come from
  *  players / nostr profiles, so they must never be trusted as markup). */
@@ -91,6 +92,7 @@ export class Minimap {
   private playerList!: HTMLElement; // connected-players panel on the big map
   private lastPlayerSig = ""; // rebuild the list only when the roster changes
   private avatars = new Map<string, HTMLImageElement>(); // nostr avatar url → image (lazy-loaded)
+  private itemImages = new Map<string, HTMLImageElement>(); // item icon url → image (lazy-loaded)
   private tooltip!: HTMLElement; // hover tooltip on the big map
   private overlayView = { cx: 0, cz: 0, scale: BASE_SCALE }; // last big-map transform (for hit-testing)
 
@@ -103,6 +105,7 @@ export class Minimap {
     this.overlayCtx = overlayCanvas.getContext("2d")!;
     this.cornerCtx = cornerCanvas.getContext("2d")!;
     this.bindKeys();
+    void loadItemDefs();
   }
 
   /** Wire in the imported-prop registry so the map can icon them. */
@@ -188,7 +191,14 @@ export class Minimap {
         if (!t.alive) return;
         const [x, y] = proj(t.x, t.z);
         if (!onScreen(x, y)) return;
-        this.treeIcon(ctx, x, y, treeS);
+        if (t.kind === "bush") this.berriesIcon(ctx, x, y, Math.max(5, treeS * 0.72));
+        else this.treeIcon(ctx, x, y, treeS);
+      });
+      const itemS = Math.max(7, 10.5 * Math.sqrt(scale / BASE_SCALE));
+      state.items.forEach((item) => {
+        const [x, y] = proj(item.x, item.z);
+        if (!onScreen(x, y)) return;
+        this.itemIcon(ctx, x, y, item.itemId, itemS);
       });
     }
     // imported props (Dev Mode): trees, rocks/timber, and other concrete elements
@@ -262,6 +272,17 @@ export class Minimap {
       img.decoding = "async";
       img.src = url;
       this.avatars.set(url, img);
+    }
+    return img.complete && img.naturalWidth > 0 ? img : null;
+  }
+
+  private itemImage(url: string): HTMLImageElement | null {
+    let img = this.itemImages.get(url);
+    if (!img) {
+      img = new Image();
+      img.decoding = "async";
+      img.src = url;
+      this.itemImages.set(url, img);
     }
     return img.complete && img.naturalWidth > 0 ? img : null;
   }
@@ -446,6 +467,53 @@ export class Minimap {
     ctx.stroke();
   }
 
+  private berriesIcon(ctx: CanvasRenderingContext2D, px: number, py: number, s: number) {
+    this.dot(ctx, px - s * 0.26, py + s * 0.12, s * 0.36, "#c92343", "rgba(0,0,0,0.52)");
+    this.dot(ctx, px + s * 0.23, py + s * 0.08, s * 0.34, "#e04a5c", "rgba(0,0,0,0.48)");
+    this.dot(ctx, px - s * 0.02, py - s * 0.24, s * 0.33, "#a91635", "rgba(0,0,0,0.45)");
+    ctx.beginPath();
+    ctx.moveTo(px + s * 0.05, py - s * 0.55);
+    ctx.quadraticCurveTo(px + s * 0.34, py - s * 0.82, px + s * 0.62, py - s * 0.6);
+    ctx.quadraticCurveTo(px + s * 0.34, py - s * 0.48, px + s * 0.08, py - s * 0.42);
+    ctx.closePath();
+    ctx.fillStyle = "#4fa854";
+    ctx.fill();
+    ctx.lineWidth = Math.max(0.7, s * 0.12);
+    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx.stroke();
+  }
+
+  private itemIcon(ctx: CanvasRenderingContext2D, px: number, py: number, itemId: string, s: number) {
+    const icon = itemIcon(itemId);
+    if (itemId === "cranberries" || itemId === "wild_berry") {
+      this.berriesIcon(ctx, px, py, s);
+      return;
+    }
+    if (/^\/|^https?:|^data:/i.test(icon)) {
+      const img = this.itemImage(icon);
+      if (img) {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.6)";
+        ctx.shadowBlur = Math.max(2, s * 0.3);
+        ctx.drawImage(img, px - s, py - s, s * 2, s * 2);
+        ctx.restore();
+        return;
+      }
+    } else if (icon && icon !== "❓") {
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `${Math.max(10, s * 1.7)}px system-ui, Apple Color Emoji, Segoe UI Emoji, sans-serif`;
+      ctx.lineWidth = Math.max(2, s * 0.22);
+      ctx.strokeStyle = "rgba(0,0,0,0.72)";
+      ctx.strokeText(icon, px, py);
+      ctx.fillText(icon, px, py);
+      ctx.restore();
+      return;
+    }
+    this.dot(ctx, px, py, Math.max(3, s * 0.42), "#f2d36b", "rgba(0,0,0,0.55)");
+  }
+
   /** Generic "concrete element" icon — a small amber block, half-size `s`. */
   private propMarker(ctx: CanvasRenderingContext2D, px: number, py: number, s: number) {
     const c = s * 0.78;
@@ -476,7 +544,13 @@ export class Minimap {
       return b.level - a.level || a.name.localeCompare(b.name); // then by level, then name
     });
 
-    const sig = rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.deaths}:${r.verified ? 1 : 0}`).join("|");
+    // Admins get a kick button on every OTHER row — players and scripted bots
+    // alike (the server routes admin_kick to client.leave() or removeBot).
+    const isAdmin = !!(selfId && state?.players.get(selfId)?.isAdmin);
+
+    const sig =
+      (isAdmin ? "adm|" : "") +
+      rows.map((r) => `${r.id}:${r.name}:${r.level}:${r.deaths}:${r.verified ? 1 : 0}`).join("|");
     if (sig === this.lastPlayerSig) return; // nothing changed → keep the DOM (stable links)
 
     const head = `<div id="mmPHead">Players · ${rows.length}</div>`;
@@ -497,7 +571,11 @@ export class Minimap {
           ? `<a class="mmLink" href="https://njump.me/${npub}" target="_blank" rel="noopener noreferrer">${esc(r.name)}</a>`
           : `<span>${esc(r.name)}</span>`;
         const you = r.id === selfId ? `<span class="mmYou">(you)</span>` : "";
-        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span><span class="mmDeaths" title="times of death">☠ ${r.deaths}</span></div>`;
+        const kick =
+          isAdmin && r.id !== selfId
+            ? `<button class="mmKick" data-kick="${esc(r.id)}" title="Kick ${esc(r.name)} from the realm">✕</button>`
+            : "";
+        return `<div class="mmRow">${badge}<span class="mmPName">${name}${you}</span><span class="mmLvl">Lv.${r.level}</span><span class="mmDeaths" title="times of death">☠ ${r.deaths}</span>${kick}</div>`;
       })
       .join("");
     this.playerList.innerHTML = head + body;
@@ -584,11 +662,22 @@ export class Minimap {
     if (state) {
       state.trees.forEach((t) => {
         if (!t.alive) return;
-        consider(t.x, t.z, 8, () => ({ title: "Tree", lines: [`HP ${Math.round(t.hp)} / ${t.maxHp}`] }));
+        const isBush = t.kind === "bush";
+        consider(t.x, t.z, 8, () => ({
+          title: isBush ? "Berry Bush" : "Tree",
+          lines: [`HP ${Math.round(t.hp)} / ${t.maxHp}`],
+        }));
       });
       state.rocks.forEach((rk) => {
         if (!rk.alive) return;
         consider(rk.x, rk.z, 9, () => ({ title: "Boulder", lines: [`HP ${Math.round(rk.hp)} / ${rk.maxHp}`] }));
+      });
+      state.items.forEach((item) => {
+        const icon = itemIcon(item.itemId);
+        const title = /^\/|^https?:|^data:/i.test(icon)
+          ? itemName(item.itemId)
+          : `${icon} ${itemName(item.itemId)}`;
+        consider(item.x, item.z, 9, () => ({ title, lines: ["Pickup"] }));
       });
     }
     return best;
@@ -740,6 +829,14 @@ export class Minimap {
     // connected-players panel (name · level · nostr), top-left of the map
     const playerList = document.createElement("div");
     playerList.id = "mmPlayers";
+    // Admin kick (✕ per row, delegated — the list is rebuilt as the roster
+    // changes). The server enforces the ADMIN_NPUBS gate; the button is only
+    // rendered for admins in the first place.
+    playerList.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest?.("[data-kick]");
+      const id = btn?.getAttribute("data-kick");
+      if (id) this.net.sendAdminKick(id);
+    });
 
     panel.append(overlayCanvas, title, legend, playerList);
     overlay.append(panel);
@@ -778,6 +875,10 @@ export class Minimap {
       ".mmLink{color:#c08bff;text-decoration:none}" +
       ".mmLink:hover{text-decoration:underline;color:#d7b3ff}" +
       ".mmYou{color:#79e0ff;margin-left:5px;font-size:11px}" +
+      ".mmKick{margin-left:8px;width:18px;height:18px;line-height:1;cursor:pointer;flex:none;" +
+      "background:#3a1d1d;color:#e0726a;border:1px solid #7a3a34;border-radius:5px;" +
+      "font:700 11px system-ui,sans-serif;padding:0}" +
+      ".mmKick:hover{background:#5a2724;color:#ffd8d3;border-color:#a34a3a}" +
       "#mmTooltip{position:fixed;z-index:70;display:none;pointer-events:none;" +
       "background:rgba(12,10,14,0.96);border:1px solid #6b4f2e;border-radius:7px;" +
       "padding:6px 9px;font:12px system-ui,sans-serif;color:#e8e3d6;max-width:240px;" +

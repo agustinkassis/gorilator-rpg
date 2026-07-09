@@ -4,6 +4,12 @@ import type { MetricSummary, ResourceItem } from "@rpg/shared";
 
 const SERVER_POLL_MS = 1000; // how often to pull /api/perf for the server line
 const BENCH_DEFAULT_MS = 10_000;
+const FPS_LIMIT_OPTIONS = [0, 15, 24, 30, 45, 60, 90, 120, 144, 240] as const;
+
+interface FpsLimitControl {
+  get(): number;
+  set(limit: number): void;
+}
 
 /**
  * The on-screen performance HUD (toggle with F3, or `?perf` in the URL). It is the
@@ -19,6 +25,7 @@ export class PerfOverlay {
   private body: HTMLDivElement;
   private benchBtn: HTMLButtonElement;
   private labelInput: HTMLInputElement;
+  private fpsLimitSelect: HTMLSelectElement | null = null;
   private status: HTMLDivElement;
   private expandBtn: HTMLButtonElement;
   private breakdownEl: HTMLDivElement;
@@ -34,6 +41,7 @@ export class PerfOverlay {
     private perf: PerfTracker,
     private probes: BabylonProbes,
     private serverHttpBase: string,
+    private fpsLimitControl?: FpsLimitControl,
   ) {
     injectBreakdownStyles();
     const panel = document.createElement("div");
@@ -50,6 +58,7 @@ export class PerfOverlay {
         <span id="perfClose" style="cursor:pointer; color:#8b93a7; padding:0 4px;">✕</span>
       </div>
       <div id="perfBody" style="padding:8px 9px; white-space:pre; min-height:120px;"></div>
+      ${this.fpsLimitControl ? fpsLimitHtml() : ""}
       <button id="perfExpand" style="display:block; width:100%; text-align:left; cursor:pointer;
               background:#11161f; color:#cdd3e0; border:0; border-top:1px solid #2a3242;
               padding:5px 9px; font:inherit;">▸ What's heavy</button>
@@ -72,6 +81,7 @@ export class PerfOverlay {
     this.body = panel.querySelector("#perfBody") as HTMLDivElement;
     this.benchBtn = panel.querySelector("#perfBench") as HTMLButtonElement;
     this.labelInput = panel.querySelector("#perfLabel") as HTMLInputElement;
+    this.fpsLimitSelect = panel.querySelector("#perfFpsLimit") as HTMLSelectElement | null;
     this.status = panel.querySelector("#perfStatus") as HTMLDivElement;
     this.expandBtn = panel.querySelector("#perfExpand") as HTMLButtonElement;
     this.breakdownEl = panel.querySelector("#perfBreakdown") as HTMLDivElement;
@@ -79,6 +89,15 @@ export class PerfOverlay {
     (panel.querySelector("#perfClose") as HTMLElement).onclick = () => this.toggle();
     this.expandBtn.onclick = () => this.toggleExpand();
     this.benchBtn.onclick = () => void this.runBenchmark();
+    if (this.fpsLimitSelect && this.fpsLimitControl) {
+      this.syncFpsLimitSelect();
+      this.fpsLimitSelect.onchange = () => {
+        const next = Number(this.fpsLimitSelect?.value ?? 0);
+        this.fpsLimitControl?.set(next);
+        this.syncFpsLimitSelect();
+        this.flash(next > 0 ? `fps cap ${next}` : "fps cap off");
+      };
+    }
     (panel.querySelector("#perfSave") as HTMLElement).onclick = () => void this.saveLog();
     (panel.querySelector("#perfDownload") as HTMLElement).onclick = () =>
       this.perf.download(`perf-log-${Date.now()}.jsonl`);
@@ -176,6 +195,11 @@ export class PerfOverlay {
     lines.push(
       `${colorFps(currentFps ?? fps?.avg ?? 0)}  fps  now ${fmtNum(currentFps, 0)}  avg ${fmt(fps, 0)}  min ${fmtMin(fps, 0)}  max ${fmtMax(fps, 0)}`,
     );
+    if (this.fpsLimitControl) {
+      const limit = this.fpsLimitControl.get();
+      lines.push(`cap     ${limit > 0 ? `${limit} fps` : "unlimited"}`);
+      this.syncFpsLimitSelect();
+    }
     lines.push(`        1%low ${fps ? oneLow(fps).toFixed(0) : "–"}  samples ${fps?.count ?? 0}`);
     lines.push(`frame   ${fmtMs(live.frameMs)}   gpu ${gpuTimer ? fmtMs(live.gpuMs) : "n/a"}`);
     lines.push(`heap    ${live.heapMB ? live.heapMB.avg.toFixed(0) + " MB" : "n/a (Chromium only)"}`);
@@ -287,9 +311,29 @@ export class PerfOverlay {
   private flash(msg: string) {
     this.status.textContent = msg;
   }
+
+  private syncFpsLimitSelect() {
+    if (!this.fpsLimitSelect || !this.fpsLimitControl) return;
+    this.fpsLimitSelect.value = String(this.fpsLimitControl.get());
+  }
 }
 
 // ---- formatting helpers ----
+
+function fpsLimitHtml(): string {
+  const options = FPS_LIMIT_OPTIONS.map(
+    (limit) => `<option value="${limit}">${limit > 0 ? `${limit} fps` : "Unlimited"}</option>`,
+  ).join("");
+  return `
+      <div style="display:flex; gap:7px; align-items:center; padding:0 9px 8px;
+                  border-bottom:1px solid #2a3242; background:#0c0f16;">
+        <label for="perfFpsLimit" style="flex:1; color:#cdd3e0;">FPS cap</label>
+        <select id="perfFpsLimit" style="width:126px; background:#11151f; color:#e6e9f0;
+                border:1px solid #2a3242; border-radius:4px; padding:3px 6px; font:inherit;">
+          ${options}
+        </select>
+      </div>`;
+}
 
 function btn(bg: string, fg: string): string {
   return (

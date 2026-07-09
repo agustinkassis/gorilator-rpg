@@ -2,7 +2,7 @@
 
 Four layers: **compile-time constants** (`@rpg/shared`), **environment variables**
 (deploy/identity), **`realm.json`** (per-realm rules: plugin toggles, tuning seeds,
-death/progression policy — see [plugins.md](plugins.md#realmjson-per-realm--per-fork-config)),
+event/world mode, death/progression policy — see [plugins.md](plugins.md#realmjson-per-realm--per-fork-config)),
 and **runtime JSON files** (live-reloaded content).
 
 > The `realm.json` `policy` block decides what death costs (`none` / `xp-penalty` /
@@ -13,6 +13,27 @@ and **runtime JSON files** (live-reloaded content).
 > `packages/shared/src/realmConfig.ts`. `pnpm typecheck` runs
 > `scripts/check-realm.mjs`, so an invalid `realm.json` or Feature Lab scenario
 > overlay fails the normal typecheck gate.
+
+The committed default `realm.json` starts an **open sandbox**:
+
+```json
+{
+  "events": { "enabled": [], "autoStart": false },
+  "world": { "homeObjective": false, "waves": false }
+}
+```
+
+To run La Crypta Defense as the active event again, enable it explicitly:
+
+```json
+{
+  "events": { "enabled": ["la-crypta-defense"], "autoStart": true },
+  "world": { "homeObjective": true, "waves": true }
+}
+```
+
+Feature Lab fixtures can layer on top of `realm.json`; for this default loop:
+`pnpm scenario sandbox`.
 
 ## 1. Tuning constants — `packages/shared/src/constants.ts`
 
@@ -64,6 +85,8 @@ the section comments in the file:
 | `UPDATE_REPO` | `owner/repo` the auto-update check queries (default `agustinkassis/gorilator-rpg`) |
 | `GITHUB_TOKEN` | optional — raises the GitHub API rate limit for the auto-update check |
 | `ADMIN_NPUBS` | comma/space-separated `npub1…` (or hex) keys allowed to call the NIP-98-protected `/api/admin/*` API and trigger updates from the splash. Manage via `gorilator setup → General settings → Manage admins`. See [admin.md](admin.md). |
+| `GORILATOR_SCENARIO` | boot the server with a Feature Lab scenario layered in (`scenarios/<name>.json`); set by `pnpm scenario <name>`. See [feature-lab.md](feature-lab.md). |
+| `GORILATOR_SEED` | pin the realm-cycle RNG seed (reproducible runs — a scenario manifest `seed` wins over it). Cycle seed is logged at boot + reported at `/api/status` (`cycleSeed`). |
 | `GORILATOR_DEV` | `1` makes `gorilator serve` run the **live dev server** (Vite HMR + tsx, in-game Dev Mode editor) instead of the production build. Toggle via `gorilator setup → Developer` (enabling it runs a full `pnpm install` first, so a prebuilt/slim install gains the build-only deps the dev server needs). Mock Nostr login stays disabled (`VITE_NO_MOCK_NOSTR=1`). Heavier to run and uses two ports (Vite client + server) — for dev/local installs, not a public production host. |
 
 > **Multiple installs on one machine.** Each install owns its **temporary** (quick) tunnel: the
@@ -129,18 +152,18 @@ progression flags, invalid death modes, and non-finite numbers fail
 cannot crash a room, but CI should catch bad config before it ships.
 
 Feature Lab scenario manifests extend this shape with scenario-only fields:
-`description`, `timeScale`, `world`, `player`, `systems`, and `bots`. Their
-`policy` and `tuning` blocks use the exact same rules. The typed staging fields
-currently include `player.level`, `player.xp`, `player.hp`, `player.maxHp`,
-`player.position`, `world.clearEnemies`, and `world.enemies[]` with `kind`,
-`count`, `level`, `brain`, `stats`, `position`, `offsetFromPlayer`, `spread`,
-and `aggro`.
+`description`, `seed`, `timeScale`, `world`, `player`, `systems`, `tweaks`, and
+`bots`. Their `events`, `policy`, and `tuning` blocks use the exact same rules.
+The typed staging fields are defined by `ScenarioManifest`: `player.stats`,
+`player.loadout`, `player.position`, `world.resources`, `world.groundItems`,
+`world.npcs`, `world.enemies`, and the `systems` toggles used by the scenario
+loader.
 
 When extending this config type, update all four pieces together:
 `packages/shared/src/realmConfig.ts` for the TypeScript surface,
 `scripts/check-realm.mjs` for JSON validation, the server loader that consumes
 the field, and this section. If the new field belongs in Feature Lab overlays,
-add it to `FeatureLabScenarioConfig` and the scenario branch of the checker too.
+add it to `ScenarioManifest` and the scenario branch of the checker too.
 
 ## 4. Runtime content files (live-reloaded JSON)
 

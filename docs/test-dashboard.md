@@ -28,9 +28,9 @@ agent half is `.claude/skills/test-plan/SKILL.md`.
 4. **You test with one click** — click any card for the full picture (what
    changed, the expected result, how to test, verdict history); per
    `test.type` the Test button:
-  - `scenario` → boots the worktree's dev stack into that Feature Lab
-    (or opens `?scenario=` when that same scenario is already running; a
-    mismatched managed stack is restarted into the requested scenario),
+   - `scenario` → boots the worktree's dev stack into that Feature Lab
+     (or opens `?scenario=` against a running one; the game's `dev_scenario`
+     switch recycles a mismatched live room),
    - `cli` → runs the allowlisted command, output streams in the drawer,
    - `doc` → opens the file (md/pdf inline, pptx download),
    - `manual` → shows the steps checklist.

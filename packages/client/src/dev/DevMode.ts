@@ -44,6 +44,11 @@ import {
   PLAYER_CRIT_CHANCE,
   MOVE_SPEED,
   SPRINT_SPEED_MULT,
+  HUNGER_DRAIN_PER_MIN,
+  STARVATION_DAMAGE_PER_SEC,
+  FOOD_HUNGER_MULT,
+  FOOD_HP_MULT,
+  FOOD_STAMINA_MULT,
   GOBLIN_MAX_HP,
   GOBLIN_ATTACK,
   GOBLIN_CHASE_SPEED,
@@ -53,7 +58,9 @@ import {
   DROP_RATE_MULT,
   ARMOR_K,
   CRIT_MULTIPLIER,
+  BUILTIN_BOT_BEHAVIORS,
   type BrainId,
+  type ScenarioInfoMessage,
 } from "@rpg/shared";
 import {
   type StructureMask,
@@ -94,6 +101,8 @@ export class DevMode {
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
   private gameplayPanel: HTMLElement;
+  /** The active Feature Lab scenario (server "scenario" message), or null. */
+  private scenarioInfo: ScenarioInfoMessage | null = null;
   private toolsBtn: HTMLButtonElement;
   private toolsPanel: HTMLElement;
   private toolsOpen = false;
@@ -412,6 +421,8 @@ export class DevMode {
       { label: "1×", scale: 1 },
       { label: "2×", scale: 2 },
       { label: "4×", scale: 4 },
+      { label: "8×", scale: 8 },
+      { label: "16×", scale: 16 }, // TIME_SCALE_MAX — accelerated scenario simulation
     ];
     this.timeButtons = SPEEDS.map((s) => {
       const b = document.createElement("button");
@@ -872,6 +883,127 @@ export class DevMode {
     this.slotPopup = null;
   }
 
+  /** Feature Lab (#69): the active scenario announced by the server on join.
+   *  Seeds the sliders with the manifest's values and pins a "Scenario tweaks"
+   *  section at the top of this panel. */
+  setScenario(info: ScenarioInfoMessage) {
+    this.scenarioInfo = info;
+    for (const [key, value] of Object.entries(info.tuning ?? {})) {
+      const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+      if (control && Number.isFinite(Number(value))) {
+        // The server already applied these — mirror them so sliders match.
+        this.tuningValues.set(control.key, Number(value));
+      }
+    }
+    this.renderGameplayPanel();
+  }
+
+  private renderScenarioTweaks(): HTMLElement {
+    const info = this.scenarioInfo!;
+    const wrap = this.gameplaySection(`Scenario tweaks — ${info.name}`);
+    (wrap.firstChild as HTMLElement).style.color = "#ffd47e"; // stand out from normal sections
+    if (info.description) {
+      const desc = document.createElement("div");
+      desc.textContent = info.description;
+      desc.style.cssText = "color:#9fb0c0; font:11px system-ui,sans-serif;";
+      wrap.appendChild(desc);
+    }
+
+    const keys = Array.from(new Set([...Object.keys(info.tuning ?? {}), ...(info.tweaks ?? [])]));
+    for (const key of keys) {
+      const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+      if (control) {
+        wrap.appendChild(this.tuningRow(control));
+        continue;
+      }
+      // A knob without a slider definition yet (e.g. a brand-new key): plain input.
+      const row = document.createElement("label");
+      row.style.cssText = "display:grid; grid-template-columns:1fr 90px; align-items:center; gap:7px;";
+      const name = document.createElement("span");
+      name.textContent = key;
+      name.style.cssText = "color:#cdd3e0; font-weight:600; font-size:12px;";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.value = String(info.tuning[key as keyof typeof info.tuning] ?? 0);
+      input.style.cssText =
+        "background:#1a2230; color:#cfe; border:1px solid #3a4658; border-radius:5px; padding:4px 6px; font:12px monospace;";
+      input.onchange = () => {
+        const v = Number(input.value);
+        if (Number.isFinite(v)) {
+          this.tuningValues.set(key as DevTuningKey, v);
+          this.net.sendDevTune(key as DevTuningKey, v);
+        }
+      };
+      row.appendChild(name);
+      row.appendChild(input);
+      wrap.appendChild(row);
+    }
+
+    const hint = document.createElement("div");
+    hint.textContent = "Sliders apply live (dev_tune). Bake writes realm.json for the next boot.";
+    hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+    wrap.appendChild(hint);
+
+    const bake = document.createElement("button");
+    bake.textContent = "Bake values → realm.json";
+    bake.style.cssText =
+      "cursor:pointer; border-radius:6px; border:1px solid #b98a3a; background:#3a2f1a; color:#ffd47e; padding:8px; font:600 12px system-ui,sans-serif;";
+    bake.onclick = async () => {
+      this.applyPendingGameplayTuning(); // make sure the server has the values we bake
+      const tuning: Record<string, number> = {};
+      for (const key of keys) tuning[key] = this.tunedRaw(key as DevTuningKey);
+      try {
+        const res = await fetch("/__scenario/bake", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ scenario: info.name, tuning }),
+        });
+        const out = (await res.json()) as { ok?: boolean; file?: string };
+        bake.textContent = out.ok ? `Baked → ${out.file}` : "Bake failed";
+        setTimeout(() => {
+          bake.textContent = "Bake values → realm.json";
+        }, 2500);
+      } catch {
+        bake.textContent = "Bake failed (dev server?)";
+      }
+    };
+    wrap.appendChild(bake);
+    return wrap;
+  }
+
+  /** Feature Lab (#68): spawn/clear scripted bot players from the panel. */
+  private renderBotsSection(): HTMLElement {
+    const wrap = this.gameplaySection("Bots");
+    const row = document.createElement("div");
+    row.style.cssText = "display:grid; grid-template-columns:1fr 72px 72px; gap:6px;";
+    const select = document.createElement("select");
+    select.style.cssText =
+      "background:#1a2230; color:#cfe; border:1px solid #3a4658; border-radius:5px; padding:4px 6px; font:12px system-ui,sans-serif;";
+    for (const id of BUILTIN_BOT_BEHAVIORS) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      select.appendChild(opt);
+    }
+    const mkBtn = (label: string, onclick: () => void) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText =
+        "cursor:pointer; border-radius:6px; border:1px solid #3a4658; background:#2a3242; color:#cfe; font:600 12px system-ui,sans-serif;";
+      b.onclick = onclick;
+      return b;
+    };
+    row.appendChild(select);
+    row.appendChild(mkBtn("Spawn", () => this.net.sendDevBot("spawn", select.value, 1)));
+    row.appendChild(mkBtn("Clear", () => this.net.sendDevBot("clear")));
+    wrap.appendChild(row);
+    const hint = document.createElement("div");
+    hint.textContent = "Scripted players (server-side). Scenarios auto-spawn their own via bots[].";
+    hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+    wrap.appendChild(hint);
+    return wrap;
+  }
+
   private renderGameplayPanel() {
     this.gameplayPanel.innerHTML = "";
     const head = document.createElement("div");
@@ -895,13 +1027,17 @@ export class DevMode {
     body.style.cssText = "padding:10px; display:flex; flex-direction:column; gap:12px;";
     this.gameplayPanel.appendChild(body);
 
-    // ---- Big square category buttons (Waves / Player / Combat / Resources) ----
+    // ---- Scenario tweaks: the active Feature Lab manifest's knobs, pinned on top ----
+    if (this.scenarioInfo) body.appendChild(this.renderScenarioTweaks());
+
+    // ---- Big square category buttons (Waves / Player / Combat / Survival / Resources) ----
     const catRow = document.createElement("div");
-    catRow.style.cssText = "display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;";
+    catRow.style.cssText = "display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;";
     const CATS: { id: GameplayCategory; icon: string; label: string }[] = [
       { id: "Waves", icon: "🌊", label: "Waves" },
       { id: "Player", icon: "🛡️", label: "Player" },
       { id: "Combat", icon: "⚔️", label: "Combat" },
+      { id: "Survival", icon: "🍲", label: "Survival" },
       { id: "Resources", icon: "🌳", label: "Resources" },
     ];
     for (const cat of CATS) {
@@ -976,6 +1112,9 @@ export class DevMode {
     // ---- Per-tab extras ----
     if (this.activeCategory === "Waves") body.appendChild(this.renderWaveEditor());
     if (this.activeCategory === "Resources") body.appendChild(this.renderResourceHp());
+
+    // ---- Scripted bots (Feature Lab) ----
+    body.appendChild(this.renderBotsSection());
 
     const defaults = document.createElement("button");
     defaults.textContent = "Reset all to defaults";
@@ -1201,15 +1340,15 @@ export class DevMode {
   private renderResourceHp(): HTMLElement {
     const wrap = this.gameplaySection("Resource HP");
     const hint = document.createElement("div");
-    hint.textContent = "Total HP of every tree / rock — applies to all instances live.";
+    hint.textContent = "Total HP of every tree / bush / rock — applies to all instances live.";
     hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
     wrap.appendChild(hint);
-    for (const kind of ["tree", "rock"] as const) {
+    for (const kind of RESOURCE_KINDS) {
       const cfg = this.dropCfg(kind);
       const row = document.createElement("label");
       row.style.cssText = "display:grid; grid-template-columns:1fr 86px 28px; align-items:center; gap:7px;";
       const name = document.createElement("span");
-      name.textContent = kind === "tree" ? "Tree HP" : "Rock HP";
+      name.textContent = kind === "tree" ? "Tree HP" : kind === "bush" ? "Bush HP" : "Rock HP";
       name.style.cssText = "color:#cdd3e0; font-weight:600;";
       const input = numberInput(Number(cfg.hp) || 0, 1, 1_000_000, 1, "100%");
       input.onchange = () => {
@@ -1816,11 +1955,11 @@ export class DevMode {
       const feature =
         sel.kind === "enemy"
           ? this.featureTarget(sel, obj?.kind || "npc", obj?.modelId)
-          : sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house"
-            ? this.featureTarget(sel, sel.kind)
+          : isDamageableResource(sel.kind) || sel.kind === "house"
+            ? this.featureTarget(sel, resourceFeatureKind(sel.kind, obj))
             : null;
       if (feature) this.appendPropertyScopeToggle(sel, feature, fields);
-      if (sel.kind === "tree" && feature) this.appendDamageableFields("tree", feature.scope, feature.key, sel.id, obj, 10, fields);
+      if (isTreeResource(sel.kind) && feature) this.appendDamageableFields(sel.kind, feature.scope, feature.key, sel.id, obj, 10, fields);
       if (sel.kind === "enemy" && obj?.maxHp !== undefined) {
         const enemyFeature = feature ?? this.featureTarget(sel, obj.kind || "npc", obj.modelId);
         this.appendCharacterFields(sel, obj, fields, enemyFeature);
@@ -1867,8 +2006,9 @@ export class DevMode {
     }
 
     if (sel.kind === "house") this.appendStructureMaskFields(sel, fields, actions);
-    if (sel.kind === "tree" || sel.kind === "rock" || sel.kind === "house") {
-      const feature = this.featureTarget(sel, sel.kind);
+    if (isDamageableResource(sel.kind) || sel.kind === "house") {
+      const obj = this.entityObj(sel.kind, sel.id);
+      const feature = this.featureTarget(sel, resourceFeatureKind(sel.kind, obj));
       this.appendFeatureDropFields(sel.kind, feature.scope, feature.key, sel, fields, actions, feature.modelId);
     }
     if (sel.kind === "enemy") {
@@ -2547,7 +2687,9 @@ export class DevMode {
     const def: DropCfg =
       kind === "tree"
         ? { item: "log", amount: 1, trigger: "kill", hp: 60 }
-        : { item: "stone", amount: 11, trigger: "hit", hp: 560 };
+        : kind === "bush"
+          ? { item: "cranberries", amount: 5, trigger: "kill", hp: 24 }
+          : { item: "stone", amount: 11, trigger: "hit", hp: 560 };
     const c = this.drops.get(kind);
     if (!c) {
       this.drops.set(kind, def);
@@ -2768,6 +2910,8 @@ export class DevMode {
     const map =
       kind === "tree"
         ? st.trees
+        : kind === "bush"
+          ? st.trees
         : kind === "player"
           ? st.players
         : kind === "potion"
@@ -2849,6 +2993,11 @@ const MASK_VERTEX_HIT = 0.65;
 const MASK_EDGE_HIT = 0.5;
 
 const structureKind = (kind: string): string | null => (kind === "house" ? "house" : null);
+const RESOURCE_KINDS = ["tree", "bush", "rock"] as const;
+const isTreeResource = (kind: string) => kind === "tree" || kind === "bush";
+const isDamageableResource = (kind: string) => isTreeResource(kind) || kind === "rock";
+const resourceFeatureKind = (kind: string, obj: EntityView | null): string =>
+  isTreeResource(kind) ? (obj?.kind === "bush" ? "bush" : kind) : kind;
 
 function nearestVertex(points: MaskPoint[], p: MaskPoint): { index: number; dist: number } {
   let index = -1;
@@ -2908,6 +3057,7 @@ const copyable = (kind: string) =>
 /** Synced runtime entities that Dev Mode can move/delete through the server. */
 const editableSynced = (kind: string) =>
   kind === "tree" ||
+  kind === "bush" ||
   kind === "enemy" ||
   kind === "rock" ||
   kind === "potion" ||
@@ -2938,15 +3088,16 @@ const nameFromModel = (model: string) => model.split("/").pop()?.replace(/\.glb$
 
 /** Kinds that can be turned into a goblin spawner (any non-character object). */
 const spawnable = (kind: string) =>
-  kind === "prop" || kind === "tree" || kind === "rock" || kind === "house";
+  kind === "prop" || kind === "tree" || kind === "bush" || kind === "rock" || kind === "house";
 
 /** Resource kinds with a tunable drop table (what/how much they yield). */
-const isResource = (kind: string) => kind === "tree" || kind === "rock";
+const isResource = (kind: string) => kind === "tree" || kind === "bush" || kind === "rock";
 
 /** Items a resource can be configured to drop (must match the server's dropItem). */
 const DROP_ITEMS = [
   { value: "log", label: "Log" },
   { value: "stone", label: "Stone" },
+  { value: "cranberries", label: "Cranberries" },
   { value: "banana", label: "Banana" },
   { value: "potion", label: "Potion" },
   { value: "berserker_potion", label: "Berserker Potion" },
@@ -2968,6 +3119,7 @@ const BASE_SPAWN_TYPES = [
   { value: "log", label: "Log" },
   { value: "stone", label: "Stone" },
   { value: "tree", label: "Tree" },
+  { value: "bush", label: "Bush" },
   { value: "rock", label: "Rock" },
 ];
 
@@ -2986,7 +3138,7 @@ const DEV_GLOBAL_ACTIONS: GameplayAction[] = [
   { id: "level_up_player", label: "Level Up Current Player" },
 ];
 
-type GameplayCategory = "Waves" | "Player" | "Combat" | "Resources";
+type GameplayCategory = "Waves" | "Player" | "Combat" | "Survival" | "Resources";
 
 interface WaveEntryUI {
   kind: string;
@@ -3251,6 +3403,73 @@ const DEV_TUNING_CONTROLS: TuningControl[] = [
     unit: "s",
     scale: sec,
     integer: true,
+  },
+
+  // ===================== SURVIVAL =====================
+  {
+    key: "hungerDrainPerMin",
+    label: "Hunger drain",
+    category: "Survival",
+    section: "Hunger",
+    description: "Hunger lost per minute. Set to 0 for peaceful worlds.",
+    defaultValue: HUNGER_DRAIN_PER_MIN,
+    min: 0,
+    max: 600,
+    step: 1,
+    unit: "/min",
+    scale: 1,
+  },
+  {
+    key: "starvationDamagePerSec",
+    label: "Starvation damage",
+    category: "Survival",
+    section: "Hunger",
+    description: "HP lost per second while hunger is empty.",
+    defaultValue: STARVATION_DAMAGE_PER_SEC,
+    min: 0,
+    max: 1000,
+    step: 0.5,
+    unit: "hp/s",
+    scale: 1,
+  },
+  {
+    key: "foodHungerMult",
+    label: "Food hunger",
+    category: "Survival",
+    section: "Food",
+    description: "Multiplier on hunger restored by edible items.",
+    defaultValue: FOOD_HUNGER_MULT,
+    min: 0,
+    max: 50,
+    step: 0.1,
+    unit: "x",
+    scale: 1,
+  },
+  {
+    key: "foodHpMult",
+    label: "Food HP",
+    category: "Survival",
+    section: "Food",
+    description: "Multiplier on HP restored by edible items.",
+    defaultValue: FOOD_HP_MULT,
+    min: 0,
+    max: 50,
+    step: 0.1,
+    unit: "x",
+    scale: 1,
+  },
+  {
+    key: "foodStaminaMult",
+    label: "Food stamina",
+    category: "Survival",
+    section: "Food",
+    description: "Multiplier on stamina restored by edible items.",
+    defaultValue: FOOD_STAMINA_MULT,
+    min: 0,
+    max: 50,
+    step: 0.1,
+    unit: "x",
+    scale: 1,
   },
 
   // ===================== COMBAT =====================

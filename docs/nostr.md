@@ -97,7 +97,7 @@ type SaveReason = "level-up" | "death" | "logout";
 type ItemType = "log" | "potion" | "stone" | "banana" | "berserker_potion";
 
 interface PlayerSave {
-  v: 1;
+  v: 2;
   playerPubkey?: string;       // hex pubkey; present on newly published saves
   realm?: {
     id: string;                // current realm id
@@ -112,6 +112,8 @@ interface PlayerSave {
   maxHp: number;
   stamina: number;
   maxStamina: number;
+  hunger: number;
+  maxHunger: number;
   x: number;
   z: number;
   rotY: number;

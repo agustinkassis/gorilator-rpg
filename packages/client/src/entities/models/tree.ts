@@ -19,11 +19,14 @@ export interface TreeModel {
 interface TreeMats {
   trunk: StandardMaterial;
   leaf: StandardMaterial;
+  bushLeaf: StandardMaterial;
+  berry: StandardMaterial;
   stump: StandardMaterial;
   stumpTop: StandardMaterial;
 }
 
 export const TREE_VISUAL_SCALE = 0.945;
+export type TreeVariant = "tree" | "bush";
 
 // Share materials across all trees in a scene (there can be dozens).
 const matCache = new WeakMap<Scene, TreeMats>();
@@ -39,6 +42,8 @@ function getMats(scene: Scene): TreeMats {
     m = {
       trunk: mk("treeTrunk", new Color3(0.34, 0.22, 0.13)),
       leaf: mk("treeLeaf", new Color3(0.16, 0.41, 0.19)),
+      bushLeaf: mk("bushLeaf", new Color3(0.12, 0.34, 0.16)),
+      berry: mk("cranberry", new Color3(0.72, 0.04, 0.08)),
       stump: mk("treeStump", new Color3(0.3, 0.2, 0.12)),
       stumpTop: mk("treeStumpTop", new Color3(0.55, 0.42, 0.26)),
     };
@@ -47,42 +52,86 @@ function getMats(scene: Scene): TreeMats {
   return m;
 }
 
-/** A choppable pine tree (trunk + stacked cones) that can switch to a stump. */
-export function buildTree(scene: Scene): TreeModel {
+/** A choppable pine tree, or a low berry bush variant, that can switch to a stump. */
+export function buildTree(scene: Scene, variant: TreeVariant = "tree"): TreeModel {
   const mats = getMats(scene);
   const root = new TransformNode("tree", scene);
   root.scaling.setAll(TREE_VISUAL_SCALE);
   const meshes: AbstractMesh[] = [];
+  const isBush = variant === "bush";
 
   // ---- alive tree ----
   const aliveG = new TransformNode("treeAlive", scene);
   aliveG.parent = root;
 
-  const trunk = MeshBuilder.CreateCylinder(
-    "trunk",
-    { height: 2.4, diameterTop: 0.5, diameterBottom: 0.75, tessellation: 7 },
-    scene,
-  );
-  trunk.position.y = 1.2;
-  trunk.material = mats.trunk;
-  trunk.parent = aliveG;
-  meshes.push(trunk);
-
-  const coneSpecs = [
-    { y: 2.6, d: 3.0, h: 2.0 },
-    { y: 3.7, d: 2.3, h: 1.7 },
-    { y: 4.7, d: 1.5, h: 1.4 },
-  ];
-  for (const c of coneSpecs) {
-    const cone = MeshBuilder.CreateCylinder(
-      "leaves",
-      { height: c.h, diameterTop: 0, diameterBottom: c.d, tessellation: 7 },
+  if (isBush) {
+    const stem = MeshBuilder.CreateCylinder(
+      "bushStem",
+      { height: 0.75, diameterTop: 0.14, diameterBottom: 0.24, tessellation: 6 },
       scene,
     );
-    cone.position.y = c.y;
-    cone.material = mats.leaf;
-    cone.parent = aliveG;
-    meshes.push(cone);
+    stem.position.y = 0.38;
+    stem.material = mats.trunk;
+    stem.parent = aliveG;
+    meshes.push(stem);
+
+    const clumps = [
+      { x: 0, z: 0, y: 0.78, s: 0.95 },
+      { x: -0.42, z: 0.12, y: 0.62, s: 0.72 },
+      { x: 0.42, z: 0.03, y: 0.64, s: 0.72 },
+      { x: 0.04, z: -0.42, y: 0.58, s: 0.7 },
+      { x: 0.02, z: 0.42, y: 0.58, s: 0.66 },
+    ];
+    for (const c of clumps) {
+      const leaf = MeshBuilder.CreateSphere("bushLeaf", { diameter: c.s, segments: 8 }, scene);
+      leaf.position.set(c.x, c.y, c.z);
+      leaf.scaling.y = 0.78;
+      leaf.material = mats.bushLeaf;
+      leaf.parent = aliveG;
+      meshes.push(leaf);
+    }
+
+    const berries = [
+      { x: -0.25, z: -0.24, y: 0.84 },
+      { x: 0.28, z: -0.16, y: 0.82 },
+      { x: -0.08, z: 0.3, y: 0.76 },
+      { x: 0.21, z: 0.24, y: 0.66 },
+      { x: -0.32, z: 0.09, y: 0.67 },
+    ];
+    for (const b of berries) {
+      const berry = MeshBuilder.CreateSphere("cranberry", { diameter: 0.12, segments: 6 }, scene);
+      berry.position.set(b.x, b.y, b.z);
+      berry.material = mats.berry;
+      berry.parent = aliveG;
+      meshes.push(berry);
+    }
+  } else {
+    const trunk = MeshBuilder.CreateCylinder(
+      "trunk",
+      { height: 2.4, diameterTop: 0.5, diameterBottom: 0.75, tessellation: 7 },
+      scene,
+    );
+    trunk.position.y = 1.2;
+    trunk.material = mats.trunk;
+    trunk.parent = aliveG;
+    meshes.push(trunk);
+
+    const coneSpecs = [
+      { y: 2.6, d: 3.0, h: 2.0 },
+      { y: 3.7, d: 2.3, h: 1.7 },
+      { y: 4.7, d: 1.5, h: 1.4 },
+    ];
+    for (const c of coneSpecs) {
+      const cone = MeshBuilder.CreateCylinder(
+        "leaves",
+        { height: c.h, diameterTop: 0, diameterBottom: c.d, tessellation: 7 },
+        scene,
+      );
+      cone.position.y = c.y;
+      cone.material = mats.leaf;
+      cone.parent = aliveG;
+      meshes.push(cone);
+    }
   }
 
   // ---- stump (shown after cutting) ----
@@ -90,19 +139,19 @@ export function buildTree(scene: Scene): TreeModel {
   stumpG.parent = root;
   const stump = MeshBuilder.CreateCylinder(
     "stump",
-    { height: 0.5, diameter: 0.85, tessellation: 8 },
+    { height: isBush ? 0.22 : 0.5, diameter: isBush ? 0.32 : 0.85, tessellation: 8 },
     scene,
   );
-  stump.position.y = 0.25;
+  stump.position.y = isBush ? 0.11 : 0.25;
   stump.material = mats.stump;
   stump.parent = stumpG;
   meshes.push(stump);
   const stumpTop = MeshBuilder.CreateCylinder(
     "stumpTop",
-    { height: 0.06, diameter: 0.7, tessellation: 8 },
+    { height: 0.06, diameter: isBush ? 0.24 : 0.7, tessellation: 8 },
     scene,
   );
-  stumpTop.position.y = 0.52;
+  stumpTop.position.y = isBush ? 0.24 : 0.52;
   stumpTop.material = mats.stumpTop;
   stumpTop.parent = stumpG;
   meshes.push(stumpTop);

@@ -9,7 +9,7 @@ Gorilator has a **two-tier** extensibility model:
 
 Everything compiles against the frozen **plugin API** exported from
 `@rpg/shared` (`packages/shared/src/plugin/types.ts`), versioned independently
-as `PLUGIN_API_VERSION` (currently `1.0.0`): additive hooks bump minor, breaking
+as `PLUGIN_API_VERSION` (currently `1.1.0`): additive hooks bump minor, breaking
 changes bump major, and the host refuses plugins targeting another major.
 
 The worked example — **`plugins/example-arena/`** — exercises every seam in
@@ -101,8 +101,9 @@ const plugin: ServerPlugin = {
     ctx.registerSystem("my_system", (state, dt) => { /* … */ }, { phase: "main" });
 
     // Lifecycle events, fired at the existing emit sites:
-    // player:spawn · entity:killed · item:pickup · wave:start · wave:end ·
-    // structure:destroyed · realm:end
+    // player:spawn · entity:killed · entity:damaged · item:pickup ·
+    // wave:start · wave:end · structure:destroyed · realm:start · realm:end ·
+    // event:start · event:end · objective:complete
     ctx.on("entity:killed", (payload, state) => { /* kill feed, webhooks, … */ });
 
     // Your own live-reloading JSON (same watchFile pipeline as the builtins):
@@ -117,6 +118,41 @@ timers; the host's combat systems own damage resolution and the death-edge pass
 turns any `hp <= 0` you cause into `entity:killed` events automatically. A
 throwing plugin (system, brain, or event handler) is logged and skipped — it
 cannot take down the tick.
+
+## Event modules (API 1.1) — pluggable game loops
+
+A whole game mode — objective, pacing, win/lose — ships as an **event module**.
+The flagship tower defense IS one: `plugins/la-crypta-defense/` (waves + La
+Crypta + the wipe), built purely against `@rpg/shared`. Disable it and the
+world runs as an open sandbox.
+
+```ts
+ctx.registerEventModule({
+  id: "my-event",
+  label: "My Event",                       // default HUD label
+  config: { difficultyMult: 1 },           // defaults; realm.json events.config overrides
+  onStart(ev) {
+    ev.world.spawnStructure({ kind: "house", x: 0, z: 0 }); // the objective
+  },
+  onTick(ev, dt) {                         // scaled dt, perf span event:<id>
+    // pacing: ev.tuning("waveSizeBase"), ev.rng("spawns")(), ev.customWave(n)
+    // spawning: ev.world.spawnEnemy({ kind: "goblin", x, z, level })
+    // HUD: ev.setEventHud({ timerMs, progress }) → synced eventTimerMs/eventProgress
+    // done: ev.endEvent({ result: "defeat", stats: { wave: 12 } })
+  },
+  onCommand(ev, cmd) { /* dev/admin routing: force_next_wave, … */ },
+  onEnd(ev, outcome) { /* cleanup */ },
+});
+```
+
+The HOST decides which module runs (realm.json `events` below; explicit
+`module` id → the single registered module → `la-crypta-defense`), starts it
+each realm cycle, and owns the realm-end flow `endEvent` triggers. The
+`EventModuleContext` hands the module everything it may touch: `world`
+mutators (`spawnEnemy/spawnStructure/giveItem/grantXp/broadcast`), live
+`tuning(key)`, seeded `rng(stream)` (#70 — never `Math.random`), authored wave
+compositions via `customWave(n)`, `setEventHud`, `completeObjective`, `emit`.
+`GORILATOR_TEST=1` and Feature Lab scenarios disable events by default.
 
 `@rpg/shared` stays **external** in the server bundle, so your plugin and the
 host share one schema identity. New *synced* fields still require a core schema
@@ -189,6 +225,12 @@ bad Feature Lab scenario overlays fail the normal gate.
   "policy": {
     "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
     "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+  },
+  "events": {
+    "enabled": true,
+    "autoStart": true,
+    "module": "la-crypta-defense",
+    "config": { "difficultyMult": 1 }
   }
 }
 ```
@@ -205,3 +247,8 @@ stock behavior.
   reset (La Crypta falling). Set `false` for the legacy full wipe.
 - `progression.keepInventoryOnWipe` (default `true`): inventories survive the reset
   too (only applies while `persistAcrossWipes` is on).
+
+`events` picks the realm's event module (API 1.1): `enabled: false` → open
+sandbox (no objective, no waves, no wipe); `config` is handed to the module
+(La Crypta Defense reads `difficultyMult` — layered on top of the
+`difficulty*` tuning knobs).

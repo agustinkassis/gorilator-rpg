@@ -1,0 +1,10 @@
+{
+  "name": "la-crypta-defense",
+  "version": "0.1.0",
+  "description": "The flagship tower-defense event: goblin waves besiege La Crypta; the realm ends when it falls.",
+  "apiVersion": "^1.1.0",
+  "server": "./dist/server.js",
+  "content": ["./content/waves.json"],
+  "capabilities": ["event", "content"],
+  "enabled": true
+}

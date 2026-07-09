@@ -5,6 +5,11 @@ export interface ItemDef {
   model?: string;
   stack?: number;
   worldScale?: number;
+  food?: {
+    hunger?: number;
+    hp?: number;
+    stamina?: number;
+  };
 }
 
 const BUILTINS: ItemDef[] = [
@@ -86,6 +91,14 @@ export async function loadItemDefs(): Promise<void> {
             model: typeof raw?.model === "string" ? raw.model : undefined,
             stack: Math.max(1, Math.round(Number(raw?.stack) || 99)),
             worldScale: Math.max(0.05, Number(raw?.worldScale) || 1.2),
+            food:
+              raw?.food && typeof raw.food === "object"
+                ? {
+                    hunger: finiteNonNegative(raw.food.hunger),
+                    hp: finiteNonNegative(raw.food.hp),
+                    stamina: finiteNonNegative(raw.food.stamina),
+                  }
+                : undefined,
           });
         }
       }
@@ -99,4 +112,9 @@ export async function loadItemDefs(): Promise<void> {
     loading = null;
   });
   return loading;
+}
+
+function finiteNonNegative(raw: unknown): number | undefined {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }

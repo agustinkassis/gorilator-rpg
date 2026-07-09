@@ -135,7 +135,15 @@ export function spawnerExists(id: string): boolean {
 /** Tick every spawner; spawn at each owner when due + under its cap. A spawner
  *  whose ownerId is a MODEL path acts as a per-model template: it spawns from
  *  EVERY concrete prop of that model, so a newly-placed structure inherits it. */
+// Feature Lab (#65): a scenario can switch ambient spawning off entirely so an
+// isolated lab only contains what its manifest staged.
+let spawnersEnabled = true;
+export function setSpawnersEnabled(on: boolean): void {
+  spawnersEnabled = on;
+}
+
 export function spawnerSystem(state: GameState, dt: number): void {
+  if (!spawnersEnabled) return; // scenario lab — ambient spawning off
   if (!spawners.length || dt <= 0) return; // paused (dt 0) freezes spawning
   // Admin-disabled spawners skip entirely: their countdowns freeze (same as a
   // pause) so re-enabling resumes mid-interval instead of resetting.

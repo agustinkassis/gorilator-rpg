@@ -6,17 +6,20 @@ import {
   Enemy,
   GameState,
   Player,
+  RESPAWN_HUNGER_FRACTION,
   WORLD_SIZE,
 } from "@rpg/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clampToWorld, combatSystem, handleAttack, isImmune } from "./combat";
 import { devTuning, resetDevTuning } from "./devTuning";
+import { installFixedRng } from "./rng";
 
 // Characterization tests for the player-attack flow (queue → windup → connect).
 // They pin today's behavior so the plugin-registry refactor of GameRoom/goblins
 // can be verified against an unchanged damage pipeline.
-// Math.random is pinned to 0.5: attack variance = ±0 and (with critChance 0)
-// no crits, so the damage roll is exactly attack · (1 − armor/(armor+ARMOR_K)) / divisor.
+// The seeded RNG is pinned to 0.5 (installFixedRng): attack variance = ±0 and
+// (with critChance 0) no crits, so the damage roll is exactly
+// attack · (1 − armor/(armor+ARMOR_K)) / divisor.
 
 function makePlayer(id: string, x: number, z: number): Player {
   const p = new Player();
@@ -48,6 +51,7 @@ function makeDummy(id: string, x: number, z: number, hp = 50): Enemy {
 
 function makeState(p: Player, e?: Enemy): GameState {
   const state = new GameState();
+  installFixedRng(state, 0.5); // every gameplay roll returns 0.5 — deterministic damage
   state.players.set(p.id, p);
   if (e) state.enemies.set(e.id, e);
   return state;
@@ -64,7 +68,6 @@ function expectedDamage(attack: number, armor: number): number {
 describe("combat characterization", () => {
   beforeEach(() => {
     resetDevTuning();
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -167,5 +170,21 @@ describe("combat characterization", () => {
     combatSystem(state, 0.05, noop, noop, noop);
     expect(p.attackTargetId).toBe("");
     expect(p.state).toBe(AnimState.IDLE);
+  });
+
+  it("respawns a dead player with partial hunger restored", () => {
+    const p = makePlayer("p1", 0, 10);
+    const state = makeState(p);
+    p.state = AnimState.DEAD;
+    p.hp = 0;
+    p.hunger = 0;
+    p.maxHunger = 100;
+    p.respawnTimer = 10;
+
+    combatSystem(state, 0.02, noop, noop, noop);
+
+    expect(p.state).toBe(AnimState.IDLE);
+    expect(p.hp).toBe(p.maxHp);
+    expect(p.hunger).toBe(100 * RESPAWN_HUNGER_FRACTION);
   });
 });

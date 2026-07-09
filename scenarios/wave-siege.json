@@ -1,0 +1,15 @@
+{
+  "name": "wave-siege",
+  "description": "La Crypta Defense with fast waves and the difficulty knobs pinned — tune the siege on sliders (#64).",
+  "seed": 64,
+  "systems": { "events": true },
+  "tuning": {
+    "waveFirstDelayMs": 5000,
+    "waveIntervalBaseMs": 20000,
+    "waveSizeBase": 4,
+    "difficultySizeScale": 1,
+    "difficultyLevelScale": 1,
+    "difficultyLevelCap": 0
+  },
+  "timeScale": 1
+}

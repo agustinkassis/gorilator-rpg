@@ -34,9 +34,10 @@ is `ROOM_NAME` (`"game"`). One game world = one room.
 ### The simulation tick (`GameRoom.onCreate → setSimulationInterval`)
 
 Each tick (scaled by `state.timeScale` for Dev-Mode pause/slow-mo) runs, in order:
-`stamina → movement (+ghost while paused) → combat → goblin AI → waves → spawners →
-pending throws → tree regrow → potion respawn → bananas → item pickup/auto-grab
-→ checkHomeFall (the wipe) → save triggers → realm tracker`.
+`bots → stamina → movement (+ghost while paused) → combat → goblin AI →
+event module (the realm's game loop, e.g. la-crypta-defense: waves + house +
+the wipe) → spawners → pending throws → tree regrow → potion respawn → bananas
+→ item pickup/auto-grab → save triggers → realm tracker`.
 
 ## `@rpg/shared`
 
@@ -63,9 +64,12 @@ Game logic is a set of systems in `server/src/systems/`, each a function over
 | `movement` | advance players along A* paths; depenetrate from obstacles; ghost free-roam while paused |
 | `pathfinding` | grid A* + line-of-sight string-pulling + `depenetrate` + dynamic obstacle set |
 | `combat` | melee attacks, damage formula, death/respawn, dummy spawns |
-| `goblins` | wave spawner (`waveSystem`), goblin AI (march → fight → attack home), `resetWaves` |
+| `goblins` | goblin AI (march → fight → attack home) + `makeGoblin`; the WAVE SCHEDULER moved to `plugins/la-crypta-defense` (#73) |
 | `bananas` | banana/stone spawn, charged throw flight, landing damage (incl. the house) |
-| `houses` | spawn La Crypta |
+| `rng` | seeded per-cycle RNG streams — all gameplay rolls (engineering.md §3) |
+| `scenario` | Feature Lab manifests: config/world/player staging (feature-lab.md) |
+| `bots/` | scripted-player driver + behaviors (Feature Lab self-tests) |
+| `plugins/events` + `plugins/world` | event-module runtime + host-owned world mutators (API 1.1) |
 | `resources` | spawn trees & rocks, regrow trees, item pickup, auto-grab |
 | `pickups` | health potions |
 | `inventory` | per-player inventory ops (off-state, sent only to the owner) |

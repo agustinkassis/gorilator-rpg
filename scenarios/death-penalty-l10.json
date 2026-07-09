@@ -6,7 +6,8 @@
     "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
   },
   "systems": {
-    "waves": false
+    "events": false,
+    "spawners": false
   },
   "tuning": {
     "enemyAttackCooldownMs": 700,
@@ -14,6 +15,8 @@
     "enemyAttackRange": 2.8,
     "enemyAggroRadius": 40,
     "enemyDeaggroRadius": 80,
+    "enemyMaxHp": 80,
+    "enemyAttack": 240,
     "enemyMoveSpeed": 5.2,
     "playerRespawnMs": 8000,
     "waveSizeBase": 0,
@@ -21,28 +24,23 @@
     "waveSizePerWave": 0
   },
   "player": {
-    "level": 10,
-    "xp": 1200,
-    "hp": 260,
-    "position": { "x": 0, "z": -8, "rotY": 0 }
+    "stats": {
+      "level": 10,
+      "xp": 1200,
+      "maxHp": 400,
+      "hp": 260
+    },
+    "position": { "x": 0, "z": -8 }
   },
   "world": {
-    "clearEnemies": true,
+    "wavesEnabled": false,
+    "laCryptaDefense": false,
     "enemies": [
-      {
-        "idPrefix": "death-penalty-goblin",
-        "kind": "goblin",
-        "count": 5,
-        "level": 12,
-        "brain": "war_seeker",
-        "offsetFromPlayer": { "x": 0, "z": 5 },
-        "spread": 2.4,
-        "stats": {
-          "maxHp": 80,
-          "attack": 240,
-          "moveSpeed": 5.2
-        }
-      }
+      { "kind": "goblin", "x": -2.4, "z": -3, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": -1.2, "z": -2, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": 0, "z": -3, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": 1.2, "z": -2, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": 2.4, "z": -3, "level": 12, "brain": "war_seeker" }
     ]
   },
   "timeScale": 1

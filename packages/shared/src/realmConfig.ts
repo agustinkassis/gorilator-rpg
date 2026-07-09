@@ -1,4 +1,3 @@
-import type { BrainId, CharacterStatsConfig } from "./entityFeatures";
 import type { DevTuningKey } from "./types";
 
 /** Death policy names accepted in `realm.json` and Feature Lab scenario overlays. */
@@ -37,12 +36,20 @@ export const REALM_TUNING_KEYS = [
   "playerCritChance",
   "playerMoveSpeed",
   "sprintSpeedMult",
+  "hungerDrainPerMin",
+  "starvationDamagePerSec",
+  "foodHungerMult",
+  "foodHpMult",
+  "foodStaminaMult",
   "enemyMaxHp",
   "enemyAttack",
   "enemyMoveSpeed",
   "berserkerAttackMult",
   "berserkerDurationMs",
   "dropRateMult",
+  "difficultySizeScale",
+  "difficultyLevelScale",
+  "difficultyLevelCap",
 ] as const satisfies readonly DevTuningKey[];
 
 type AssertNever<T extends never> = T;
@@ -79,6 +86,20 @@ export interface RealmPluginsConfig {
   disabled?: string[];
 }
 
+/** Open-realm / event-objective switches for a realm or scenario overlay. */
+export interface RealmWorldConfig {
+  homeObjective?: boolean;
+  waves?: boolean;
+}
+
+/** Pluggable realm event controls. */
+export interface RealmEventsConfig {
+  enabled?: boolean | string[];
+  autoStart?: boolean;
+  module?: string;
+  config?: Record<string, unknown>;
+}
+
 /**
  * The root `realm.json` shape. This is per-realm/per-fork configuration, not
  * saved player state: it seeds plugins, tuning, and death/progression policy
@@ -88,60 +109,8 @@ export interface RealmPluginsConfig {
 export interface RealmConfig {
   name?: string;
   plugins?: RealmPluginsConfig;
+  world?: RealmWorldConfig;
+  events?: RealmEventsConfig;
   tuning?: RealmTuningConfig;
   policy?: RealmPolicyConfig;
-}
-
-export interface FeatureLabPointConfig {
-  x: number;
-  z: number;
-  rotY?: number;
-}
-
-export interface FeatureLabPlayerConfig {
-  /** Scenario-start level for joining players. */
-  level?: number;
-  /** Progress within `level`, not total lifetime XP. */
-  xp?: number;
-  /** Optional current HP override after level stats are applied. */
-  hp?: number;
-  /** Optional max HP override for reduced-health tests. */
-  maxHp?: number;
-  /** Optional spawn point; omitted uses the normal room spawn. */
-  position?: FeatureLabPointConfig;
-}
-
-export interface FeatureLabEnemySpawnConfig {
-  idPrefix?: string;
-  kind?: "goblin" | "dummy" | "npc" | (string & {});
-  count?: number;
-  level?: number;
-  brain?: BrainId;
-  stats?: CharacterStatsConfig;
-  position?: FeatureLabPointConfig;
-  offsetFromPlayer?: FeatureLabPointConfig;
-  spread?: number;
-  aggro?: boolean;
-}
-
-export interface FeatureLabWorldConfig {
-  clearEnemies?: boolean;
-  enemies?: FeatureLabEnemySpawnConfig[];
-  props?: unknown[];
-  resources?: unknown[];
-  npcs?: unknown[];
-  groundItems?: unknown[];
-}
-
-/**
- * Feature Lab scenarios reuse `RealmConfig` as an overlay, then add scenario
- * staging fields. `scripts/check-realm.mjs` validates these files too.
- */
-export interface FeatureLabScenarioConfig extends RealmConfig {
-  description?: string;
-  timeScale?: number;
-  world?: FeatureLabWorldConfig;
-  player?: FeatureLabPlayerConfig;
-  systems?: Record<string, boolean>;
-  bots?: unknown[];
 }

@@ -10,6 +10,7 @@ import {
   MAX_STACK,
   PLAYER_MAX_HP,
   PLAYER_MAX_STAMINA,
+  PLAYER_MAX_HUNGER,
   PLAYER_ATTACK,
   PLAYER_ARMOR,
   PLAYER_CRIT_CHANCE,
@@ -177,6 +178,7 @@ export function sanitizeSaveContent(content: string): PlayerSave | null {
   }
   const maxHp = Math.max(1, finite(raw.maxHp, PLAYER_MAX_HP));
   const maxStamina = Math.max(1, finite(raw.maxStamina, PLAYER_MAX_STAMINA));
+  const maxHunger = Math.max(1, finite(raw.maxHunger, PLAYER_MAX_HUNGER));
   return {
     v: Math.floor(finite(raw.v, 1)),
     level: Math.max(1, Math.floor(finite(raw.level, 1))),
@@ -185,6 +187,8 @@ export function sanitizeSaveContent(content: string): PlayerSave | null {
     hp: Math.max(0, Math.min(maxHp, finite(raw.hp, maxHp))),
     maxStamina,
     stamina: Math.max(0, Math.min(maxStamina, finite(raw.stamina, maxStamina))),
+    maxHunger,
+    hunger: Math.max(0, Math.min(maxHunger, finite(raw.hunger, maxHunger))),
     x: clampW(finite(raw.x, 0)),
     z: clampW(finite(raw.z, 0)),
     rotY: finite(raw.rotY, 0),

@@ -1,10 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { createConnection, createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+// Default: <root>/.gorilator/dev-state.json (gitignored) — the RESOLVED ports
+// + pid, so tools like the test dashboard can discover a running stack even
+// when findFreePort shifted off the requested ports. Env overrides the path.
+const gorilatorStateFile =
+  process.env.GORILATOR_STATE_FILE ?? join(root, ".gorilator", "dev-state.json");
 const DEFAULT_CLIENT_PORT = 5173;
 const DEFAULT_SERVER_PORT = 2567;
 const cliArgs = process.argv.slice(2);
@@ -64,9 +69,35 @@ function canListen(port) {
   });
 }
 
+function canConnect(port, host) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host });
+    let done = false;
+    const finish = (connected) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(150);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function portInUse(port) {
+  const localhostBusy = await Promise.all([
+    canConnect(port, "127.0.0.1"),
+    canConnect(port, "::1"),
+  ]);
+  if (localhostBusy.some(Boolean)) return true;
+  return !(await canListen(port));
+}
+
 async function findFreePort(preferred) {
   for (let port = preferred; port < preferred + 100; port += 1) {
-    if (await canListen(port)) return port;
+    if (!(await portInUse(port))) return port;
   }
   throw new Error(`Could not find a free port between ${preferred} and ${preferred + 99}`);
 }
@@ -109,6 +140,16 @@ const sharedDist = join(root, "packages/shared/dist/index.js");
 if (!existsSync(sharedDist)) {
   console.log("[dev] shared dist missing; building @rpg/shared once (cold start)");
   const build = runPnpm(["--filter", "@rpg/shared", "build"], { env: devEnv });
+  if (build.status !== 0) process.exit(build.status ?? 1);
+}
+
+// Cold start only: bundle plugins/ once when a server entry has never been
+// built — without dist/, the flagship la-crypta-defense event module (waves +
+// objective) silently stays out of the realm.
+const pluginDist = join(root, "plugins/la-crypta-defense/dist/server.js");
+if (!existsSync(pluginDist)) {
+  console.log("[dev] plugin dist missing; building plugins once (cold start)");
+  const build = runPnpm(["build:plugins"], { env: devEnv });
   if (build.status !== 0) process.exit(build.status ?? 1);
 }
 
@@ -171,13 +212,23 @@ function stopChildren() {
   }
 }
 
+function clearGorilatorState() {
+  try {
+    unlinkSync(gorilatorStateFile);
+  } catch {
+    /* already gone */
+  }
+}
+
 process.on("SIGINT", () => {
   shuttingDown = true;
+  clearGorilatorState();
   stopChildren();
 });
 
 process.on("SIGTERM", () => {
   shuttingDown = true;
+  clearGorilatorState();
   stopChildren();
 });
 
@@ -211,7 +262,7 @@ start("server", colors.blue, ["--filter", "@rpg/server", "dev"]);
 start("client", colors.green, ["--filter", "@rpg/client", "dev"]);
 
 function writeGorilatorState(state) {
-  const file = process.env.GORILATOR_STATE_FILE;
+  const file = gorilatorStateFile;
   if (!file) return;
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -220,3 +271,6 @@ function writeGorilatorState(state) {
     console.error(`[dev] could not write Gorilator state: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+// Resolved (collision-free) ports, for wrappers like scripts/scenario.mjs.
+export { clientPort, serverPort };

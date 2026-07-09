@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Play Gorilator — a multiplayer isometric RPG. Defend La Crypta with gorilla fury, loot, and Nostr identity."
+      content="Play Gorilator — an open multiplayer Nostr RPG sandbox with shared realms, loot, and persistent identity."
     />
-    <title>Gorilator — Defend La Crypta</title>
+    <title>Gorilator — Open Nostr RPG Sandbox</title>
 
     <!-- Canonical -->
     <link rel="canonical" href="https://game.gorilator.io/" />
@@ -16,28 +16,28 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Gorilator" />
     <meta property="og:url" content="https://game.gorilator.io/" />
-    <meta property="og:title" content="Gorilator — Defend La Crypta" />
+    <meta property="og:title" content="Gorilator — Open Nostr RPG Sandbox" />
     <meta
       property="og:description"
-      content="Play Gorilator — a multiplayer isometric RPG. Defend La Crypta with gorilla fury, loot, and Nostr identity."
+      content="Play Gorilator — an open multiplayer Nostr RPG sandbox with shared realms, loot, and persistent identity."
     />
     <meta property="og:image" content="https://game.gorilator.io/social.png" />
     <meta property="og:image:secure_url" content="https://game.gorilator.io/social.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Gorilator — Defend La Crypta" />
+    <meta property="og:image:alt" content="Gorilator — Open Nostr RPG Sandbox" />
     <meta property="og:locale" content="en_US" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Gorilator — Defend La Crypta" />
+    <meta name="twitter:title" content="Gorilator — Open Nostr RPG Sandbox" />
     <meta
       name="twitter:description"
-      content="Play Gorilator — a multiplayer isometric RPG. Defend La Crypta with gorilla fury, loot, and Nostr identity."
+      content="Play Gorilator — an open multiplayer Nostr RPG sandbox with shared realms, loot, and persistent identity."
     />
     <meta name="twitter:image" content="https://game.gorilator.io/social.png" />
-    <meta name="twitter:image:alt" content="Gorilator — Defend La Crypta" />
+    <meta name="twitter:image:alt" content="Gorilator — Open Nostr RPG Sandbox" />
     <style>
       html,
       body {
@@ -89,20 +89,23 @@
       }
       /* Local-player identity badge (lower-left, above the health orb): avatar + name + level. */
       #playerBadge {
-        position: fixed;
-        left: 24px;
-        bottom: 132px;
-        z-index: 30;
+        position: absolute;
+        left: 50%;
+        bottom: 178px;
+        z-index: 4;
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 5px 16px 5px 5px;
+        gap: 8px;
+        max-width: 164px;
+        box-sizing: border-box;
+        padding: 5px 12px 5px 5px;
         background: linear-gradient(180deg, rgba(28, 20, 12, 0.94), rgba(15, 10, 6, 0.94));
         border: 2px solid #6b4f2e;
         border-radius: 999px;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55), inset 0 0 14px rgba(0, 0, 0, 0.5);
         pointer-events: auto;
         cursor: pointer;
+        transform: translateX(-50%);
         user-select: none;
       }
       #playerBadge:hover { filter: brightness(1.12); }
@@ -138,12 +141,13 @@
         display: flex;
         flex-direction: column;
         gap: 1px;
+        min-width: 0;
       }
       #pbName {
         display: flex;
         align-items: center;
         gap: 6px;
-        max-width: 240px;
+        max-width: 92px;
         font: 800 15px system-ui, sans-serif;
         color: #ffe08a;
         letter-spacing: 0.3px;
@@ -169,16 +173,27 @@
         color: #c9a36a;
         letter-spacing: 0.5px;
       }
+      /* Bottom-left vitals: health orb with hunger ring around it. */
+      #vitalsGlobe {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 174px;
+        height: 174px;
+        z-index: 40;
+        user-select: none;
+      }
       /* Diablo-style health orb */
       #healthGlobe {
         /* ornate bronze/gold bezel, reused by the .low state */
         --frame: 0 0 0 3px #1a1009, 0 0 0 6px #5d3f1e, 0 0 0 9px #caa052,
           0 0 0 11px #6e4a23, 0 0 0 13px #2a1b0d, 0 0 0 15px #0c0805;
-        position: fixed;
+        position: absolute;
         left: 24px;
         bottom: 24px;
         width: 126px;
         height: 126px;
+        z-index: 2;
         border-radius: 50%;
         overflow: hidden;
         background: radial-gradient(circle at 50% 36%, #350c0c, #0a0303 82%);
@@ -289,7 +304,8 @@
         opacity: 0;
         transition: opacity 0.12s ease;
       }
-      #healthGlobe:hover #hgText {
+      #healthGlobe:hover #hgText,
+      #vitalsGlobe:hover #hgText {
         opacity: 1;
       }
       #healthGlobe.low {
@@ -621,15 +637,130 @@
       #staminaBar.low #staminaFill {
         background: linear-gradient(180deg, #ffd27a 0%, #f0a52e 55%, #c87b16 100%);
       }
+      #hungerBar {
+        --hunger-angle: 360deg;
+        --hunger-ring: #d3a83a;
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        border-radius: 50%;
+        pointer-events: auto;
+      }
+      #hungerRing {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle, transparent 78px, rgba(255, 239, 180, 0.22) 79px 80px, transparent 81px),
+          conic-gradient(
+            from -90deg,
+            var(--hunger-ring) 0deg var(--hunger-angle),
+            rgba(39, 31, 22, 0.78) var(--hunger-angle) 360deg
+          );
+        -webkit-mask: radial-gradient(circle, transparent 0 77px, #000 78px);
+        mask: radial-gradient(circle, transparent 0 77px, #000 78px);
+        filter: drop-shadow(0 0 5px rgba(230, 170, 55, 0.35));
+        pointer-events: none;
+      }
+      #hungerRing::after {
+        content: "";
+        position: absolute;
+        inset: 5px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 226, 146, 0.28);
+      }
+      #hungerBar.low {
+        --hunger-ring: #df7432;
+      }
+      #hungerBar.empty {
+        --hunger-ring: #d63a43;
+      }
+      #hungerBar.low #hungerRing {
+        filter: drop-shadow(0 0 7px rgba(230, 98, 41, 0.55));
+      }
+      #hungerBar.empty #hungerRing {
+        filter: drop-shadow(0 0 9px rgba(230, 40, 55, 0.72));
+      }
+      #hungerDetail {
+        position: absolute;
+        left: 0;
+        bottom: 158px;
+        width: 174px;
+        box-sizing: border-box;
+        padding: 9px 10px 10px;
+        border: 2px solid rgba(20, 14, 7, 0.86);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(44, 32, 18, 0.95), rgba(18, 12, 7, 0.95));
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55), inset 0 0 10px rgba(0, 0, 0, 0.45);
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 7;
+      }
+      #hungerDetail::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -9px;
+        width: 14px;
+        height: 14px;
+        background: rgba(18, 12, 7, 0.95);
+        border-right: 2px solid rgba(20, 14, 7, 0.86);
+        border-bottom: 2px solid rgba(20, 14, 7, 0.86);
+        transform: translateX(-50%) rotate(45deg);
+      }
+      #hungerBar:hover #hungerDetail,
+      #hungerBar:focus-visible #hungerDetail {
+        visibility: visible;
+      }
+      #hungerDetailTop {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        font: 800 11px/1 system-ui, sans-serif;
+        color: #ffe6a4;
+        letter-spacing: 0.2px;
+        text-shadow: 0 1px 2px #000;
+      }
+      #hungerTrack {
+        position: relative;
+        width: 100%;
+        height: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.75);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.55);
+        box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.65);
+        overflow: hidden;
+      }
+      #hungerFill {
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(180deg, #ffe49a 0%, #d5aa36 55%, #a67722 100%);
+        box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.45);
+        transition: width 0.18s linear;
+      }
+      #hungerText {
+        font: 700 9px/1 system-ui, sans-serif;
+        color: #fff6cf;
+        text-shadow: 0 1px 2px #000, 0 0 3px #000;
+      }
+      #hungerBar.low #hungerFill {
+        background: linear-gradient(180deg, #ffbc75 0%, #df6b32 58%, #9a2f25 100%);
+      }
+      #hungerBar.empty #hungerFill {
+        background: linear-gradient(180deg, #ff7878 0%, #bd2c36 58%, #731b28 100%);
+      }
 
       /* ============================================================
          Intro splash
          ============================================================ */
       /* Keep the in-game HUD hidden until the player launches into the arena. */
       body.preGame #status,
+      body.preGame #vitalsGlobe,
       body.preGame #healthGlobe,
       body.preGame #xpBar,
       body.preGame #staminaBar,
+      body.preGame #hungerBar,
       body.preGame #xpLevelUp,
       body.preGame #xpLossAlert,
       body.preGame #playerBadge,
@@ -649,8 +780,10 @@
       body.preGame #charImportBtn,
       body.preGame #charImporterPanel { display: none !important; }
 
+      body.devMode #vitalsGlobe,
       body.devMode #healthGlobe,
       body.devMode #xpBar,
+      body.devMode #hungerBar,
       body.devMode #xpLevelUp,
       body.devMode #xpLossAlert,
       body.devMode #rpgMiniMap,
@@ -2554,7 +2687,7 @@
       <div id="splashVignette"></div>
       <div id="splashTop">
         <div id="splashTitle">GORILATOR</div>
-        <div id="splashSub">Defend La Crypta</div>
+        <div id="splashSub">Open Nostr RPG Sandbox</div>
       </div>
       <!-- Daemon "update available" banner. Hidden unless the server's
            /api/update auto-check reports a newer GitHub release. -->
@@ -2643,21 +2776,41 @@
     <div id="worktreePanel" hidden></div>
     <div id="worktreeTag" hidden></div>
     <div id="jsonEditorModal" hidden></div>
-    <!-- Local-player identity (top-center): Nostr avatar + name + level. -->
-    <div id="playerBadge" hidden>
-      <div id="pbAvatar">
-        <span class="pbFallback">🦍</span>
-        <img id="pbAvatarImg" alt="" />
+    <div id="vitalsGlobe">
+      <!-- Local-player identity: Nostr avatar + name + level. -->
+      <div id="playerBadge" hidden>
+        <div id="pbAvatar">
+          <span class="pbFallback">🦍</span>
+          <img id="pbAvatarImg" alt="" />
+        </div>
+        <div id="pbText">
+          <div id="pbName"><span id="pbNameText"></span><span id="pbVerified" hidden>⚡</span></div>
+          <div id="pbLevel">Lv. 1</div>
+        </div>
       </div>
-      <div id="pbText">
-        <div id="pbName"><span id="pbNameText"></span><span id="pbVerified" hidden>⚡</span></div>
-        <div id="pbLevel">Lv. 1</div>
+      <div
+        id="hungerBar"
+        role="progressbar"
+        aria-label="Hunger"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="100"
+        tabindex="0"
+      >
+        <div id="hungerRing"></div>
+        <div id="hungerDetail">
+          <div id="hungerDetailTop">
+            <span>Hunger</span>
+            <span id="hungerText">100/100</span>
+          </div>
+          <div id="hungerTrack"><div id="hungerFill"></div></div>
+        </div>
       </div>
-    </div>
-    <div id="healthGlobe">
-      <div id="hgLiquid"></div>
-      <div id="hgGloss"></div>
-      <div id="hgText">100/100</div>
+      <div id="healthGlobe">
+        <div id="hgLiquid"></div>
+        <div id="hgGloss"></div>
+        <div id="hgText">100/100</div>
+      </div>
     </div>
     <div id="staminaBar">
       <div id="staminaFill"></div>

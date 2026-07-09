@@ -13,8 +13,9 @@
 import type { Enemy } from "../schema/Enemy";
 import type { GameState } from "../schema/GameState";
 import type { Player } from "../schema/Player";
+import type { DevTuningKey } from "../types";
 
-export const PLUGIN_API_VERSION = "1.0.0";
+export const PLUGIN_API_VERSION = "1.1.0"; // 1.1: event modules (additive — ^1.0.0 plugins keep loading)
 
 /** plugin.json — the manifest the host discovers a plugin by. */
 export interface PluginManifest {
@@ -46,11 +47,16 @@ export interface PluginManifest {
 export type GameEvent =
   | "player:spawn"
   | "entity:killed"
+  | "entity:damaged" // 1.1: every damage event (how event modules hear objective hits)
   | "item:pickup"
   | "wave:start"
   | "wave:end"
   | "structure:destroyed"
-  | "realm:end";
+  | "realm:start" // 1.1: a realm cycle began (fresh world, event may auto-start)
+  | "realm:end"
+  | "event:start" // 1.1: an event module started
+  | "event:end" // 1.1: an event module ended (payload carries the outcome)
+  | "objective:complete"; // 1.1: a module-defined objective was completed
 
 export type GameEventHandler = (payload: Record<string, unknown>, state: GameState) => void;
 
@@ -91,12 +97,112 @@ export type SystemPhase = "pre" | "main" | "post";
  *  perf span (`plugin:<name>` in /api/perf + the F3 overlay). */
 export type SystemFn = (state: GameState, dt: number) => void;
 
+// ---- event modules (API 1.1) ----
+
+/** How an event ended — carried on "event:end" and handed to onEnd. */
+export interface EventOutcome {
+  result: "victory" | "defeat" | "aborted";
+  stats?: Record<string, unknown>; // e.g. { wave: 12 }
+}
+
+/** One wave-composition entry (the shape waves.json + plugin content packs use). */
+export interface EventWaveEntry {
+  kind: string;
+  defId?: string;
+  count: number;
+  brain?: string;
+  level?: number;
+}
+
+export interface SpawnEnemyOpts {
+  kind: string; // "goblin" | "dummy" | a character defId (spawned as npc)
+  x: number;
+  z: number;
+  level?: number;
+  brain?: string;
+  modelId?: string;
+  waveNumber?: number; // stamps Enemy.waveNumber for HUD/kill accounting
+}
+
+export interface SpawnStructureOpts {
+  kind: "house" | "structure";
+  x: number;
+  z: number;
+  id?: string; // default: host-generated unique id
+  maxHp?: number;
+  radius?: number;
+  scale?: number;
+  modelId?: string;
+}
+
+/** Authoritative world mutators, host-owned and only handed to event modules
+ *  (they need a live room bridge for broadcast/inventory/XP). */
+export interface PluginWorld {
+  /** Spawn an enemy (returns the live schema object; the caller may steer it). */
+  spawnEnemy(opts: SpawnEnemyOpts): Enemy;
+  /** Spawn a house/structure; returns its entity id. */
+  spawnStructure(opts: SpawnStructureOpts): string;
+  /** Add items to a player's inventory (owner-synced). False if unknown player. */
+  giveItem(playerId: string, item: string, amount?: number): boolean;
+  /** Grant XP (level-ups + popups ride the normal pipeline). Returns levels gained. */
+  grantXp(playerId: string, amount: number): number;
+  /** Broadcast a transient event to every client ("chat", custom types…). */
+  broadcast(type: string, payload: unknown): void;
+}
+
+export interface EventHudPatch {
+  label?: string; // GameState.eventLabel
+  timerMs?: number; // GameState.eventTimerMs
+  progress?: number; // GameState.eventProgress (0..1)
+}
+
+/** Everything an event module gets while it is running. */
+export interface EventModuleContext {
+  eventId: string;
+  state: GameState;
+  world: PluginWorld;
+  /** Resolved config: spec.config ⊕ realm.json events.config (realm wins). */
+  config: Record<string, unknown>;
+  /** Live devTuning snapshot for a knob (realm.json/scenario/dev_tune-driven). */
+  tuning(key: DevTuningKey): number;
+  /** Seeded RNG stream (#70) — modules must not roll Math.random. */
+  rng(stream: "combat" | "drops" | "spawns" | "ai" | "world" | "bots" | "misc"): () => number;
+  /** The authored/plugin custom composition for a wave number, or null. */
+  customWave(n: number): EventWaveEntry[] | null;
+  /** Write the synced event HUD fields (label/timer/progress). */
+  setEventHud(patch: EventHudPatch): void;
+  /** Fire "objective:complete" with a module-defined objective id. */
+  completeObjective(id: string, payload?: Record<string, unknown>): void;
+  /** Fire any lifecycle event through the host bus (wave:start compat etc.). */
+  emit(event: GameEvent, payload: Record<string, unknown>): void;
+  /** End the event: onEnd → "event:end" → the host runs its realm-end flow. */
+  endEvent(outcome: EventOutcome): void;
+  log(msg: string): void;
+}
+
+/** A pluggable game loop (ROADMAP Phase 3): the host starts it per realm.json
+ *  `events` config, ticks it inside a perf span (`event:<id>`), and owns the
+ *  realm-end flow its endEvent triggers. */
+export interface EventModuleSpec {
+  id: string; // "la-crypta-defense"
+  label?: string; // default HUD label (falls back to id)
+  config?: Record<string, unknown>; // defaults; realm.json events.config overrides
+  onStart(ctx: EventModuleContext): void;
+  /** Scaled dt, same clock as SystemFn. */
+  onTick?(ctx: EventModuleContext, dt: number): void;
+  onEnd?(ctx: EventModuleContext, outcome: EventOutcome): void;
+  /** Dev/admin command routing (e.g. force_next_wave). */
+  onCommand?(ctx: EventModuleContext, command: string, payload?: Record<string, unknown>): void;
+}
+
 export interface ServerPluginContext {
   apiVersion: string;
   manifest: PluginManifest;
   registerBrain(id: string, fn: BrainFn): void;
   registerItem(id: string, behavior: ItemBehavior): void;
   registerSystem(name: string, fn: SystemFn, opts?: { phase?: SystemPhase }): void;
+  /** 1.1: register a pluggable game loop (started per realm.json `events`). */
+  registerEventModule(spec: EventModuleSpec): void;
   on(event: GameEvent, handler: GameEventHandler): void;
   /** Watch + parse a JSON file (resolved against the plugin dir) and re-apply on
    *  change — the same live-reload pipeline the builtin manifests use. */

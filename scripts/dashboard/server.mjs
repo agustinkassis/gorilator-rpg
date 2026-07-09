@@ -211,20 +211,6 @@ async function probeStack(serverPort) {
   }
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForStackDown(serverPort, timeoutMs = 10_000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const probe = await probeStack(serverPort);
-    if (!probe.up) return true;
-    await delay(250);
-  }
-  return false;
-}
-
 // ---------- state assembly ----------
 
 let mainRoot = null; // resolved once at boot
@@ -739,19 +725,12 @@ async function handle(req, res) {
     const isMain = dir === mainRoot;
     const ports = portsForTree(dir, isMain);
     const probe = await probeStack(ports.server);
+    if (probe.up) {
+      return sendJson(res, { error: "already-running", managed: stacks.has(dir) }, 409);
+    }
     const scenario = body.scenario ? String(body.scenario) : undefined;
     if (scenario && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(scenario))
       return fail(res, 400, "bad scenario name");
-    if (probe.up) {
-      const managed = stacks.has(dir);
-      if (!scenario || probe.activeScenario === scenario || !managed) {
-        return sendJson(res, { error: "already-running", managed, activeScenario: probe.activeScenario ?? null }, 409);
-      }
-      const stopped = stopStack(dir);
-      if (stopped.error) return fail(res, stopped.code ?? 500, stopped.error);
-      const down = await waitForStackDown(ports.server);
-      if (!down) return fail(res, 409, "existing stack did not stop in time");
-    }
     const started = startStack(dir, isMain, scenario);
     return started.error ? fail(res, started.code ?? 500, started.error) : sendJson(res, started);
   }

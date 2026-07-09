@@ -21,6 +21,7 @@ import {
 import { entityHp } from "./entityFeatures";
 import { configureEnemy } from "./enemyConfig";
 import { safeItemId, spawnCustomItem } from "./items";
+import { dropConfig } from "./resourceDrops";
 
 /**
  * Dev Mode world edits applied to the authoritative state at runtime. Because the
@@ -42,6 +43,7 @@ type EditableMap = { get(id: string): EditableEntity | undefined; delete(id: str
 function mapFor(state: GameState, kind: string): EditableMap | null {
   switch (kind) {
     case "tree":
+    case "bush":
       return state.trees as unknown as EditableMap;
     case "potion":
       return state.potions as unknown as EditableMap;
@@ -106,18 +108,21 @@ export function devSpawn(
   }
 
   switch (k) {
-    case "tree": {
+    case "tree":
+    case "bush": {
       if (state.trees.has(eid)) return null;
+      const resourceKind = k === "bush" ? "bush" : "tree";
       const e = new Tree();
       e.id = eid;
+      e.kind = resourceKind;
       e.x = px;
       e.z = pz;
-      e.maxHp = entityHp("tree", eid, undefined, TREE_HP);
+      e.maxHp = entityHp(resourceKind, eid, undefined, resourceKind === "tree" ? TREE_HP : dropConfig(resourceKind).hp);
       e.hp = e.maxHp;
       e.armor = TREE_ARMOR;
       e.alive = true;
       state.trees.set(e.id, e);
-      return { kind: "tree", id: e.id };
+      return { kind: resourceKind, id: e.id };
     }
     case "rock": {
       if (state.rocks.has(eid)) return null;
@@ -230,7 +235,7 @@ export function devSet(
   field: string,
   value: number | boolean | string,
 ): boolean {
-  if (kind === "tree") {
+  if (kind === "tree" || kind === "bush") {
     const t = state.trees.get(id);
     if (!t) return false;
     if (setCommonTransform(t, field, value)) return true;

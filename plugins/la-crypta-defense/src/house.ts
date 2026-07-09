@@ -1,17 +1,21 @@
 import {
+  type EventModuleContext,
   type GameState,
-  type HealEvent,
-  House,
-  HOUSE_HP,
-  HOUSE_COLLISION_RADIUS,
   HOUSE_CENTER,
   HOUSE_REGEN_FULL_MS,
   HOUSE_REGEN_IDLE_MS,
   HOUSE_REGEN_MAX_PER_SEC,
   HOUSE_REGEN_RATE_STEP_PER_SEC,
   HOUSE_REGEN_START_PER_SEC,
+  type HealEvent,
+  type House,
 } from "@rpg/shared";
-import { entityHp } from "./entityFeatures";
+
+/**
+ * La Crypta — the module's destructible objective — plus its slow self-repair.
+ * Moved verbatim from packages/server/src/systems/houses.ts in the #73
+ * extraction; houses.characterization.test.ts pins the behavior across the move.
+ */
 
 interface HouseRegenRecord {
   idleMs: number;
@@ -23,31 +27,74 @@ interface HouseRegenRecord {
 
 export type HouseRegenTimers = Map<string, HouseRegenRecord>;
 
-/** Stand La Crypta, the destructible home objective, at the map centre. */
-export function spawnHouse(state: GameState) {
-  const h = new House();
-  h.id = "house-0";
-  h.x = HOUSE_CENTER.x;
-  h.z = HOUSE_CENTER.z;
-  h.radius = HOUSE_COLLISION_RADIUS;
-  h.maxHp = entityHp("house", h.id, undefined, HOUSE_HP);
-  h.hp = h.maxHp;
-  h.alive = true;
-  state.houses.set(h.id, h);
+// Regen bookkeeping per room state (WeakMap: a realm restart on a fresh state
+// starts clean; the module's onEnd clears the live one explicitly).
+const regenTimers = new WeakMap<GameState, HouseRegenTimers>();
+
+export function timersFor(state: GameState): HouseRegenTimers {
+  let timers = regenTimers.get(state);
+  if (!timers) {
+    timers = new Map();
+    regenTimers.set(state, timers);
+  }
+  return timers;
 }
 
-export function noteHouseDamage(state: GameState, timers: HouseRegenTimers, targetId: string) {
+/** Stand La Crypta at the map centre (HP resolves via entity-features through
+ *  the host's spawnStructure — the same default spawnHouse used). */
+export function spawnLaCrypta(ctx: EventModuleContext): string {
+  return ctx.world.spawnStructure({
+    kind: "house",
+    id: "house-0",
+    x: HOUSE_CENTER.x,
+    z: HOUSE_CENTER.z,
+  });
+}
+
+/** A damage event touched this id: if it's one of our houses, reset its regen
+ *  window (wired to the host's "entity:damaged" chokepoint — 0-damage pokes
+ *  reset the timer too, exactly like the old noteHouseDamage call). */
+export function noteHouseDamage(state: GameState, targetId: string): void {
   const house = state.houses.get(targetId);
   if (!house) return;
-  timers.set(targetId, freshRegenRecord());
+  timersFor(state).set(targetId, freshRegenRecord());
 }
 
+export function anyAliveHouse(state: GameState): boolean {
+  let standing = false;
+  state.houses.forEach((h) => {
+    if (h.alive) standing = true;
+  });
+  return standing;
+}
+
+/** The objective's health fraction — the event HUD's progress bar. */
+export function houseHpFraction(state: GameState): number {
+  let hp = 0;
+  let maxHp = 0;
+  state.houses.forEach((h) => {
+    hp += Math.max(0, h.hp);
+    maxHp += Math.max(0, h.maxHp);
+  });
+  return maxHp > 0 ? hp / maxHp : 0;
+}
+
+/** Module-tick wrapper: regen every standing house, heal popups via the world. */
+export function houseRegenTick(ctx: EventModuleContext, scaledMs: number): void {
+  houseRegenSystem(ctx.state, scaledMs, timersFor(ctx.state), (ev) =>
+    ctx.world.broadcast("heal", ev),
+  );
+}
+
+/** `scaledMs` is the timeScale-scaled tick delta (#67): a paused world (0) never
+ *  regens, and accelerated simulation regens proportionally faster. */
 export function houseRegenSystem(
   state: GameState,
-  deltaMs: number,
+  scaledMs: number,
   timers: HouseRegenTimers,
   emitHeal: (ev: HealEvent) => void,
 ) {
+  const deltaMs = scaledMs;
   if (deltaMs <= 0) return;
 
   const seen = new Set<string>();

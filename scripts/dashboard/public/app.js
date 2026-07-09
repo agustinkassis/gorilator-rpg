@@ -410,12 +410,13 @@ async function onAction(el) {
     } else if (action === "test-scenario") {
       const wt = state.worktrees.find((w) => w.dir === dir);
       if (!scenario) return toast("this task has no scenario name");
-      if (wt.stack.up && wt.stack.activeScenario === scenario) {
+      if (wt.stack.up) {
+        // The game's dev_scenario switch converges a mismatched live room.
         window.open(`${wt.stack.clientUrl}?scenario=${encodeURIComponent(scenario)}`, "_blank");
       } else {
         await api("/api/stack/start", { dir, scenario });
         pendingOpen = { dir, scenario, since: Date.now() };
-        toast(`${wt.stack.up ? "switching" : "booting"} the lab (${scenario})… the game opens when it's up`);
+        toast(`booting the lab (${scenario})… the game opens when it's up`);
         openDrawer("stack", dir, `scenario stack — ${scenario}`);
       }
     } else if (action === "test-cli") {

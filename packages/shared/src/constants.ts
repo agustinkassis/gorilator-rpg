@@ -5,6 +5,16 @@ export const ROOM_NAME = "game";
 export const TICK_RATE = 20; // server simulation ticks per second
 export const SERVER_PORT = 2567;
 
+/** Upper bound for state.timeScale (Dev Mode time control + scenario manifests).
+ *  At 20Hz a 16× tick is an 800ms dt — beyond that movement starts tunnelling
+ *  through collision; sub-stepping is the documented follow-up before raising it. */
+export const TIME_SCALE_MAX = 16;
+
+/** Builtin bot-driver behaviors (Feature Lab #68) — listed here so the client
+ *  Bots panel can offer them without a round-trip. Registered server-side in
+ *  systems/bots/behaviors.ts; features/plugins add more via registerBotBehavior. */
+export const BUILTIN_BOT_BEHAVIORS = ["wander", "aggro", "loot", "eat_when_low"] as const;
+
 /** WebSocket close code: the server kicks an old session when the SAME nostr
  *  npub logs in again (the newest login wins). The client shows a tailored
  *  message for this code instead of the generic "disconnected". */
@@ -83,6 +93,16 @@ export const STAMINA_DRAIN_PER_SEC = 25; // spent per second while sprinting (�
 export const STAMINA_REGEN_PER_SEC = 18; // regained per second once regen resumes (≈5.5s to refill)
 export const STAMINA_REGEN_DELAY_MS = 800; // pause before stamina starts coming back after a sprint
 export const STAMINA_SPRINT_REENGAGE = 20; // once emptied, must recover to this before sprinting again
+
+// Hunger: a slow survival pressure. Food restores it; at zero the player starts
+// losing HP until they eat or die. Values are live-tunable in Dev Mode.
+export const PLAYER_MAX_HUNGER = 100;
+export const HUNGER_DRAIN_PER_MIN = 10; // full → empty in ~16.7 min at default tuning
+export const STARVATION_DAMAGE_PER_SEC = 1;
+export const FOOD_HUNGER_MULT = 1;
+export const FOOD_HP_MULT = 1;
+export const FOOD_STAMINA_MULT = 1;
+export const RESPAWN_HUNGER_FRACTION = 0.35; // don't respawn already starving
 
 // Leveling: characters gain XP from kills and level up on an escalating curve.
 export const XP_BASE = 100; // XP to go from level 1 → 2
