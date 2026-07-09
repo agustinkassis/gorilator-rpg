@@ -7,6 +7,7 @@ import {
   AMBIENT_ITEM_SPAWN_CLEAR_RADIUS,
 } from "@rpg/shared";
 import { nearestFreeWorld } from "./pathfinding";
+import { rng } from "./rng";
 
 /** Per-room respawn bookkeeping (kept off the synced state). */
 interface PotionMeta {
@@ -17,10 +18,11 @@ const meta = new WeakMap<GameState, PotionMeta>();
 
 const SPAWN_RANGE = 110; // potions scatter within this half-extent of the centre
 
-function randomFreeSpot(): { x: number; z: number } {
+function randomFreeSpot(state: GameState): { x: number; z: number } {
+  const roll = rng(state, "world");
   for (let i = 0; i < 80; i++) {
-    const x = (Math.random() * 2 - 1) * SPAWN_RANGE;
-    const z = (Math.random() * 2 - 1) * SPAWN_RANGE;
+    const x = (roll() * 2 - 1) * SPAWN_RANGE;
+    const z = (roll() * 2 - 1) * SPAWN_RANGE;
     const spot = nearestFreeWorld(x, z); // never inside an obstacle
     if (Math.hypot(spot.x, spot.z) >= AMBIENT_ITEM_SPAWN_CLEAR_RADIUS) return spot;
   }
@@ -30,7 +32,7 @@ function randomFreeSpot(): { x: number; z: number } {
 function addPotion(state: GameState, m: PotionMeta) {
   const p = new Potion();
   p.id = `potion-${m.seq++}`;
-  const spot = randomFreeSpot();
+  const spot = randomFreeSpot(state);
   p.x = spot.x;
   p.z = spot.z;
   p.heal = POTION_HEAL;

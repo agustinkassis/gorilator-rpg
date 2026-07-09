@@ -65,6 +65,30 @@ const respawnOverlay = document.getElementById("respawnOverlay") as HTMLDivEleme
 const respawnCountdownEl = document.getElementById("respawnCountdown") as HTMLDivElement;
 const realmOverlay = document.getElementById("realmOverlay") as HTMLDivElement;
 const realmCountdownEl = document.getElementById("realmCountdown") as HTMLDivElement;
+const PERF_FPS_LIMIT_STORAGE_KEY = "gorilator.perf.fpsLimit";
+const PERF_FPS_LIMIT_MAX = 240;
+
+function normalizePerfFpsLimit(value: unknown): number {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(PERF_FPS_LIMIT_MAX, Math.round(n));
+}
+
+function loadStoredPerfFpsLimit(): number {
+  try {
+    return normalizePerfFpsLimit(localStorage.getItem(PERF_FPS_LIMIT_STORAGE_KEY));
+  } catch {
+    return 0;
+  }
+}
+
+function storePerfFpsLimit(limit: number) {
+  try {
+    localStorage.setItem(PERF_FPS_LIMIT_STORAGE_KEY, String(limit));
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Re-render the footer version popup, optionally flagging packages whose remote
  *  (latest release) version is newer than the local build. Reassigned by
@@ -1245,8 +1269,24 @@ new PlayerMenu({
 // a benchmark is active). Toggle the on-screen HUD with F3 or `?perf`; drive it
 // from the console via window.__perf (see docs/performance.md).
 const perf = new PerfTracker();
-const perfProbes = attachBabylonProbes(engine, scene, perf);
-const perfOverlay = new PerfOverlay(perf, perfProbes, net.httpBase());
+let currentClientFps = engine.getFps();
+const perfProbes = attachBabylonProbes(engine, scene, perf, { fps: () => currentClientFps });
+const perfMode = new URLSearchParams(location.search).has("perf");
+let perfFpsLimit = perfMode ? loadStoredPerfFpsLimit() : 0;
+const perfOverlay = new PerfOverlay(
+  perf,
+  perfProbes,
+  net.httpBase(),
+  perfMode
+    ? {
+        get: () => perfFpsLimit,
+        set: (limit) => {
+          perfFpsLimit = normalizePerfFpsLimit(limit);
+          storePerfFpsLimit(perfFpsLimit);
+        },
+      }
+    : undefined,
+);
 // "What's heavy" drill-down + FPS-dip culprit capture: render load + elements come
 // from the live scene, entities from the game's per-category counts; reasons are the
 // perf spans (incl. the scene.render sub-phases). The render profile pairs those
@@ -1254,7 +1294,7 @@ const perfOverlay = new PerfOverlay(perf, perfProbes, net.httpBase());
 perf.setBreakdownProvider(() => buildResourceBreakdown(scene, game.debugStats(), perf.latest()));
 perf.setRenderProfileProvider(() => buildRenderProfile(scene, perfProbes.renderPhases(), perf.latest(), perf.meta));
 (window as Window & { __perf?: unknown }).__perf = perf;
-if (new URLSearchParams(location.search).has("perf")) perfOverlay.toggle();
+if (perfMode) perfOverlay.toggle();
 
 // Client plugins: item models, per-frame systems, dev panels. Discovered via
 // /plugins/manifest.json (pluginBundler); quietly a no-op when none exist.
@@ -1731,6 +1771,8 @@ async function start() {
       inventory.setInventory(slots);
       hotkeyBar.setInventory(slots);
     },
+    // Feature Lab: pin the scenario's tweak knobs in the Dev Mode gameplay panel.
+    onScenario: (info) => devMode?.setScenario(info),
     onWipe: (ev) => topBar.flashDefeat(ev.wave, ev.persist), // La Crypta fell → defeat flash (state sync carries the reset)
     onError: (message) => {
       statusEl.textContent = message;
@@ -1739,6 +1781,11 @@ async function start() {
   };
 
   const params = new URLSearchParams(location.search);
+  // Feature Lab (#66): ?scenario=<name> auto-joins single-player. The join
+  // option also selects the scenario for a freshly created room on open dev
+  // servers (`pnpm scenario` pins it via env anyway). `autojoin` lets labs name
+  // the guest player in their printed ready URL.
+  const scenarioName = params.get("scenario")?.trim() || "";
   const autoJoinName = params.get("autojoin")?.trim().slice(0, 24) || "";
   let autoJoinUsed = false;
 
@@ -1749,8 +1796,8 @@ async function start() {
     // proves the pubkey. A duplicate login is kicked by the server (the takeover
     // close code, handled in NetworkClient.onLeave).
     const creds =
-      autoJoinName && !autoJoinUsed
-        ? { name: autoJoinName, nostr: null }
+      (scenarioName || autoJoinName) && !autoJoinUsed
+        ? { name: autoJoinName || "dev" }
         : await splash.awaitCredentials();
     autoJoinUsed = true;
 
@@ -1782,7 +1829,20 @@ async function start() {
         name: creds.name,
         // Only the signed auth + profile go to the server; it owns the save.
         nostr: nostrPayload,
+        scenario: scenarioName || undefined,
       });
+
+      // Runtime lab switch: joining an EXISTING room doesn't re-stage — if the
+      // server is running a different scenario than the URL asks for, request a
+      // room recycle (dev_scenario). Our onLeave reloads into the fresh lab.
+      if (scenarioName) {
+        void fetch(`${net.httpBase()}/api/status`)
+          .then((res) => res.json() as Promise<{ activeScenario?: string | null }>)
+          .then((status) => {
+            if ((status.activeScenario ?? null) !== scenarioName) net.switchScenario(scenarioName);
+          })
+          .catch(() => {}); // status probe is best-effort — a cold room staged us already
+      }
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : String(err);
@@ -1849,9 +1909,16 @@ if (import.meta.env.DEV) {
   });
 }
 
+let lastClientFrameAt = performance.now();
 engine.runRenderLoop(() => {
+  const now = performance.now();
+  if (perfFpsLimit > 0 && now - lastClientFrameAt < 1000 / perfFpsLimit) return;
+
   const frameStartedAt = debugStats.beginFrame();
-  const dt = Math.min(engine.getDeltaTime() / 1000, 0.1);
+  const elapsedMs = frameStartedAt - lastClientFrameAt;
+  const dt = Math.min(elapsedMs / 1000, 0.1);
+  lastClientFrameAt = frameStartedAt;
+  currentClientFps = elapsedMs > 0 ? 1000 / elapsedMs : engine.getFps();
 
   // While the intro is up, draw the hero scene instead of the game world. The
   // launch flips `active` (under the white flash) to hand off to the game.
@@ -1862,7 +1929,7 @@ engine.runRenderLoop(() => {
     splash.scene.render();
     const frameEndedAt = performance.now();
     perf.setFrameMetrics({
-      fps: engine.getFps(),
+      fps: currentClientFps,
       frameMs: frameEndedAt - frameStartedAt,
       gpuMs: null,
       drawCalls: 0,
@@ -1928,11 +1995,13 @@ engine.runRenderLoop(() => {
   // Keep the audio listener on the player so spatial SFX pan + attenuate correctly.
   audio.updateListener(camera, me ? { x: me.x, z: me.z } : null);
 
-  // TopBar: every player always sees the home (first house) HP + wave
-  // state. Once the house is destroyed it's removed from state, so fall back to a
-  // "fallen" reading using the last-known max HP.
+  // TopBar: event realms show the home HP + wave state. Open sandbox realms
+  // have no event objective, so show a stable realm status instead of a
+  // permanent "fallen" siege bar.
   const st = net.room?.state;
   if (topBar && st) {
+    const sandbox = !st.eventId && st.houses.size === 0 && homeMaxHp <= 0;
+    topBar.setVisible(true);
     let home: { hp: number; maxHp: number; alive: boolean } | undefined;
     st.houses.forEach((h) => {
       if (!home) home = h;
@@ -1940,6 +2009,12 @@ engine.runRenderLoop(() => {
     if (home) {
       homeMaxHp = home.maxHp;
       topBar.setHouse(home.hp, home.maxHp, home.alive);
+    } else if (sandbox && st.restartTimerMs <= 0) {
+      homeMaxHp = 0;
+      topBar.setSandbox();
+    } else if (!st.wavesEnabled && st.restartTimerMs <= 0) {
+      homeMaxHp = 0;
+      topBar.setSandbox();
     } else if (homeMaxHp > 0) {
       topBar.setHouse(0, homeMaxHp, false);
     }

@@ -11,6 +11,7 @@ export class TopBar {
   private hpText: HTMLDivElement;
   private sub: HTMLDivElement;
   private fallen = false;
+  private sandbox = false;
   private lastCountdownSecond: number | null = null;
 
   constructor() {
@@ -46,8 +47,16 @@ export class TopBar {
     document.body.appendChild(this.root);
   }
 
+  /** Hide the whole banner when no event module runs (open sandbox / scenario
+   *  lab): there is no objective or wave clock to report. */
+  setVisible(on: boolean) {
+    this.root.style.display = on ? "" : "none";
+  }
+
   /** Update the home's HP bar (alive=false → collapsed). */
   setHouse(hp: number, maxHp: number, alive: boolean) {
+    this.sandbox = false;
+    this.root.classList.remove("tbSandbox");
     if (maxHp <= 0) {
       // Dev-set indestructible structure (HP 0): always standing, no destructible bar.
       if (this.fallen) {
@@ -89,6 +98,7 @@ export class TopBar {
 
   /** Update the wave label + countdown to the next wave. */
   setWave(waveNumber: number, msToNext: number) {
+    if (this.sandbox) return;
     if (this.fallen) {
       this.clearCountdownMode();
       this.wave.textContent = "";
@@ -109,6 +119,23 @@ export class TopBar {
     }
     this.clearCountdownMode();
     this.sub.textContent = waveNumber <= 0 ? `first wave in ${t}` : `next wave in ${t}`;
+  }
+
+  /** Show the base open-world loop when no event module owns an objective. */
+  setSandbox() {
+    if (!this.sandbox) {
+      this.sandbox = true;
+      this.fallen = false;
+      this.root.classList.remove("tbDead", "tbLow");
+      this.root.classList.add("tbSandbox");
+      this.clearCountdownMode();
+    }
+    this.title.textContent = "Open Realm";
+    this.wave.textContent = "SANDBOX";
+    this.fill.style.width = "100%";
+    this.fill.style.background = "#54d98c";
+    this.hpText.textContent = "explore";
+    this.sub.textContent = "roam, gather, fight, and build your character";
   }
 
   private showCountdownSecond(secs: number) {
@@ -223,6 +250,10 @@ function injectStyles() {
     #topBar.tbLow { animation: tbPulse 0.9s ease-in-out infinite; }
     #topBar.tbDead { border-color: #7a2b22; }
     #topBar.tbDead .tbTitle, #topBar.tbDead .tbWave { color: #ff8b7a; }
+    #topBar.tbSandbox { border-color: #49745d; background: linear-gradient(180deg, rgba(13,32,25,0.92), rgba(8,16,14,0.92)); }
+    #topBar.tbSandbox .tbTitle { color: #d8ffe6; }
+    #topBar.tbSandbox .tbWave { color: #7ee0a3; }
+    #topBar.tbSandbox .tbTrack { background: #111f1a; }
     body.preGame #topBar { display: none !important; } /* hidden on the splash, shown in-game */
     @keyframes tbPulse { 0%,100% { box-shadow: 0 4px 18px rgba(0,0,0,0.55), inset 0 0 16px rgba(0,0,0,0.5); } 50% { box-shadow: 0 0 16px 3px rgba(224,86,63,0.55), inset 0 0 16px rgba(0,0,0,0.5); } }
     @keyframes tbCountdownBounce {

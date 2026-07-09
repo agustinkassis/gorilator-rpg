@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 /**
  * Per-structure-kind loot table, authored in Dev Mode → public/structures.json,
  * watched here live. When a structure is destroyed, each entry is rolled
- * INDEPENDENTLY (Math.random() < probability) and, on success, drops `amount` of
+ * INDEPENDENTLY against its probability (seeded "drops" stream) and, on success, drops `amount` of
  * `item`. resources.ts reads this via dropStructureLoot. Empty by default, so a
  * structure drops nothing until a loot table is configured.
  */

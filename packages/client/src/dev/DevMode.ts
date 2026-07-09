@@ -58,7 +58,9 @@ import {
   DROP_RATE_MULT,
   ARMOR_K,
   CRIT_MULTIPLIER,
+  BUILTIN_BOT_BEHAVIORS,
   type BrainId,
+  type ScenarioInfoMessage,
 } from "@rpg/shared";
 import {
   type StructureMask,
@@ -99,6 +101,8 @@ export class DevMode {
   private entitiesBtn: HTMLButtonElement;
   private gameplayBtn: HTMLButtonElement;
   private gameplayPanel: HTMLElement;
+  /** The active Feature Lab scenario (server "scenario" message), or null. */
+  private scenarioInfo: ScenarioInfoMessage | null = null;
   private toolsBtn: HTMLButtonElement;
   private toolsPanel: HTMLElement;
   private toolsOpen = false;
@@ -123,8 +127,6 @@ export class DevMode {
   private characterDefs: CharacterDef[] = [];
   private gameplayOpen = false;
   private activeCategory: GameplayCategory = "Waves";
-  private scenarioName = "";
-  private scenarioTweaks: DevTuningKey[] = [];
   private tuningValues = new Map<DevTuningKey, number>();
   private dirtyTuningKeys = new Set<DevTuningKey>();
   private customWaves: WaveDefUI[] = []; // dev-authored per-wave compositions
@@ -419,6 +421,8 @@ export class DevMode {
       { label: "1×", scale: 1 },
       { label: "2×", scale: 2 },
       { label: "4×", scale: 4 },
+      { label: "8×", scale: 8 },
+      { label: "16×", scale: 16 }, // TIME_SCALE_MAX — accelerated scenario simulation
     ];
     this.timeButtons = SPEEDS.map((s) => {
       const b = document.createElement("button");
@@ -879,6 +883,127 @@ export class DevMode {
     this.slotPopup = null;
   }
 
+  /** Feature Lab (#69): the active scenario announced by the server on join.
+   *  Seeds the sliders with the manifest's values and pins a "Scenario tweaks"
+   *  section at the top of this panel. */
+  setScenario(info: ScenarioInfoMessage) {
+    this.scenarioInfo = info;
+    for (const [key, value] of Object.entries(info.tuning ?? {})) {
+      const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+      if (control && Number.isFinite(Number(value))) {
+        // The server already applied these — mirror them so sliders match.
+        this.tuningValues.set(control.key, Number(value));
+      }
+    }
+    this.renderGameplayPanel();
+  }
+
+  private renderScenarioTweaks(): HTMLElement {
+    const info = this.scenarioInfo!;
+    const wrap = this.gameplaySection(`Scenario tweaks — ${info.name}`);
+    (wrap.firstChild as HTMLElement).style.color = "#ffd47e"; // stand out from normal sections
+    if (info.description) {
+      const desc = document.createElement("div");
+      desc.textContent = info.description;
+      desc.style.cssText = "color:#9fb0c0; font:11px system-ui,sans-serif;";
+      wrap.appendChild(desc);
+    }
+
+    const keys = Array.from(new Set([...Object.keys(info.tuning ?? {}), ...(info.tweaks ?? [])]));
+    for (const key of keys) {
+      const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
+      if (control) {
+        wrap.appendChild(this.tuningRow(control));
+        continue;
+      }
+      // A knob without a slider definition yet (e.g. a brand-new key): plain input.
+      const row = document.createElement("label");
+      row.style.cssText = "display:grid; grid-template-columns:1fr 90px; align-items:center; gap:7px;";
+      const name = document.createElement("span");
+      name.textContent = key;
+      name.style.cssText = "color:#cdd3e0; font-weight:600; font-size:12px;";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.value = String(info.tuning[key as keyof typeof info.tuning] ?? 0);
+      input.style.cssText =
+        "background:#1a2230; color:#cfe; border:1px solid #3a4658; border-radius:5px; padding:4px 6px; font:12px monospace;";
+      input.onchange = () => {
+        const v = Number(input.value);
+        if (Number.isFinite(v)) {
+          this.tuningValues.set(key as DevTuningKey, v);
+          this.net.sendDevTune(key as DevTuningKey, v);
+        }
+      };
+      row.appendChild(name);
+      row.appendChild(input);
+      wrap.appendChild(row);
+    }
+
+    const hint = document.createElement("div");
+    hint.textContent = "Sliders apply live (dev_tune). Bake writes realm.json for the next boot.";
+    hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+    wrap.appendChild(hint);
+
+    const bake = document.createElement("button");
+    bake.textContent = "Bake values → realm.json";
+    bake.style.cssText =
+      "cursor:pointer; border-radius:6px; border:1px solid #b98a3a; background:#3a2f1a; color:#ffd47e; padding:8px; font:600 12px system-ui,sans-serif;";
+    bake.onclick = async () => {
+      this.applyPendingGameplayTuning(); // make sure the server has the values we bake
+      const tuning: Record<string, number> = {};
+      for (const key of keys) tuning[key] = this.tunedRaw(key as DevTuningKey);
+      try {
+        const res = await fetch("/__scenario/bake", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ scenario: info.name, tuning }),
+        });
+        const out = (await res.json()) as { ok?: boolean; file?: string };
+        bake.textContent = out.ok ? `Baked → ${out.file}` : "Bake failed";
+        setTimeout(() => {
+          bake.textContent = "Bake values → realm.json";
+        }, 2500);
+      } catch {
+        bake.textContent = "Bake failed (dev server?)";
+      }
+    };
+    wrap.appendChild(bake);
+    return wrap;
+  }
+
+  /** Feature Lab (#68): spawn/clear scripted bot players from the panel. */
+  private renderBotsSection(): HTMLElement {
+    const wrap = this.gameplaySection("Bots");
+    const row = document.createElement("div");
+    row.style.cssText = "display:grid; grid-template-columns:1fr 72px 72px; gap:6px;";
+    const select = document.createElement("select");
+    select.style.cssText =
+      "background:#1a2230; color:#cfe; border:1px solid #3a4658; border-radius:5px; padding:4px 6px; font:12px system-ui,sans-serif;";
+    for (const id of BUILTIN_BOT_BEHAVIORS) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      select.appendChild(opt);
+    }
+    const mkBtn = (label: string, onclick: () => void) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText =
+        "cursor:pointer; border-radius:6px; border:1px solid #3a4658; background:#2a3242; color:#cfe; font:600 12px system-ui,sans-serif;";
+      b.onclick = onclick;
+      return b;
+    };
+    row.appendChild(select);
+    row.appendChild(mkBtn("Spawn", () => this.net.sendDevBot("spawn", select.value, 1)));
+    row.appendChild(mkBtn("Clear", () => this.net.sendDevBot("clear")));
+    wrap.appendChild(row);
+    const hint = document.createElement("div");
+    hint.textContent = "Scripted players (server-side). Scenarios auto-spawn their own via bots[].";
+    hint.style.cssText = "color:#6f8192; font:10px system-ui,sans-serif;";
+    wrap.appendChild(hint);
+    return wrap;
+  }
+
   private renderGameplayPanel() {
     this.gameplayPanel.innerHTML = "";
     const head = document.createElement("div");
@@ -901,6 +1026,9 @@ export class DevMode {
     const body = document.createElement("div");
     body.style.cssText = "padding:10px; display:flex; flex-direction:column; gap:12px;";
     this.gameplayPanel.appendChild(body);
+
+    // ---- Scenario tweaks: the active Feature Lab manifest's knobs, pinned on top ----
+    if (this.scenarioInfo) body.appendChild(this.renderScenarioTweaks());
 
     // ---- Big square category buttons (Waves / Player / Combat / Survival / Resources) ----
     const catRow = document.createElement("div");
@@ -964,15 +1092,6 @@ export class DevMode {
       body.appendChild(this.simEstimateBox());
     }
 
-    if (this.scenarioTweaks.length) {
-      const scenario = this.gameplaySection(this.scenarioName ? `Scenario tweaks: ${this.scenarioName}` : "Scenario tweaks");
-      for (const key of this.scenarioTweaks) {
-        const control = DEV_TUNING_CONTROLS.find((c) => c.key === key);
-        if (control) scenario.appendChild(this.tuningRow(control));
-      }
-      body.appendChild(scenario);
-    }
-
     // ---- Controls for the active category, grouped by section ----
     const divider = document.createElement("div");
     divider.style.cssText = "height:1px; background:#2c3a30; margin:2px 0;";
@@ -993,6 +1112,9 @@ export class DevMode {
     // ---- Per-tab extras ----
     if (this.activeCategory === "Waves") body.appendChild(this.renderWaveEditor());
     if (this.activeCategory === "Resources") body.appendChild(this.renderResourceHp());
+
+    // ---- Scripted bots (Feature Lab) ----
+    body.appendChild(this.renderBotsSection());
 
     const defaults = document.createElement("button");
     defaults.textContent = "Reset all to defaults";
@@ -1064,22 +1186,8 @@ export class DevMode {
 
   /** Load everything the Gameplay panel's richer tabs need, then re-render. */
   private async loadGameplayData() {
-    await Promise.all([this.loadCustomWaves(), this.loadWaveCharDefs(), this.loadDrops(), this.loadScenarioInfo()]);
+    await Promise.all([this.loadCustomWaves(), this.loadWaveCharDefs(), this.loadDrops()]);
     if (this.gameplayOpen) this.renderGameplayPanel();
-  }
-
-  private async loadScenarioInfo() {
-    try {
-      const res = await fetch(`${this.net.httpBase()}/api/scenario`, { cache: "no-store" });
-      const info = (await res.json()) as { active?: boolean; name?: string; tweaks?: unknown };
-      this.scenarioName = info.active ? String(info.name || "") : "";
-      this.scenarioTweaks = info.active && Array.isArray(info.tweaks)
-        ? (info.tweaks.map(String) as DevTuningKey[])
-        : [];
-    } catch {
-      this.scenarioName = "";
-      this.scenarioTweaks = [];
-    }
   }
 
   private async loadCustomWaves() {

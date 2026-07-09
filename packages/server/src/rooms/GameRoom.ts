@@ -21,9 +21,12 @@ import {
   type DevSetSlotMessage,
   type DevTimeMessage,
   type DevActionMessage,
+  type DevBotMessage,
+  type DevScenarioMessage,
   type DevTuneMessage,
   type AdminWavesMessage,
   type AdminSpawnerMessage,
+  type AdminKickMessage,
   CHAT_MAX_LEN,
   INV_SLOTS,
   type InventorySlot,
@@ -32,7 +35,6 @@ import {
   type KillEvent,
   type XpEvent,
   ROCK_COLLISION_SCALE,
-  POTION_HEAL,
   THROW_STATE_MS,
   THROW_RELEASE_FRACTION,
   BANANA_MAX_THROW,
@@ -40,17 +42,12 @@ import {
   xpForLevel,
   REALM_RESTART_MS,
   TICK_RATE,
+  TIME_SCALE_MAX,
   NOSTR_TAKEOVER_CODE,
-  CRIT_MULTIPLIER,
-  BERSERKER_SPEED_MULT,
-  BERSERKER_CRIT_CHANCE_ADD,
-  BERSERKER_CRIT_DAMAGE_MULT,
-  BERSERKER_ARMOR_MULT,
-  BERSERKER_HP_MULT,
-  SACRED_CIRCLE_HEAL_PER_SEC_MAX,
-  SACRED_CIRCLE_HEAL_PER_SEC_MIN,
-  SACRED_CIRCLE_RADIUS,
+  type EventOutcome,
   type HealEvent,
+  type ScenarioInfoMessage,
+  type ScenarioManifest,
   type PlayerSave,
 } from "@rpg/shared";
 import { movementSystem, ghostMovementSystem, setDestination, placeAtFreeSpot } from "../systems/movement";
@@ -72,13 +69,12 @@ import {
   applyResourceConfig,
 } from "../systems/resources";
 import { makeInventory, addItem, moveItem, removeItem, countItem } from "../systems/inventory";
-import { useFoodItem } from "../systems/food";
 import { spawnInitialBananas, bananaSystem, planThrow } from "../systems/bananas";
-import { goblinAiSystem, waveSystem, resetWaves, forceNextWave, previousWave } from "../systems/goblins";
+import { goblinAiSystem } from "../systems/goblins";
 import { realmTracker, type RealmPlayer } from "../systems/realms";
 import { separationSystem } from "../systems/separation";
-import { houseRegenSystem, noteHouseDamage, spawnHouse, type HouseRegenTimers } from "../systems/houses";
-import { healingTowerPosition } from "../systems/healingTower";
+import { healingTowerPosition, sacredCircleHealSystem } from "../systems/healingTower";
+import { useItemFromSlot, type BerserkerBase, type UseItemDeps } from "../systems/useItem";
 import { loadPropObstacles, onPropsChange } from "../systems/props";
 import { applyStructures } from "../systems/structures";
 import { loadSpawners, resetSpawners, spawnerSystem, spawnerExists } from "../systems/spawners";
@@ -88,7 +84,7 @@ import { loadStructureLoot } from "../systems/structureDrops";
 import { loadEntityFeatures } from "../systems/entityFeatures";
 import { loadAuthoredNpcs, syncAuthoredNpcs } from "../systems/npcs";
 import { setRockObstacles } from "../systems/pathfinding";
-import { canUseDevCommands } from "../systems/devAuth";
+import { canUseDevCommands, devCommandsOpen } from "../systems/devAuth";
 import { devSpawn, devMove, devDelete, devSet } from "../systems/devEdit";
 import { devTuning, setDevTuning } from "../systems/devTuning";
 import { perfTracker } from "../systems/perf";
@@ -99,18 +95,29 @@ import { fetchServerSave, buildServerSave, ServerSaver } from "../systems/nostrS
 import { serverPluginHost } from "../systems/plugins/host";
 import { loadServerPlugins } from "../systems/plugins/loader";
 import { initNostrContent } from "../systems/plugins/nostrContent";
-import { applyRealmConfig } from "../systems/realm";
+import { applyRealmConfig, realmEvents, setRealmEvents } from "../systems/realm";
+import { eventRuntime, type RoomBridge } from "../systems/plugins/events";
+import { resolveCycleSeed, rng, seedRng } from "../systems/rng";
+import {
+  activeScenarioName,
+  applyScenarioConfig,
+  applyScenarioPlayer,
+  applyScenarioWorld,
+  getActiveScenario,
+  setActiveScenario,
+} from "../systems/scenario";
+import {
+  type BotIO,
+  botSystem,
+  clearBots,
+  isKnownBotBehavior,
+  removeBot,
+  resetBotPrograms,
+  spawnBot,
+} from "../systems/bots/driver";
+import { registerBuiltinBotBehaviors } from "../systems/bots/behaviors";
 import { realmPolicy } from "../systems/policy";
 import { resetPlayerForNewRealm } from "../systems/realmLifecycle";
-import {
-  applyScenarioPlayer,
-  applyScenarioTuning,
-  applyScenarioWorld,
-  loadScenarioFromEnv,
-  scenarioLaCryptaDefenseEnabled,
-  scenarioSpawnersEnabled,
-  type ScenarioManifest,
-} from "../systems/scenario";
 
 /** A kicked session's gameplay state, handed to the new login that takes it over. */
 interface TakeoverState {
@@ -137,22 +144,14 @@ interface TakeoverState {
 export class GameRoom extends Room<GameState> {
   maxClients = 16;
 
-  private scenario: ScenarioManifest | null = null;
-
   /** Per-player inventory, kept off the synced state and sent only to its owner. */
   private inventories = new Map<string, InventorySlot[]>();
 
   /** Pre-buff stats saved when a berserker potion is consumed; restored on expiry. */
-  private berserkerBase = new Map<string, {
-    attack: number; armor: number; critChance: number;
-    critMultiplier: number; moveSpeed: number; maxHp: number;
-  }>();
+  private berserkerBase = new Map<string, BerserkerBase>();
 
   /** Fractional sacred-circle healing is accumulated into whole-HP popups. */
   private sacredHealCarry = new Map<string, number>();
-
-  /** La Crypta regen timers reset every time the house receives damage. */
-  private houseRegen: HouseRegenTimers = new Map();
 
   /** Signs + publishes Nostr-logged-in players' progress with the SERVER key. */
   private serverSaver = new ServerSaver();
@@ -167,11 +166,10 @@ export class GameRoom extends Room<GameState> {
     { power: number; timer: number; item: "banana" | "stone" }
   >();
 
-  /** True while La Crypta (the home) stands; flips on collapse so the tick fires the
-   *  wipe exactly once, then back to true once the home is rebuilt. */
-  private homeStanding = true;
-
   private healingTower = healingTowerPosition();
+
+  /** The Feature Lab scenario staging this room (null = normal realm). */
+  private scenario: ScenarioManifest | null = null;
 
   /** Throttles the realm-tracker snapshot (it doesn't need every 20Hz tick). */
   private realmTick = 0;
@@ -179,9 +177,16 @@ export class GameRoom extends Room<GameState> {
   /** Sessions whose denied dev_* attempt was already logged (anti log-flood). */
   private devDenied = new Set<string>();
 
-  async onCreate() {
+  async onCreate(options?: { scenario?: string }) {
     this.setState(new GameState());
-    this.scenario = loadScenarioFromEnv();
+    // Feature Lab (#65/#66): resolve the isolated scenario staging this room.
+    // GORILATOR_SCENARIO (set by `pnpm scenario <name>`) is the source of truth;
+    // on open dev servers a ?scenario= join option selects it for a fresh room.
+    if (!activeScenarioName() && options?.scenario && devCommandsOpen(process.env)) {
+      setActiveScenario(String(options.scenario));
+    }
+    this.scenario = getActiveScenario();
+    this.seedCycleRng(); // deterministic gameplay rolls — before any world spawn draws from them
     loadPropObstacles(); // collision for any imported "concrete" props (+ live reload)
     onPropsChange(() => applyStructures(this.state)); // re-sync destructible structures on props edit
     loadEntityFeatures(() => {
@@ -190,6 +195,10 @@ export class GameRoom extends Room<GameState> {
     });
     loadSpawners(); // dev-placed goblin spawners (+ live reload of spawners.json)
     loadWaves(); // dev-authored custom wave compositions (+ live reload of waves.json)
+    // realm.json + optional scenario layer: seed tuning/policy and decide
+    // whether the event module starts, before any event runtime is created.
+    applyRealmConfig();
+    if (this.scenario) applyScenarioConfig(this.state, this.scenario);
     // per-kind tree/rock drop config (+ live reload of resources.json). The callback
     // re-applies the configured HP to every existing tree/rock on each edit.
     loadResourceDrops(() => applyResourceConfig(this.state));
@@ -201,34 +210,45 @@ export class GameRoom extends Room<GameState> {
     applyStructures(this.state); // build destructible structures from the loaded concrete props
     this.refreshRockObstacles(); // boulders collide via the live Rock entities now
     spawnInitialBananas(this.state);
-    if (scenarioLaCryptaDefenseEnabled(this.scenario)) spawnHouse(this.state);
     loadAuthoredNpcs(this.state);
 
     // Deterministic test mode (e2e smoke tests, `pnpm bench` scenarios): no goblin
     // waves, so room state only changes when a test drives it. Uses the existing
     // devTuning knobs — every other system runs exactly as in production.
-    // realm.json (per-realm/fork config): seed the live tuning knobs before any
-    // mode-specific overrides. Absent file = current defaults, untouched.
-    applyRealmConfig();
-
     if (process.env.GORILATOR_TEST === "1") {
-      setDevTuning("waveSizeBase", 0);
-      setDevTuning("waveSizePerPlayer", 0);
-      setDevTuning("waveSizePerWave", 0);
+      // No event module → no house, no waves, no wipe: room state only changes
+      // when a test drives it (replaces the old wave-size-0 tuning hack).
+      setRealmEvents({ enabled: false });
       // The pre-created bench/e2e room has no clients — without this, Colyseus
       // auto-disposes it mid-benchmark and the capture never completes.
       this.autoDispose = false;
-      console.log("[room] GORILATOR_TEST=1 — goblin waves disabled for a reproducible room");
+      console.log("[room] GORILATOR_TEST=1 — events disabled for a reproducible room");
     }
-    applyScenarioTuning(this.scenario);
-    applyScenarioWorld(this.state, this.scenario);
-    this.homeStanding = scenarioLaCryptaDefenseEnabled(this.scenario);
 
     // Discover + load server plugins (plugins/ + gorilator-plugin-* packages):
-    // brains, item behaviors, tick systems, event listeners, content packs.
+    // brains, item behaviors, tick systems, event modules, listeners, content.
     // Idempotent across realm restarts; a failing plugin is skipped, never fatal.
     await loadServerPlugins();
     initNostrContent(); // kind-30333 realm packs (REALM_PACK_AUTHORS env) — no-op when unset
+
+    // Stage the scenario's world on top of the base world (resources, ground
+    // items, npcs, staged enemies), then refresh rock collision to include them.
+    if (this.scenario) {
+      applyScenarioWorld(this.state, this.scenario);
+      this.refreshRockObstacles();
+    }
+
+    // Start the realm's event module (realm.json `events`; flagship default =
+    // la-crypta-defense) and announce the fresh cycle to plugin listeners.
+    this.startRealmEvent();
+    serverPluginHost.fire("realm:start", { eventId: eventRuntime.activeId() }, this.state);
+
+    // Scripted players (#68): the scenario's bots[] block auto-spawns them.
+    registerBuiltinBotBehaviors();
+    for (const spec of this.scenario?.bots ?? []) {
+      const count = Math.max(1, Math.min(8, Math.round(Number(spec.count) || 1)));
+      for (let i = 0; i < count; i++) spawnBot(this.state, this.inventories, spec);
+    }
 
     this.onMessage("move", (client, msg: MoveMessage) => {
       const p = this.state.players.get(client.sessionId);
@@ -348,17 +368,50 @@ export class GameRoom extends Room<GameState> {
     this.onMessage("dev_time", (client, msg: DevTimeMessage) => {
       if (!this.devSender(client)) return;
       const s = Number(msg?.scale);
-      this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(8, s)) : 1;
+      this.state.timeScale = Number.isFinite(s) ? Math.max(0, Math.min(TIME_SCALE_MAX, s)) : 1;
     });
     this.onMessage("dev_tune", (client, msg: DevTuneMessage) => {
       if (!msg || !this.devSender(client)) return;
       const applied = setDevTuning(msg.key, msg.value);
       if (applied == null) return;
-      if (msg.key === "waveFirstDelayMs" && this.state.waveNumber === 0) resetWaves(this.state);
+      // (waveFirstDelayMs retunes at wave 0 re-arm the clock inside the event
+      // module's tick — see plugins/la-crypta-defense/src/waves.ts.)
     });
     this.onMessage("dev_action", (client, msg: DevActionMessage) => {
       if (!msg || !this.devSender(client)) return;
       this.handleDevAction(client, msg.action);
+    });
+    // Runtime Feature Lab switch (test dashboard): select another scenario and
+    // RECYCLE the room — the fresh room's onCreate path stages the new lab
+    // (config, world, bots, loadout) exactly like a cold boot. Clients that
+    // asked for it reload with ?scenario= still in the URL and rejoin.
+    this.onMessage("dev_scenario", (client, msg: DevScenarioMessage) => {
+      if (!msg || !this.devSender(client)) return;
+      const name = msg.name === null ? null : String(msg.name);
+      if (name !== null && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name)) return;
+      const previous = activeScenarioName();
+      if (name === previous) return; // already staged — nothing to do
+      const manifest = setActiveScenario(name);
+      if (name && !manifest) {
+        setActiveScenario(previous); // unknown manifest — keep the current lab
+        client.send("dev_scenario_error", { name });
+        return;
+      }
+      console.log(`[room] scenario switch → ${name ?? "(none)"} — recycling the room`);
+      void this.disconnect(); // dispose; the next join creates a freshly staged room
+    });
+
+    // Scripted-player control (#68): spawn/clear bot players live from Dev Mode.
+    this.onMessage("dev_bot", (client, msg: DevBotMessage) => {
+      if (!msg || !this.devSender(client)) return;
+      if (msg.op === "clear") {
+        clearBots(this.state, this.inventories);
+        return;
+      }
+      const behavior = String(msg.behavior ?? "");
+      if (!isKnownBotBehavior(behavior)) return;
+      const count = Math.max(1, Math.min(8, Math.round(Number(msg.count) || 1)));
+      for (let i = 0; i < count; i++) spawnBot(this.state, this.inventories, { behavior });
     });
 
     // Admin controls (Esc menu → Admin). Unlike the dev_* family these are
@@ -369,6 +422,20 @@ export class GameRoom extends Room<GameState> {
       if (!p || !msg) return;
       this.state.wavesEnabled = !!msg.enabled;
       console.log(`[admin] ${p.name} ${this.state.wavesEnabled ? "resumed" : "stopped"} waves`);
+    });
+    // Kick a player or scripted bot (big map → player list ✕ button).
+    this.onMessage("admin_kick", (client, msg: AdminKickMessage) => {
+      const p = this.adminSender(client);
+      const targetId = String(msg?.playerId || "");
+      if (!p || !targetId || targetId === client.sessionId) return; // no self-kick
+      if (removeBot(this.state, this.inventories, targetId)) {
+        console.log(`[admin] ${p.name} kicked bot ${targetId}`);
+        return;
+      }
+      const target = this.clients.find((c) => c.sessionId === targetId);
+      if (!target) return;
+      console.log(`[admin] ${p.name} kicked ${this.state.players.get(targetId)?.name ?? targetId}`);
+      target.leave(); // same path as the kick_players dev action
     });
     this.onMessage("admin_spawner", (client, msg: AdminSpawnerMessage) => {
       const p = this.adminSender(client);
@@ -432,99 +499,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.onMessage("use_item", (client, msg: UseItemMessage) => {
-      const inv = this.inventories.get(client.sessionId);
-      const p = this.state.players.get(client.sessionId);
-      if (!inv || !p || p.state === AnimState.DEAD) return;
-      const slot = inv[msg.slot];
-      if (!slot || slot.count <= 0) return;
-
-      // Plugin-registered item behaviors dispatch first (a plugin may override a
-      // builtin id). The builtins (potion, berserker_potion) stay inline below.
-      const pluginBehavior = serverPluginHost.items.get(slot.type);
-      if (pluginBehavior) {
-        const sid = client.sessionId;
-        const itemId = slot.type;
-        try {
-          pluginBehavior.onUse(p, msg.slot, {
-            state: this.state,
-            consume: () => {
-              slot.count -= 1;
-              if (slot.count <= 0) {
-                slot.type = "";
-                slot.count = 0;
-              }
-              this.sendInventory(sid);
-            },
-            broadcast: (type, payload) => this.broadcast(type, payload),
-            heal: (target, amount) => {
-              const healed = Math.min(amount, target.maxHp - target.hp);
-              if (healed <= 0) return;
-              target.hp += healed;
-              this.broadcast("heal", { targetId: target.id, amount: healed });
-            },
-            log: (m) => console.log(`[plugin:item:${itemId}] ${m}`),
-          });
-        } catch (err) {
-          console.error(`[plugins] item "${itemId}" onUse failed:`, err);
-        }
-        return;
-      }
-
-      if (slot.type === "potion") {
-        if (p.hp >= p.maxHp) return; // don't waste a potion at full HP
-        const heal = Math.min(POTION_HEAL, p.maxHp - p.hp);
-        p.hp += heal;
-        slot.count -= 1;
-        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
-        this.broadcast("heal", { targetId: client.sessionId, amount: heal });
-        this.sendInventory(client.sessionId);
-
-      } else if (slot.type === "berserker_potion") {
-        if (p.berserkerMs > 0) return; // already berserk — don't stack
-        const sid = client.sessionId;
-        // Save base stats so we can restore them exactly when the buff expires.
-        this.berserkerBase.set(sid, {
-          attack: p.attack,
-          armor: p.armor,
-          critChance: p.critChance,
-          critMultiplier: p.critMultiplier,
-          moveSpeed: p.moveSpeed,
-          maxHp: p.maxHp,
-        });
-        // Apply the berserker multipliers.
-        p.attack = p.attack * devTuning().berserkerAttackMult;
-        p.armor = p.armor * BERSERKER_ARMOR_MULT;
-        p.critChance = Math.min(1, p.critChance + BERSERKER_CRIT_CHANCE_ADD);
-        const baseCrit = p.critMultiplier > 0 ? p.critMultiplier : CRIT_MULTIPLIER;
-        p.critMultiplier = baseCrit * BERSERKER_CRIT_DAMAGE_MULT;
-        p.moveSpeed = p.moveSpeed * BERSERKER_SPEED_MULT;
-        const hpFraction = p.hp / p.maxHp;
-        p.maxHp = Math.round(p.maxHp * BERSERKER_HP_MULT);
-        p.hp = Math.min(p.maxHp, Math.round(hpFraction * p.maxHp));
-        p.berserkerMs = devTuning().berserkerDurationMs;
-        slot.count -= 1;
-        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
-        this.sendInventory(client.sessionId);
-      } else {
-        const itemType = slot.type;
-        const fromHunger = p.hunger;
-        const food = useFoodItem(p, itemType);
-        if (!food.used) return;
-        slot.count -= 1;
-        if (slot.count <= 0) { slot.type = ""; slot.count = 0; }
-        if (food.hungerRestored > 0) {
-          client.send("food", {
-            playerId: client.sessionId,
-            item: itemType,
-            hungerRestored: food.hungerRestored,
-            fromHunger,
-            toHunger: p.hunger,
-            durationMs: 4000,
-          });
-        }
-        if (food.hpRestored > 0) this.broadcast("heal", { targetId: client.sessionId, amount: food.hpRestored });
-        this.sendInventory(client.sessionId);
-      }
+      useItemFromSlot(this.state, client.sessionId, msg.slot, this.useItemDeps());
     });
 
     // Chat: trim/clamp the line and re-broadcast it to everyone (sender included),
@@ -601,7 +576,13 @@ export class GameRoom extends Room<GameState> {
       const scaledMs = deltaMs * this.state.timeScale;
       const dt = scaledMs / 1000;
       const emitDamage = (ev: DamageEvent) => {
-        noteHouseDamage(this.state, this.houseRegen, ev.targetId);
+        // The one damage chokepoint — event modules (house regen resets) and any
+        // other plugin listener hear every hit through entity:damaged.
+        serverPluginHost.fire(
+          "entity:damaged",
+          { targetId: ev.targetId, amount: ev.amount, crit: ev.crit },
+          this.state,
+        );
         this.broadcast("damage", ev);
       };
       const emitKill = (ev: KillEvent) => this.broadcast("kill", ev);
@@ -633,6 +614,9 @@ export class GameRoom extends Room<GameState> {
       runPluginSystems("pre");
       // Each system runs inside a perf span so a tick-time spike traces to the exact
       // culprit (the `tag:*` rows in the server summary / analyzer).
+      // Bots first: their intents (destinations, attack targets, item uses) are
+      // consumed by movement/combat in the SAME tick. Early-outs at zero bots.
+      perfTracker.span("bots", () => botSystem(this.state, dt, this.botIO()));
       perfTracker.span("hunger", () => hungerSystem(this.state, dt)); // drains hunger; starvation can kill before movement/combat
       perfTracker.span("stamina", () => staminaSystem(this.state, dt)); // sets p.sprinting; movement reads it for the speed boost
       perfTracker.span("movement", () => movementSystem(this.state, dt));
@@ -645,10 +629,11 @@ export class GameRoom extends Room<GameState> {
       perfTracker.span("goblinAi", () => goblinAiSystem(this.state, dt, emitDamage, emitKill));
       if (this.state.timeScale > 0)
         perfTracker.span("separation", () => separationSystem(this.state)); // fan attackers out — no stacking on one tile
-      perfTracker.span("waves", () => waveSystem(this.state, dt)); // tower-defense: holds when state.wavesEnabled=false
-      perfTracker.span("sacredCircleHeal", () => this.sacredCircleHealSystem(dt));
-      if (scenarioSpawnersEnabled(this.scenario))
-        perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
+      eventRuntime.tick(dt); // the realm's event module (spans itself as event:<id>)
+      perfTracker.span("sacredCircleHeal", () =>
+        sacredCircleHealSystem(this.state, dt, this.healingTower, this.sacredHealCarry, emitHeal),
+      );
+      perfTracker.span("spawners", () => spawnerSystem(this.state, dt)); // dev-placed object spawners (coexist with waves)
       runPluginSystems("main");
       this.releasePendingThrows(scaledMs);
       perfTracker.span("resources", () => {
@@ -656,8 +641,6 @@ export class GameRoom extends Room<GameState> {
         potionRespawnSystem(this.state, dt);
       });
       perfTracker.span("bananas", () => bananaSystem(this.state, dt, emitDamage, emitKill, emitHeal, emitXp));
-      if (scenarioLaCryptaDefenseEnabled(this.scenario))
-        perfTracker.span("houseRegen", () => houseRegenSystem(this.state, scaledMs, this.houseRegen, emitHeal));
       const collect = (pid: string, type: ItemType) => {
         const inv = this.inventories.get(pid);
         if (inv) {
@@ -721,7 +704,6 @@ export class GameRoom extends Room<GameState> {
           }
         }
       });
-      this.checkHomeFall(); // La Crypta fell? → end the realm + restart per the realm policy
       this.detectSaveTriggers(); // persist Nostr progress on level-up / death
       if (++this.realmTick >= TICK_RATE) {
         this.realmTick = 0;
@@ -758,56 +740,79 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private sacredCircleHealSystem(dt: number) {
-    if (dt <= 0 || !this.healingTower) return;
-    const radiusSq = SACRED_CIRCLE_RADIUS * SACRED_CIRCLE_RADIUS;
-    const emitHeal = (ev: HealEvent) => this.broadcast("heal", ev);
-    this.state.players.forEach((p, sid) => {
-      if (p.hp <= 0 || p.state === AnimState.DEAD || p.hp >= p.maxHp) return;
-      const dx = p.x - this.healingTower!.x;
-      const dz = p.z - this.healingTower!.z;
-      if (dx * dx + dz * dz > radiusSq) return;
-
-      const healPerSec =
-        SACRED_CIRCLE_HEAL_PER_SEC_MIN +
-        Math.random() * (SACRED_CIRCLE_HEAL_PER_SEC_MAX - SACRED_CIRCLE_HEAL_PER_SEC_MIN);
-      const healed = Math.min(p.maxHp - p.hp, healPerSec * dt);
-      if (healed <= 0) return;
-      p.hp += healed;
-
-      const carry = (this.sacredHealCarry.get(sid) ?? 0) + healed;
-      if (carry >= 1 || p.hp >= p.maxHp) {
-        const amount = Math.max(1, Math.floor(carry));
-        emitHeal({ targetId: sid, amount });
-        this.sacredHealCarry.set(sid, carry - amount);
-      } else {
-        this.sacredHealCarry.set(sid, carry);
-      }
-    });
+  /** The room capabilities item-use needs (also handed to the bot driver's IO). */
+  private useItemDeps(): UseItemDeps {
+    return {
+      inventories: this.inventories,
+      berserkerBase: this.berserkerBase,
+      sendInventory: (sid) => this.sendInventory(sid),
+      broadcast: (type, payload) => this.broadcast(type, payload),
+    };
   }
 
-  /** Detect La Crypta collapsing (no standing house) and end the realm once. */
-  private checkHomeFall() {
-    if (!scenarioLaCryptaDefenseEnabled(this.scenario)) return;
-    let standing = false;
-    this.state.houses.forEach((h) => {
-      if (h.alive) standing = true;
-    });
-    if (this.homeStanding && !standing) {
-      this.homeStanding = false;
-      this.endRealm();
+  /** The bot driver's IO surface (#68): item use + chat through the room. */
+  private botIO(): BotIO {
+    return {
+      useItem: (botId, slot) => useItemFromSlot(this.state, botId, slot, this.useItemDeps()),
+      inventory: (botId) => this.inventories.get(botId),
+      say: (botId, text) => {
+        const bot = this.state.players.get(botId);
+        if (bot) this.broadcast("chat", { playerId: botId, name: bot.name, text });
+      },
+    };
+  }
+
+  /** The narrow surface the event runtime drives the room through (API 1.1). */
+  private roomBridge(): RoomBridge {
+    return {
+      state: this.state,
+      broadcast: (type, payload) => this.broadcast(type, payload),
+      giveItem: (playerId, item, amount) => {
+        const inv = this.inventories.get(playerId);
+        if (!inv || !this.state.players.has(playerId)) return false;
+        addItem(inv, item as ItemType, amount);
+        this.sendInventory(playerId);
+        return true;
+      },
+      grantXp: (playerId, amount) => {
+        const p = this.state.players.get(playerId);
+        if (!p) return 0;
+        return grantXp(p, amount, (ev) => this.broadcast("xp", ev));
+      },
+      onEventEnd: (outcome) => this.endRealm(outcome),
+    };
+  }
+
+  /** Start (or restart) the realm's event module per the realm.json `events`
+   *  config: explicit module id → the single registered module → the flagship. */
+  private startRealmEvent() {
+    eventRuntime.reset(); // a fresh cycle always starts its event from scratch
+    const cfg = realmEvents();
+    if (!cfg.enabled || !cfg.autoStart) {
+      if (!cfg.enabled) console.log("[events] disabled — open sandbox (no objective, no waves)");
+      return;
     }
+    const registered = [...serverPluginHost.eventModules.keys()];
+    const moduleId =
+      cfg.module ?? (registered.length === 1 ? registered[0] : "la-crypta-defense");
+    if (!serverPluginHost.eventModules.has(moduleId)) {
+      if (registered.length > 0)
+        console.warn(`[events] "${moduleId}" not registered (available: ${registered.join(", ")})`);
+      return;
+    }
+    eventRuntime.start(moduleId, this.roomBridge(), cfg.config);
   }
 
   /**
-   * La Crypta has fallen → the realm is OVER. Every defender falls with it, the
-   * besieging horde is cleared, and a countdown begins (state.restartTimerMs). The
-   * tick freezes all gameplay until it elapses, then startNewRealm() spins up the
-   * next realm. A "wipe" event lets clients flash the defeat banner; the synced
-   * restartTimerMs drives the "next realm in N" overlay on every screen.
+   * The realm's event ended (La Crypta fell) → the realm cycle is OVER. Every
+   * defender falls with it, the besieging horde is cleared, and a countdown
+   * begins (state.restartTimerMs). The tick freezes all gameplay until it
+   * elapses, then startNewRealm() spins up the next realm. A "wipe" event lets
+   * clients flash the defeat banner; the synced restartTimerMs drives the
+   * "next realm in N" overlay on every screen.
    */
-  private endRealm() {
-    const wave = this.state.waveNumber;
+  private endRealm(outcome: EventOutcome) {
+    const wave = Number(outcome.stats?.wave ?? this.state.waveNumber);
     const persist = realmPolicy().progression.persistAcrossWipes;
 
     // Snapshot living progress first — the "realm-end" save is what carries a
@@ -821,6 +826,10 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach((p, sid) => {
       p.hp = 0;
       p.state = AnimState.DEAD;
+      // Pre-mark the death edge: the wipe is a realm event, not a per-player
+      // death — the tick's deaths++ detector must not count it (parity with the
+      // pre-extraction flow, where the intermission froze the detector first).
+      p.prevDead = true;
       p.respawnTimer = 0; // the intermission, not the per-player timer, gates respawn
       p.attackTargetId = "";
       p.pendingHitId = "";
@@ -847,8 +856,18 @@ export class GameRoom extends Room<GameState> {
    * XP, stats and inventory persist; with persistAcrossWipes=false everyone
    * respawns as a fresh level-1 character with a starter inventory (legacy wipe).
    */
+  /** (Re)seed the cycle RNG (scenario/env pin → same seed every cycle → fully
+   *  reproducible runs; otherwise a fresh random seed per realm cycle). */
+  private seedCycleRng() {
+    const { seed, source } = resolveCycleSeed(this.scenario?.seed);
+    seedRng(this.state, seed, source);
+    realmTracker.noteSeed(seed, source);
+    console.log(`[rng] realm cycle seed = ${seed} (source: ${source})`);
+  }
+
   private startNewRealm() {
     this.pendingThrows.clear();
+    this.seedCycleRng(); // a fresh cycle rolls its own dice (unless env/scenario pins them)
     // Restore any live berserker buffs to base stats BEFORE dropping the map —
     // otherwise the buffed attack/maxHp would be baked into persistent stats
     // (drink a potion right before the fall → keep the buff forever).
@@ -864,35 +883,45 @@ export class GameRoom extends Room<GameState> {
     });
     this.berserkerBase.clear();
     this.sacredHealCarry.clear();
-    this.houseRegen.clear();
     this.state.timeScale = 1;
 
     // Regenerate the whole world from scratch: clear runtime entities, rebuild
-    // first-realm resources/pickups, rebuild La Crypta, re-apply authored NPCs,
-    // and restart every wave/spawner interval.
+    // first-realm resources/pickups, re-apply authored NPCs, and restart every
+    // spawner interval. The event module (restarted below) rebuilds its own
+    // objective + wave clock.
     this.state.enemies.clear();
     this.state.houses.clear();
     setRockObstacles([]); // match first-room resource placement before rocks exist
     resetResources(this.state); // trees/rocks rebuilt; dropped logs/stones/items cleared
     spawnInitialPotions(this.state);
     spawnInitialBananas(this.state);
-    applyScenarioWorld(this.state, this.scenario);
     this.refreshRockObstacles(); // rocks are alive again → their collision is back
-    if (scenarioLaCryptaDefenseEnabled(this.scenario)) spawnHouse(this.state);
     syncAuthoredNpcs(this.state);
-    resetWaves(this.state, true);
     resetSpawners();
+    this.state.waveNumber = 0;
+    this.state.waveTimerMs = 0;
+    this.state.waveActive = false;
+    if (this.scenario) {
+      // Re-stage the scenario so a wipe reproduces the exact same lab (the
+      // pinned seed above makes the whole cycle deterministic).
+      applyScenarioWorld(this.state, this.scenario);
+      this.refreshRockObstacles();
+    }
 
     const policy = realmPolicy();
     const persist = policy.progression.persistAcrossWipes;
+    const spawnRoll = rng(this.state, "spawns");
     this.state.players.forEach((p, sid) => {
       resetPlayerForNewRealm(p, persist, devTuning());
       // Respawn ALIVE at a fresh spot. The DEAD→IDLE flip plays the lightning-
       // strike respawn on every client (placeAtFreeSpot sets x/z + targets + path).
-      const angle = Math.random() * Math.PI * 2;
-      const r = 12 + Math.random() * 4;
+      const angle = spawnRoll() * Math.PI * 2;
+      const r = 12 + spawnRoll() * 4;
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
+      // Watermark at the player's ACTUAL level — seeding {level: 1} under
+      // persistence would fire a bogus "level-up" save on the next tick.
+      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: p.level, dead: false });
     });
 
     if (persist && policy.progression.keepInventoryOnWipe) {
@@ -907,18 +936,14 @@ export class GameRoom extends Room<GameState> {
         this.sendInventory(sid);
       });
     }
-    this.inventories.forEach((inv, sid) => {
-      const p = this.state.players.get(sid);
-      if (!p) return;
-      const changed = applyScenarioPlayer(p, inv, this.scenario);
-      if (changed) this.sendInventory(sid);
-      // Watermark at the player's ACTUAL level — seeding {level: 1} under
-      // persistence would fire a bogus "level-up" save on the next tick.
-      if (this.saveTrack.has(sid)) this.saveTrack.set(sid, { level: p.level, dead: false });
-    });
-    this.homeStanding = scenarioLaCryptaDefenseEnabled(this.scenario);
     this.realmTick = 0;
     this.state.restartTimerMs = 0;
+    resetBotPrograms(this.state); // bots survive the wipe like players; programs restart
+
+    // Fresh cycle → the event module starts over (rebuilds La Crypta + the wave
+    // clock) and plugin listeners hear the new realm.
+    this.startRealmEvent();
+    serverPluginHost.fire("realm:start", { eventId: eventRuntime.activeId() }, this.state);
 
     console.log(
       persist
@@ -961,10 +986,10 @@ export class GameRoom extends Room<GameState> {
         this.reportRealm();
         break;
       case "force_next_wave":
-        forceNextWave(this.state);
+        eventRuntime.command("force_next_wave");
         break;
       case "previous_wave":
-        previousWave(this.state);
+        eventRuntime.command("previous_wave");
         break;
       case "kill_all_enemies":
         this.state.enemies.clear();
@@ -1048,11 +1073,12 @@ export class GameRoom extends Room<GameState> {
       p.hue = restore.hue;
       p.state = AnimState.IDLE;
     } else {
-      const angle = Math.random() * Math.PI * 2;
-      const r = 12 + Math.random() * 4; // spawn clear of the centre-cross goblin
+      const spawnRoll = rng(this.state, "spawns");
+      const angle = spawnRoll() * Math.PI * 2;
+      const r = 12 + spawnRoll() * 4; // spawn clear of the centre-cross goblin
       placeAtFreeSpot(p, Math.cos(angle) * r, Math.sin(angle) * r);
       p.rotY = Math.atan2(-p.x, -p.z);
-      p.hue = Math.floor(Math.random() * 360);
+      p.hue = Math.floor(spawnRoll() * 360);
       // Fresh (non-restored) joiners pick up the current tuned starting stats,
       // so Gameplay Options changes apply live without a server restart.
       const tune = devTuning();
@@ -1064,13 +1090,6 @@ export class GameRoom extends Room<GameState> {
       p.moveSpeed = tune.playerMoveSpeed;
     }
 
-    // Inherit the old session's / saved inventory, or start empty.
-    const inv = restore?.inventory ?? makeInventory();
-    if (!restore?.inventory) {
-      addItem(inv, "banana", STARTING_BANANAS);
-    }
-    applyScenarioPlayer(p, inv, this.scenario);
-
     this.state.players.set(client.sessionId, p);
     serverPluginHost.fire(
       "player:spawn",
@@ -1080,8 +1099,26 @@ export class GameRoom extends Room<GameState> {
     this.reportRealm(); // ensure a live realm exists before any immediate save trigger
     realmTracker.noteNpub(p.pubkey); // track the npub in the live realm (no-op for anon / no realm)
 
+    // Inherit the old session's / saved inventory, or start empty.
+    const inv = restore?.inventory ?? makeInventory();
+    if (!restore?.inventory) {
+      addItem(inv, "banana", STARTING_BANANAS);
+    }
+    // A fresh joiner in a scenario gets the manifest's loadout/stats/position
+    // (restored characters keep their own progression — the lab stages new ones).
+    if (this.scenario && !restore) applyScenarioPlayer(p, inv, this.scenario);
     this.inventories.set(client.sessionId, inv);
     client.send("inventory", inv);
+    // Announce the active scenario so Dev Mode pins its tweak knobs (#69).
+    if (this.scenario) {
+      const info: ScenarioInfoMessage = {
+        name: this.scenario.name,
+        description: this.scenario.description,
+        tuning: this.scenario.tuning ?? {},
+        tweaks: this.scenario.tweaks,
+      };
+      client.send("scenario", info);
+    }
 
     // Track this Nostr player's level/death watermark so the tick can persist a
     // save the moment they level up or die.

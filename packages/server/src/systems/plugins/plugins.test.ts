@@ -23,6 +23,7 @@ function makeCtx(): ServerPluginContext {
     registerBrain: (id, fn) => serverPluginHost.registerBrain(id, fn),
     registerItem: (id, behavior) => serverPluginHost.registerItem(id, behavior),
     registerSystem: (name, fn, opts) => serverPluginHost.registerSystem(name, fn, opts?.phase ?? "main"),
+    registerEventModule: (spec) => serverPluginHost.registerEventModule(spec),
     on: (event, handler) => serverPluginHost.on(event, handler),
     registerContentLoader: () => {},
     log: () => {},

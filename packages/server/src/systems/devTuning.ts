@@ -79,6 +79,9 @@ export const devTuningDefaults: DevTuningValues = {
   berserkerAttackMult: BERSERKER_ATTACK_MULT,
   berserkerDurationMs: BERSERKER_DURATION_MS,
   dropRateMult: DROP_RATE_MULT,
+  difficultySizeScale: 1,
+  difficultyLevelScale: 1,
+  difficultyLevelCap: 0,
 };
 
 const rules: Record<DevTuningKey, { min: number; max: number; integer?: boolean }> = {
@@ -119,6 +122,9 @@ const rules: Record<DevTuningKey, { min: number; max: number; integer?: boolean 
   berserkerAttackMult: { min: 1, max: 50 },
   berserkerDurationMs: { min: 0, max: 600_000, integer: true },
   dropRateMult: { min: 0, max: 10 },
+  difficultySizeScale: { min: 0.1, max: 5 },
+  difficultyLevelScale: { min: 0, max: 5 },
+  difficultyLevelCap: { min: 0, max: 200, integer: true },
 };
 
 let current: DevTuningValues = { ...devTuningDefaults };

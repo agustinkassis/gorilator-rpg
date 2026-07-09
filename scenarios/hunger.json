@@ -15,6 +15,10 @@
       { "item": "trail_ration", "x": 6, "z": -1, "count": 1 }
     ]
   },
+  "systems": {
+    "events": false,
+    "spawners": false
+  },
   "player": {
     "position": { "x": 0, "z": 0 },
     "stats": { "hunger": 32, "maxHunger": 100, "hp": 70, "stamina": 55 },

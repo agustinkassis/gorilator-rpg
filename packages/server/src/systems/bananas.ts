@@ -47,6 +47,7 @@ import {
 } from "./resources";
 import type { EmitKill } from "./combat";
 import { devTuning } from "./devTuning";
+import { rng } from "./rng";
 
 /** A banana mid-flight, resolved when its landing time arrives. */
 interface InFlight {
@@ -79,11 +80,12 @@ function getMeta(state: GameState): BananaMeta {
 
 const clamp = (v: number) => Math.max(-WORLD_SIZE, Math.min(WORLD_SIZE, v));
 
-function randomAmbientBananaSpot(): { x: number; z: number } {
+function randomAmbientBananaSpot(state: GameState): { x: number; z: number } {
+  const roll = rng(state, "world");
   for (let i = 0; i < 80; i++) {
     const spot = nearestFreeWorld(
-      (Math.random() * 2 - 1) * BANANA_SPAWN_RANGE,
-      (Math.random() * 2 - 1) * BANANA_SPAWN_RANGE,
+      (roll() * 2 - 1) * BANANA_SPAWN_RANGE,
+      (roll() * 2 - 1) * BANANA_SPAWN_RANGE,
     );
     if (Math.hypot(spot.x, spot.z) >= AMBIENT_ITEM_SPAWN_CLEAR_RADIUS) return spot;
   }
@@ -97,7 +99,7 @@ export function spawnBanana(state: GameState, x?: number, z?: number): Banana {
   const spot =
     x != null && z != null
       ? nearestFreeWorld(x, z)
-      : randomAmbientBananaSpot();
+      : randomAmbientBananaSpot(state);
   b.x = spot.x;
   b.z = spot.z;
   state.bananas.set(b.id, b);
@@ -212,17 +214,18 @@ export function planThrow(
   // character (aim-assist), else the charged-reach spot with a little spread.
   let landX: number;
   let landZ: number;
+  const roll = rng(state, "combat");
   if (target) {
     // home onto the target (tiny jitter, still well inside the hit radius)
-    const j = Math.random() * 0.4;
-    const a = Math.random() * Math.PI * 2;
+    const j = roll() * 0.4;
+    const a = roll() * Math.PI * 2;
     landX = clamp(target.x + Math.cos(a) * j);
     landZ = clamp(target.z + Math.sin(a) * j);
   } else {
     const aimX = owner.x + ux * reach;
     const aimZ = owner.z + uz * reach;
-    const devMag = reach * BANANA_SPREAD * Math.random(); // small spread → accurate
-    const devAng = Math.random() * Math.PI * 2;
+    const devMag = reach * BANANA_SPREAD * roll(); // small spread → accurate
+    const devAng = roll() * Math.PI * 2;
     landX = clamp(aimX + Math.cos(devAng) * devMag);
     landZ = clamp(aimZ + Math.sin(devAng) * devMag);
   }

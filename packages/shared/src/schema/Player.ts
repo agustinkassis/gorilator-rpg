@@ -67,6 +67,18 @@ export class Player extends Schema {
   // can play the green aura + oversized model while the buff is active.
   @type("number") berserkerMs = 0;
 
+  // ---- Phase 3 batched schema change (#72) ----
+  // Reserved synced fields for the abilities/equipment systems (their gameplay
+  // lands in later issues). maxMana 0 = that system is off for this player.
+  // gear* carry item ids so OTHER clients can render visible wearables. Do not
+  // add further @type fields outside a planned batch.
+  @type("number") mana = 0;
+  @type("number") maxMana = 0;
+  @type("string") gearWeapon = "";
+  @type("string") gearHead = "";
+  @type("string") gearChest = "";
+  @type("string") gearBoots = "";
+
   // ---- server-only (not synced) ----
   prevDead = false; // was DEAD last tick — to count each death once on the alive→dead flip
   ghostSpeedMult = 1; // Dev ghost mode: glide-speed multiplier from the client's zoom (server-only)

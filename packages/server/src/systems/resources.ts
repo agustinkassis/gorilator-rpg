@@ -28,6 +28,7 @@ import { devTuning } from "./devTuning";
 import { structureLoot } from "./structureDrops";
 import { entityDrops, entityFeature, entityHp } from "./entityFeatures";
 import { hasCustomItem, spawnCustomItem } from "./items";
+import { rng } from "./rng";
 import type { DropRuleConfig } from "@rpg/shared";
 
 const STONE_GROUP_MIN = 2;
@@ -126,8 +127,9 @@ function rulesFor(kind: string, id?: string, modelId?: string): DropRuleConfig[]
 }
 
 function scatterDrop(state: GameState, item: string, x: number, z: number, radius = 1.5): void {
-  const angle = Math.random() * Math.PI * 2;
-  const r = 0.4 + Math.random() * radius;
+  const roll = rng(state, "world");
+  const angle = roll() * Math.PI * 2;
+  const r = 0.4 + roll() * radius;
   dropItem(state, item, x + Math.cos(angle) * r, z + Math.sin(angle) * r);
 }
 
@@ -143,7 +145,7 @@ export function dropEntityLoot(
   const mult = devTuning().dropRateMult;
   for (const rule of rulesFor(kind, id, modelId)) {
     if (rule.trigger !== "kill") continue;
-    if (Math.random() >= rule.probability * mult) continue;
+    if (rng(state, "drops")() >= rule.probability * mult) continue;
     for (let i = 0; i < rule.quantity; i++) scatterDrop(state, rule.item, x, z, radius);
   }
 }
@@ -176,33 +178,36 @@ export function applyDamageDrops(
     rec![key] = (rec![key] ?? 0) + amount;
     while (rec![key] >= perItem) {
       rec![key] -= perItem;
-      if (Math.random() < rule.probability * devTuning().dropRateMult) scatterDrop(state, rule.item, x, z, radius);
+      if (rng(state, "drops")() < rule.probability * devTuning().dropRateMult)
+        scatterDrop(state, rule.item, x, z, radius);
     }
   });
 }
 
 /** A structure was destroyed: roll its loot table. Each entry is rolled
- *  INDEPENDENTLY (Math.random() < probability) and, on success, drops `amount` of
+ *  INDEPENDENTLY against its probability and, on success, drops `amount` of
  *  its item scattered around the structure's footprint. */
 export function dropStructureLoot(state: GameState, kind: string, x: number, z: number): void {
   const featureLoot = entityDrops(kind);
+  const chance = rng(state, "drops");
+  const scatter = rng(state, "world");
   if (entityFeature(kind).drops !== undefined) {
     for (const e of featureLoot) {
-      if (e.trigger !== "kill" || Math.random() >= e.probability) continue;
+      if (e.trigger !== "kill" || chance() >= e.probability) continue;
       for (let i = 0; i < e.quantity; i++) {
-        const ang = Math.random() * Math.PI * 2;
-        const r = 1 + Math.random() * 3;
+        const ang = scatter() * Math.PI * 2;
+        const r = 1 + scatter() * 3;
         dropItem(state, e.item, x + Math.cos(ang) * r, z + Math.sin(ang) * r);
       }
     }
     return;
   }
   for (const e of structureLoot(kind)) {
-    if (Math.random() >= e.probability) continue;
+    if (chance() >= e.probability) continue;
     const n = Math.max(0, Math.round(e.amount));
     for (let i = 0; i < n; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 1 + Math.random() * 3; // scatter around the structure footprint
+      const ang = scatter() * Math.PI * 2;
+      const r = 1 + scatter() * 3; // scatter around the structure footprint
       dropItem(state, e.item, x + Math.cos(ang) * r, z + Math.sin(ang) * r);
     }
   }
@@ -219,9 +224,10 @@ function getSeq(state: GameState) {
   return s;
 }
 
-function scatterFree(range: number): { x: number; z: number } {
-  const x = (Math.random() * 2 - 1) * range;
-  const z = (Math.random() * 2 - 1) * range;
+function scatterFree(state: GameState, range: number): { x: number; z: number } {
+  const roll = rng(state, "world");
+  const x = (roll() * 2 - 1) * range;
+  const z = (roll() * 2 - 1) * range;
   return nearestFreeWorld(x, z); // keep clear of boulders/crates
 }
 
@@ -231,7 +237,7 @@ export function spawnTrees(state: GameState) {
   let guard = 0;
   while (placed < TREE_COUNT && guard < TREE_COUNT * 12) {
     guard++;
-    const spot = scatterFree(TREE_SPAWN_RANGE);
+    const spot = scatterFree(state, TREE_SPAWN_RANGE);
     let tooClose = false;
     state.trees.forEach((t) => {
       if ((t.x - spot.x) ** 2 + (t.z - spot.z) ** 2 < 3.5 * 3.5) tooClose = true;
@@ -253,8 +259,9 @@ export function spawnTrees(state: GameState) {
 
 /** Drop one of the configured item near a tree (within easy reach of the stump). */
 function dropFromTree(state: GameState, tree: Tree, item: string) {
-  const ang = Math.random() * Math.PI * 2;
-  const r = 0.8 + Math.random() * 0.9;
+  const roll = rng(state, "world");
+  const ang = roll() * Math.PI * 2;
+  const r = 0.8 + roll() * 0.9;
   dropItem(state, item, tree.x + Math.cos(ang) * r, tree.z + Math.sin(ang) * r);
 }
 
@@ -276,7 +283,7 @@ export function onTreeDamaged(state: GameState, tree: Tree, amount: number) {
   tree.damageSinceDrop += amount;
   while (tree.damageSinceDrop >= perItem) {
     tree.damageSinceDrop -= perItem;
-    if (Math.random() < cfg.probability) dropFromTree(state, tree, cfg.item);
+    if (rng(state, "drops")() < cfg.probability) dropFromTree(state, tree, cfg.item);
   }
 }
 
@@ -297,9 +304,10 @@ export function onTreeCut(state: GameState, tree: Tree) {
   }
   if (cfg.trigger !== "kill") return;
   const n = Math.max(0, Math.round(cfg.amount));
+  const roll = rng(state, "world");
   for (let i = 0; i < n; i++) {
-    const angle = (i / Math.max(1, n)) * Math.PI * 2 + Math.random();
-    const r = 0.8 + Math.random() * 0.9;
+    const angle = (i / Math.max(1, n)) * Math.PI * 2 + roll();
+    const r = 0.8 + roll() * 0.9;
     dropItem(state, cfg.item, tree.x + Math.cos(angle) * r, tree.z + Math.sin(angle) * r);
   }
 }
@@ -336,22 +344,24 @@ export function spawnRocks(state: GameState) {
 
 /** Drop one of the configured item just outside a rock's body (within reach). */
 function dropFromRock(state: GameState, rock: Rock, item: string) {
-  const angle = Math.random() * Math.PI * 2;
+  const roll = rng(state, "world");
+  const angle = roll() * Math.PI * 2;
   // drop close to the rock's base (just outside its shrunken collision) so the
   // items land within the player's reach instead of scattering out of range.
-  const r = rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
+  const r = rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.5 + roll() * 0.5;
   dropItem(state, item, rock.x + Math.cos(angle) * r, rock.z + Math.sin(angle) * r);
 }
 
 /** Drop a clustered burst of stones around one reachable point at a rock's base. */
 function dropStoneGroupFromRock(state: GameState, rock: Rock, count: number) {
-  const angle = Math.random() * Math.PI * 2;
-  const r = rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.5 + Math.random() * 0.5;
+  const roll = rng(state, "world");
+  const angle = roll() * Math.PI * 2;
+  const r = rock.radius * (rock.scale || 1) * ROCK_COLLISION_SCALE + 0.5 + roll() * 0.5;
   const cx = rock.x + Math.cos(angle) * r;
   const cz = rock.z + Math.sin(angle) * r;
   for (let i = 0; i < count; i++) {
-    const spreadAngle = Math.random() * Math.PI * 2;
-    const spread = Math.random() * 0.75;
+    const spreadAngle = roll() * Math.PI * 2;
+    const spread = roll() * 0.75;
     dropItem(state, "stone", cx + Math.cos(spreadAngle) * spread, cz + Math.sin(spreadAngle) * spread);
   }
 }
@@ -385,7 +395,7 @@ export function onRockDamaged(state: GameState, rock: Rock, amount: number) {
   while (ready >= STONE_GROUP_MIN) {
     const group = Math.min(
       ready,
-      STONE_GROUP_MIN + Math.floor(Math.random() * (STONE_GROUP_MAX - STONE_GROUP_MIN + 1)),
+      STONE_GROUP_MIN + Math.floor(rng(state, "drops")() * (STONE_GROUP_MAX - STONE_GROUP_MIN + 1)),
     );
     rock.damageSinceStone -= perItem * group;
     ready -= group;

@@ -26,6 +26,7 @@ import {
   NOSTR_TAKEOVER_CODE,
   type DevActionId,
   type DevTuningKey,
+  type ScenarioInfoMessage,
 } from "@rpg/shared";
 
 export interface NetHandlers {
@@ -70,6 +71,7 @@ export interface NetHandlers {
   onXp(ev: XpEvent): void;
   onChat(ev: ChatEvent): void;
   onInventory(slots: InventorySlot[]): void;
+  onScenario?(info: ScenarioInfoMessage): void; // Feature Lab: the active scenario + its tweak knobs
   onWipe(ev: { wave: number; persist?: boolean }): void; // La Crypta fell → realm resets (persist = progression kept)
   onError(message: string): void;
   onKill(ev: KillEvent): void;
@@ -111,6 +113,10 @@ export class NetworkClient {
   private client: Client;
   private endpoint: string;
   room?: Room<GameState>;
+  /** Set while a dev_scenario switch is in flight: the server recycles the room,
+   *  so the resulting leave should RELOAD (the URL keeps ?scenario=) not toast. */
+  private switchingScenario = false;
+
   /** Set during an intentional logout so onLeave doesn't flash a "disconnected" toast. */
   private leaving = false;
   /** In-flight nostr_upgrade round-trips, keyed by request id (so concurrent
@@ -163,7 +169,7 @@ export class NetworkClient {
 
   async connect(
     handlers: NetHandlers,
-    options: { name?: string; nostr?: NostrAuthPayload } = {},
+    options: { name?: string; nostr?: NostrAuthPayload; scenario?: string } = {},
   ): Promise<void> {
     let phase = "join room";
     try {
@@ -354,6 +360,11 @@ export class NetworkClient {
       room.onMessage("banana_throw", (ev: BananaThrowEvent) => handlers.onBananaThrow(ev));
       room.onMessage("chat", (ev: ChatEvent) => handlers.onChat(ev));
       room.onMessage("inventory", (slots: InventorySlot[]) => handlers.onInventory(slots));
+      room.onMessage("scenario", (info: ScenarioInfoMessage) => handlers.onScenario?.(info));
+      room.onMessage("dev_scenario_error", (ev: { name?: string }) => {
+        this.switchingScenario = false;
+        handlers.onError(`scenario "${ev?.name ?? "?"}" not found on this server`);
+      });
       room.onMessage("wipe", (ev: { wave: number; persist?: boolean }) => handlers.onWipe(ev));
       room.onMessage("nostr_upgrade_result", (res: { id?: string; ok: boolean; error?: string }) => {
         const p = this.upgradeResolvers.get(res.id ?? "");
@@ -374,6 +385,12 @@ export class NetworkClient {
           p.reject(new Error("disconnected"));
         }
         this.upgradeResolvers.clear();
+        if (this.switchingScenario) {
+          // The room was recycled for a scenario switch — rejoin the freshly
+          // staged room (the URL still carries ?scenario=).
+          window.location.reload();
+          return;
+        }
         if (this.leaving) return; // intentional logout — no toast
         // The server kicks this session when the same npub logs in elsewhere.
         handlers.onError(
@@ -484,10 +501,32 @@ export class NetworkClient {
     this.room?.send("dev_tune", { key, value });
   }
 
+  /** Spawn/clear scripted bot players (Feature Lab #68; devSender-gated). */
+  sendDevBot(op: "spawn" | "clear", behavior?: string, count?: number) {
+    this.room?.send("dev_bot", { op, behavior, count });
+  }
+
+  /** Switch the running room to another Feature Lab scenario (devSender-gated).
+   *  The server recycles the room; our onLeave reloads into the new lab. */
+  switchScenario(name: string) {
+    this.switchingScenario = true;
+    this.room?.send("dev_scenario", { name });
+    // On a locked-down server the message is silently denied — don't leave the
+    // reload trap armed for an unrelated disconnect minutes later.
+    window.setTimeout(() => {
+      this.switchingScenario = false;
+    }, 10_000);
+  }
+
   // ---- Admin (Esc menu → Admin; the server enforces the ADMIN_NPUBS allowlist) ----
   /** Stop/resume the tower-defense wave clock. */
   sendAdminWaves(enabled: boolean) {
     this.room?.send("admin_waves", { enabled });
+  }
+
+  /** Kick a player or scripted bot out of the realm (big map → player list). */
+  sendAdminKick(playerId: string) {
+    this.room?.send("admin_kick", { playerId });
   }
 
   /** Switch one spawners.json spawner on/off at runtime. */

@@ -44,7 +44,7 @@
     "intervalMs": 17000,
     "cap": 3,
     "behavior": {
-      "brain": "attacks_home",
+      "brain": "war_seeker",
       "stats": {
         "maxHp": 2000
       },
@@ -72,7 +72,7 @@
     "intervalMs": 230000,
     "cap": 3,
     "behavior": {
-      "brain": "attacks_home",
+      "brain": "war_seeker",
       "stats": {}
     }
   }

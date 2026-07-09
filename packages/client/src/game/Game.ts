@@ -794,6 +794,7 @@ export class Game {
   /** Receive the loaded house glb handle (so we can hide it when it collapses). */
   setHouseModel(model: HouseModel | null) {
     this.houseModel = model;
+    if (!this.houses.has("house-0")) this.houseModel?.hide();
   }
 
   /** Toggle house model picking. Normal play leaves it off while graphics are debugged. */

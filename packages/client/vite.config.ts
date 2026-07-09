@@ -1377,6 +1377,75 @@ function classifyGlb(file: string): { kind: "base" | "anim"; clip: string } {
  *   POST /__props/delete  json {id, deleteFile?}        → drop an entry (+ maybe its file)
  *   GET  /__props/models                                → list every available .glb
  */
+/**
+ * Feature Lab endpoints (#69): serve scenario manifests to the Dev Mode tweaks
+ * panel and BAKE tuned values back into the repo-root realm.json `tuning` block
+ * (read-merge-write of that one key; fixed path — no client-supplied paths).
+ * Dev-only by construction: Vite middlewares never exist in prod builds.
+ */
+function scenarioLab(): Plugin {
+  return {
+    name: "rpg-scenario-lab",
+    configureServer(server: ViteDevServer) {
+      const repoRoot = resolve(server.config.root, "..", "..");
+
+      // ---- get: one manifest, for client tooling ----
+      server.middlewares.use("/__scenario/get", (req, res) => {
+        const url = new URL(req.url || "", "http://localhost");
+        const name = String(url.searchParams.get("name") || "");
+        if (!/^[a-zA-Z0-9._-]+$/.test(name)) return fail(res, 400, "bad name");
+        const file = resolve(repoRoot, "scenarios", `${name}.json`);
+        if (!existsSync(file)) return fail(res, 404, "not found");
+        try {
+          sendJson(res, JSON.parse(readFileSync(file, "utf8")));
+        } catch (e) {
+          fail(res, 500, String(e));
+        }
+      });
+
+      // ---- bake: persist tuned values into realm.json { tuning } ----
+      server.middlewares.use("/__scenario/bake", (req, res) => {
+        if (req.method !== "POST") return fail(res, 405, "POST only");
+        void collectBody(req).then((buf) => {
+          try {
+            const body = JSON.parse(buf.toString("utf8")) as {
+              scenario?: string;
+              tuning?: Record<string, unknown>;
+            };
+            const tuning = body?.tuning;
+            if (!tuning || typeof tuning !== "object") return fail(res, 400, "tuning object required");
+            const entries = Object.entries(tuning).filter(
+              ([k, v]) => /^[a-zA-Z][a-zA-Z0-9]{0,47}$/.test(k) && Number.isFinite(Number(v)),
+            );
+            if (entries.length === 0 || entries.length > 64)
+              return fail(res, 400, "1..64 finite tuning values required");
+            const realmFile = resolve(repoRoot, "realm.json");
+            const realm = existsSync(realmFile)
+              ? (JSON.parse(readFileSync(realmFile, "utf8")) as Record<string, unknown>)
+              : {};
+            const merged = { ...((realm.tuning as Record<string, unknown>) ?? {}) };
+            const baked: Record<string, number> = {};
+            for (const [k, v] of entries) {
+              merged[k] = Number(v);
+              baked[k] = Number(v);
+            }
+            realm.tuning = merged;
+            writeFileSync(realmFile, `${JSON.stringify(realm, null, 2)}\n`);
+            sendJson(res, {
+              ok: true,
+              file: "realm.json",
+              scenario: String(body?.scenario ?? ""),
+              tuning: baked,
+            });
+          } catch (e) {
+            fail(res, 500, String(e));
+          }
+        });
+      });
+    },
+  };
+}
+
 function modelImporter(): Plugin {
   return {
     name: "rpg-model-importer",
@@ -2432,7 +2501,7 @@ export default defineConfig(({ command }) => {
       __WORKTREE_LABEL__: JSON.stringify(worktree.label),
       __WORKTREE_FULL_LABEL__: JSON.stringify(worktree.fullLabel),
     },
-    plugins: [modelImporter(), perfLogs(), worktreeTagger(), pluginBundler(resolve(configDir, "..", ".."))],
+    plugins: [modelImporter(), scenarioLab(), perfLogs(), worktreeTagger(), pluginBundler(resolve(configDir, "..", ".."))],
     server: {
       port: Number(process.env.CLIENT_PORT) || 5173,
       strictPort: true,

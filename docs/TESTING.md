@@ -1,6 +1,6 @@
 # Testing
 
-Four layers, all wired into `turbo` (cached — unchanged packages skip) and CI.
+Five layers, all wired into `turbo` (cached — unchanged packages skip) and CI.
 
 ## 1. Unit tests (Vitest)
 
@@ -18,11 +18,35 @@ pnpm --filter @rpg/server exec vitest   # watch mode for one package
 - Decorator-free shared modules (`perf.ts`, `obstacles.ts`, `entityFeatures.ts`)
   are imported from source.
 - `combat.test.ts` / `movement.test.ts` are **characterization tests**: they pin
-  the damage formula, windup flow, movement and spawn keep-out behavior
-  (`Math.random` is mocked for determinism). If you intentionally change game
-  balance, update them in the same PR.
-- The plugin seam is covered by `packages/server/src/systems/plugins/plugins.test.ts`,
-  which loads the worked-example plugin against the real host registries.
+  the damage formula, windup flow, movement and spawn keep-out behavior. If you
+  intentionally change game balance, update them in the same PR.
+- **Determinism**: gameplay rolls go through the seeded RNG service
+  ([engineering.md](engineering.md) §3) — tests pin every roll with
+  `installFixedRng(state, 0.5)` instead of spying on `Math.random` (a guard
+  test in `rng.test.ts` rejects new `Math.random` calls in gameplay code).
+- The plugin seam is covered by `packages/server/src/systems/plugins/plugins.test.ts`
+  (worked-example plugin against the real host registries), the event-module
+  runtime by `plugins/events.test.ts`, and the extracted La Crypta Defense by
+  the wave/house characterization suites, which drive the plugin through the
+  real `EventRuntime`.
+
+## 1½. Headless scenario tests (bot self-tests)
+
+The Feature Lab layer between unit and e2e ([feature-lab.md](feature-lab.md)):
+`createScenarioSim` (packages/server/src/testing/scenarioSim.ts) composes the
+REAL systems in GameRoom tick order — no Colyseus, no ports — so a scenario +
+bots + assertions is a plain Vitest case:
+
+```ts
+const sim = createScenarioSim({ scenario: loadScenario("bot-arena")! });
+sim.runUntil((state) => allEnemiesDead(state));
+expect(countItem(sim.inventories.get(botId)!, "banana")).toBe(3);
+sim.dispose(); // ALWAYS — devTuning/realmEvents are module-global
+```
+
+Template: `packages/server/src/systems/bots/botArena.test.ts` (includes a
+same-seed reproducibility proof). This is the "bot self-test" artifact of every
+feature's Definition of Done.
 
 ## 2. E2E (Playwright)
 

@@ -18,7 +18,7 @@ import { adminCount, isAdmin, listAdminNpubs } from "./systems/admins";
 import { requireAdmin, verifyNip98, type AdminRequest } from "./systems/nip98";
 import { canSelfUpdate, startSelfUpdate } from "./systems/selfUpdate";
 import { createDevEditorRouter } from "./dev/editorApi";
-import { loadScenarioFromEnv, scenarioSummary } from "./systems/scenario";
+import { getActiveScenario, scenarioSummary } from "./systems/scenario";
 
 // Resolve (or generate) the server's Nostr key up-front, so the npub — and the
 // "no NOSTR_NSEC set" warning, if any — prints once at startup rather than on
@@ -83,7 +83,7 @@ app.get("/nostr/challenge", (_req, res) => {
 //  GET /api/realm  — the current realm to join (+ players already in it)
 app.get("/api/status", (_req, res) => res.json(realmTracker.status()));
 app.get("/api/realm", (_req, res) => res.json(realmTracker.realm()));
-app.get("/api/scenario", (_req, res) => res.json(scenarioSummary(loadScenarioFromEnv())));
+app.get("/api/scenario", (_req, res) => res.json(scenarioSummary(getActiveScenario())));
 
 // Live server performance snapshot (latest tick + a 5s rolling summary + per-system
 // span times). The F3 perf overlay polls this; also handy with curl/jq. See
