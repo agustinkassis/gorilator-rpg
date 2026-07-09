@@ -23,6 +23,7 @@ import { addItem } from "./inventory";
 import { placeAtFreeSpot } from "./movement";
 import { nearestFreeWorld } from "./pathfinding";
 import { entityHp } from "./entityFeatures";
+import { setRealmPolicy } from "./policy";
 import { dropConfig } from "./resourceDrops";
 import { setRealmEvents } from "./realm";
 import { dropItem } from "./resources";
@@ -158,6 +159,21 @@ export function loadScenario(name: string): ScenarioManifest | null {
  *  applyRealmConfig (the scenario wins over realm.json; GORILATOR_TEST and live
  *  dev_tune still win over the scenario). */
 export function applyScenarioConfig(state: GameState, m: ScenarioManifest): void {
+  if (m.policy) {
+    const applied = setRealmPolicy(m.policy);
+    console.log(
+      `[scenario] policy: death=${applied.death.mode} (xpPenalty=${applied.death.xpPenalty}) ` +
+        `persistAcrossWipes=${applied.progression.persistAcrossWipes} ` +
+        `keepInventoryOnWipe=${applied.progression.keepInventoryOnWipe}`,
+    );
+  }
+  if (m.events) {
+    const applied = setRealmEvents(m.events);
+    console.log(
+      `[scenario] events: enabled=${applied.enabled} autoStart=${applied.autoStart}` +
+        (applied.module ? ` module=${applied.module}` : ""),
+    );
+  }
   for (const [key, value] of Object.entries(m.tuning ?? {})) {
     const applied = setDevTuning(key as DevTuningKey, Number(value));
     if (applied === null) console.warn(`[scenario] unknown tuning key "${key}" — ignored`);

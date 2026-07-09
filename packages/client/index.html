@@ -531,12 +531,23 @@
         z-index: 40;
         user-select: none;
       }
+      #xpBar.loss {
+        border-color: rgba(255, 70, 44, 0.88);
+        box-shadow:
+          0 2px 10px rgba(0, 0, 0, 0.55),
+          0 0 18px rgba(255, 45, 28, 0.5),
+          inset 0 0 10px rgba(255, 70, 44, 0.4);
+      }
       #xpFill {
         height: 100%;
         width: 0%;
         background: linear-gradient(180deg, #8fe0ff 0%, #36a0e0 55%, #1f78bd 100%);
         box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.4);
         transition: width 0.25s ease;
+      }
+      #xpFill.loss {
+        background: linear-gradient(180deg, #ffcf8f 0%, #ff654d 52%, #b8241f 100%);
+        transition: width 0.95s cubic-bezier(0.16, 1, 0.3, 1);
       }
       #xpText {
         position: absolute;
@@ -565,11 +576,37 @@
       #xpLevelUp.show {
         animation: levelUpPop 1.4s ease-out;
       }
+      #xpLossAlert {
+        position: fixed;
+        bottom: 72px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 14px;
+        border: 1px solid rgba(255, 103, 79, 0.72);
+        border-radius: 8px;
+        background: rgba(40, 10, 8, 0.86);
+        color: #ffb39f;
+        font: 900 18px/1 system-ui, sans-serif;
+        text-shadow: 0 1px 3px #000, 0 0 12px rgba(255, 60, 40, 0.7);
+        letter-spacing: 0.5px;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 42;
+      }
+      #xpLossAlert.show {
+        animation: xpLossPop 1.35s ease-out;
+      }
       @keyframes levelUpPop {
         0% { opacity: 0; transform: translateX(-50%) scale(0.6) translateY(10px); }
         20% { opacity: 1; transform: translateX(-50%) scale(1.12) translateY(0); }
         70% { opacity: 1; transform: translateX(-50%) scale(1) translateY(-6px); }
         100% { opacity: 0; transform: translateX(-50%) scale(1) translateY(-24px); }
+      }
+      @keyframes xpLossPop {
+        0% { opacity: 0; transform: translateX(-50%) scale(0.92) translateY(10px); }
+        16% { opacity: 1; transform: translateX(-50%) scale(1.04) translateY(0); }
+        74% { opacity: 1; transform: translateX(-50%) scale(1) translateY(-4px); }
+        100% { opacity: 0; transform: translateX(-50%) scale(0.98) translateY(-18px); }
       }
 
       /* ---- Stamina bar (green; sits just above the Q/W/E/R hotkey bar) ---- */
@@ -725,6 +762,7 @@
       body.preGame #staminaBar,
       body.preGame #hungerBar,
       body.preGame #xpLevelUp,
+      body.preGame #xpLossAlert,
       body.preGame #playerBadge,
       body.preGame #invBtn,
       body.preGame #invPanel,
@@ -747,6 +785,7 @@
       body.devMode #xpBar,
       body.devMode #hungerBar,
       body.devMode #xpLevelUp,
+      body.devMode #xpLossAlert,
       body.devMode #rpgMiniMap,
       body.devMode #playerBadge,
       body.devMode #respawnOverlay { display: none !important; }
@@ -2781,6 +2820,7 @@
       <div id="xpText">Lv. 1 · 0 / 100 XP</div>
     </div>
     <div id="xpLevelUp">LEVEL UP!</div>
+    <div id="xpLossAlert">EXP lost</div>
     <button id="invBtn" class="hudIconBtn">Inventory (I)</button>
     <div id="invPanel">
       <div id="invTitle">Inventory</div>

@@ -63,6 +63,9 @@ Worked examples that define the bar (in [scenarios/](../scenarios/README.md)):
   `botArena.test.ts` is the headless template every feature copies.
 - **`scenarios/hunger.json`** — Hunger Lab: no realm event or ambient spawners,
   a cranberry bush resource, staged food, and survival food multipliers pinned.
+- **`scenarios/death-penalty-l10.json`** — starts a fresh player at level 10
+  with 1200 XP progress and a close goblin pack so death drains the XP bar and
+  reports the exact EXP loss.
 - **`scenarios/wave-siege.json`** — the La Crypta Defense event with the
   difficulty knobs (#64) pinned for slider tuning.
 - **`scenarios/baseline.json`** — the empty-sandbox e2e smoke stage.

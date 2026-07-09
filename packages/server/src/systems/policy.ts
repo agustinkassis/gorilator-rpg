@@ -1,4 +1,9 @@
-import { XP_DEATH_PENALTY } from "@rpg/shared";
+import {
+  REALM_DEATH_MODES,
+  XP_DEATH_PENALTY,
+  type RealmDeathMode,
+  type RealmPolicy,
+} from "@rpg/shared";
 
 /**
  * Realm policy — the death/progression rules an operator sets in realm.json:
@@ -16,24 +21,8 @@ import { XP_DEATH_PENALTY } from "@rpg/shared";
  * module-level current value + sanitize-on-set + reset for tests.
  */
 
-export type DeathMode = "none" | "xp-penalty" | "hardcore";
-
-export interface RealmPolicy {
-  death: {
-    /** What dying costs: nothing, a slice of total XP, or the whole character. */
-    mode: DeathMode;
-    /** Fraction of TOTAL XP lost in "xp-penalty" mode (0..1). */
-    xpPenalty: number;
-  };
-  progression: {
-    /** Keep level/XP/stats when the realm wipes (La Crypta falls). */
-    persistAcrossWipes: boolean;
-    /** Keep inventories across a wipe (only meaningful with persistAcrossWipes). */
-    keepInventoryOnWipe: boolean;
-  };
-}
-
-const DEATH_MODES: readonly DeathMode[] = ["none", "xp-penalty", "hardcore"];
+export type DeathMode = RealmDeathMode;
+export type { RealmPolicy };
 
 export const defaultRealmPolicy: RealmPolicy = {
   death: { mode: "xp-penalty", xpPenalty: XP_DEATH_PENALTY },
@@ -60,8 +49,8 @@ export function setRealmPolicy(raw: unknown): RealmPolicy {
     if (death && typeof death === "object") {
       const d = death as Record<string, unknown>;
       if (d.mode !== undefined) {
-        if (typeof d.mode === "string" && (DEATH_MODES as readonly string[]).includes(d.mode)) {
-          next.death.mode = d.mode as DeathMode;
+        if (typeof d.mode === "string" && (REALM_DEATH_MODES as readonly string[]).includes(d.mode)) {
+          next.death.mode = d.mode as RealmDeathMode;
         } else {
           console.warn(`[policy] unknown death.mode ${JSON.stringify(d.mode)} — using "${next.death.mode}"`);
         }

@@ -53,6 +53,7 @@ pnpm scenario <name>      # boots the dev stack with scenarios/<name>.json layer
 | --- | --- |
 | `baseline.json` | An empty sandbox (events off) — the e2e/bot smoke stage. |
 | `hunger.json` | Hunger drain + food use with a cranberry bush resource near spawn. |
+| `death-penalty-l10.json` | A level-10 player and close goblin pack for visual XP-loss/de-level testing. |
 | `wave-siege.json` | The La Crypta Defense event with the difficulty knobs pinned (#64). |
 | `bot-arena.json` | The bot driver's own self-test: an aggro bot clears staged goblins, a loot bot collects the drops. |
 

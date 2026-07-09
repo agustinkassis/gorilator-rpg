@@ -331,6 +331,10 @@ export interface ScenarioManifest {
   description?: string;
   /** Pins the realm-cycle RNG seed → fully reproducible runs. */
   seed?: number;
+  /** Optional realm-policy overlay for death/progression tests. */
+  policy?: import("./realmConfig").RealmPolicyConfig;
+  /** Optional event overlay, same shape as realm.json events. */
+  events?: import("./realmConfig").RealmEventsConfig;
   world?: {
     /** "tree" | "rock" | "bush" staged at exact spots (v1). */
     resources?: {
@@ -355,6 +359,8 @@ export interface ScenarioManifest {
     /** Legacy v1 sandbox toggles accepted by the loader. Prefer systems.events/spawners. */
     clearPickups?: boolean;
     wavesEnabled?: boolean;
+    waves?: boolean;
+    homeObjective?: boolean;
     laCryptaDefense?: boolean;
     spawnersEnabled?: boolean;
   };

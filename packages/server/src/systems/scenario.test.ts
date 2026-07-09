@@ -2,6 +2,7 @@ import { GameState, Player, type ScenarioManifest, TIME_SCALE_MAX } from "@rpg/s
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { devTuning, resetDevTuning, setDevTuning } from "./devTuning";
 import { makeInventory } from "./inventory";
+import { realmPolicy, resetRealmPolicy } from "./policy";
 import { realmEvents, resetRealmEvents, setRealmEvents } from "./realm";
 import { installFixedRng } from "./rng";
 import {
@@ -24,11 +25,13 @@ function freshState(): GameState {
 describe("scenario loader (#65)", () => {
   beforeEach(() => {
     resetDevTuning();
+    resetRealmPolicy();
     resetRealmEvents();
   });
   afterEach(() => {
     setActiveScenario(null);
     resetDevTuning();
+    resetRealmPolicy();
     resetRealmEvents();
   });
 
@@ -174,5 +177,34 @@ describe("scenario loader (#65)", () => {
     applyScenarioPlayer(p, makeInventory(), m);
     expect(p.godMode).toBe(false);
     expect(p.isAdmin).toBe(false);
+  });
+
+  it("loads the death penalty lab with policy, staged player stats, and goblins", () => {
+    const state = freshState();
+    const m = loadScenario("death-penalty-l10");
+    expect(m).not.toBeNull();
+
+    applyScenarioConfig(state, m!);
+    applyScenarioWorld(state, m!);
+    const p = new Player();
+    p.id = "p1";
+    const inv = makeInventory();
+    applyScenarioPlayer(p, inv, m!);
+
+    expect(realmPolicy().death.xpPenalty).toBe(0.12);
+    expect(realmEvents().enabled).toBe(false);
+    expect(devTuning().enemyAttack).toBe(240);
+    expect(state.wavesEnabled).toBe(false);
+    expect(p.level).toBe(10);
+    expect(p.xp).toBe(1200);
+    expect(p.hp).toBe(260);
+    expect(p.maxHp).toBe(400);
+    expect(state.enemies.size).toBe(5);
+    state.enemies.forEach((enemy) => {
+      expect(enemy.kind).toBe("goblin");
+      expect(enemy.level).toBe(12);
+      expect(enemy.brain).toBe("war_seeker");
+      expect(enemy.attack).toBeGreaterThan(80);
+    });
   });
 });

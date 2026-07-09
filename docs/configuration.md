@@ -8,6 +8,11 @@ and **runtime JSON files** (live-reloaded content).
 > The `realm.json` `policy` block decides what death costs (`none` / `xp-penalty` /
 > `hardcore`) and whether progression + inventory persist across realm resets
 > (both default to **on**: level persists, death hurts but does not erase).
+>
+> `realm.json` is typed by `RealmConfig` in
+> `packages/shared/src/realmConfig.ts`. `pnpm typecheck` runs
+> `scripts/check-realm.mjs`, so an invalid `realm.json` or Feature Lab scenario
+> overlay fails the normal typecheck gate.
 
 The committed default `realm.json` starts an **open sandbox**:
 
@@ -91,7 +96,76 @@ the section comments in the file:
 > touch *that* install's tunnel. The **permanent** (named) tunnel still uses the single shared
 > `cloudflared` system service — one permanent tunnel per machine — but is tracked the same way.
 
-## 3. Runtime content files (live-reloaded JSON)
+## 3. `realm.json` — typed per-realm config
+
+`realm.json` lives at the repo root and is the fork-safe place to change realm
+identity, plugin toggles, startup tuning, and death/progression policy. It is
+optional: if the file is absent, stock behavior is used.
+
+The TypeScript source of truth is `RealmConfig` in
+`packages/shared/src/realmConfig.ts`; the mandatory JSON check is
+`scripts/check-realm.mjs`. The checker runs before every root `pnpm typecheck`
+and validates both:
+
+- `realm.json`, when present.
+- `scenarios/*.json`, as Feature Lab overlays that reuse the same `plugins`,
+  `tuning`, and `policy` blocks.
+
+```json
+{
+  "name": "my-realm",
+  "plugins": { "disabled": ["example-arena"] },
+  "tuning": {
+    "waveSizeBase": 8,
+    "playerMaxHp": 150,
+    "dropRateMult": 1.25
+  },
+  "policy": {
+    "death": { "mode": "xp-penalty", "xpPenalty": 0.3 },
+    "progression": {
+      "persistAcrossWipes": true,
+      "keepInventoryOnWipe": true
+    }
+  }
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | Display/logging name for this realm config. |
+| `plugins.disabled` | string[] | Plugin names to disable without deleting them. |
+| `tuning` | object | Partial map of `DevTuningKey` -> finite number. Seeds the live Gameplay Options knobs at room creation. |
+| `policy.death.mode` | `"none"` / `"xp-penalty"` / `"hardcore"` | Death behavior. Default is `"xp-penalty"`. |
+| `policy.death.xpPenalty` | number | Fraction of total XP lost in `"xp-penalty"` mode. Runtime clamps to `[0, 1]`; config validation only requires a finite number. |
+| `policy.progression.persistAcrossWipes` | boolean | Keep level/XP/stats when a realm resets. Default `true`. |
+| `policy.progression.keepInventoryOnWipe` | boolean | Keep inventory across a reset. Only meaningful while progression persists. Default `true`. |
+
+Allowed `tuning` keys are the live Gameplay Options keys exported as
+`REALM_TUNING_KEYS`: wave pacing and size, live enemy cap, player/enemy combat
+timings, aggro/deaggro/range, damage divisor, player stats, enemy stats,
+berserker values, movement/sprint speed, respawn time, and `dropRateMult`.
+
+The checker is intentionally stricter than the runtime sanitizer. Unknown
+top-level keys, unknown tuning keys, wrong container types, non-boolean
+progression flags, invalid death modes, and non-finite numbers fail
+`pnpm typecheck`. The server still sanitizes at runtime so a hand-edited file
+cannot crash a room, but CI should catch bad config before it ships.
+
+Feature Lab scenario manifests extend this shape with scenario-only fields:
+`description`, `seed`, `timeScale`, `world`, `player`, `systems`, `tweaks`, and
+`bots`. Their `events`, `policy`, and `tuning` blocks use the exact same rules.
+The typed staging fields are defined by `ScenarioManifest`: `player.stats`,
+`player.loadout`, `player.position`, `world.resources`, `world.groundItems`,
+`world.npcs`, `world.enemies`, and the `systems` toggles used by the scenario
+loader.
+
+When extending this config type, update all four pieces together:
+`packages/shared/src/realmConfig.ts` for the TypeScript surface,
+`scripts/check-realm.mjs` for JSON validation, the server loader that consumes
+the field, and this section. If the new field belongs in Feature Lab overlays,
+add it to `ScenarioManifest` and the scenario branch of the checker too.
+
+## 4. Runtime content files (live-reloaded JSON)
 
 These let you edit the world without recompiling — most are written by **Dev Mode** /
 the in-game importers and re-read on change. They live in `packages/client/public/`.

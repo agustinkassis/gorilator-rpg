@@ -4,6 +4,7 @@ export * from "./difficulty";
 export * from "./obstacles";
 export * from "./perf";
 export * from "./entityFeatures";
+export * from "./realmConfig";
 export * from "./plugin";
 export * from "./schema/Player";
 export * from "./schema/Enemy";

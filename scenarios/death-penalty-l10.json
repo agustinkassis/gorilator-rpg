@@ -1,0 +1,47 @@
+{
+  "name": "death-penalty-l10",
+  "description": "Death penalty lab: spawn a level 10 player with 1200 XP progress, then let a goblin pack kill them so the XP bar drains and shows the exact 12% EXP loss.",
+  "policy": {
+    "death": { "mode": "xp-penalty", "xpPenalty": 0.12 },
+    "progression": { "persistAcrossWipes": true, "keepInventoryOnWipe": true }
+  },
+  "systems": {
+    "events": false,
+    "spawners": false
+  },
+  "tuning": {
+    "enemyAttackCooldownMs": 700,
+    "enemyAttackWindupMs": 220,
+    "enemyAttackRange": 2.8,
+    "enemyAggroRadius": 40,
+    "enemyDeaggroRadius": 80,
+    "enemyMaxHp": 80,
+    "enemyAttack": 240,
+    "enemyMoveSpeed": 5.2,
+    "playerRespawnMs": 8000,
+    "waveSizeBase": 0,
+    "waveSizePerPlayer": 0,
+    "waveSizePerWave": 0
+  },
+  "player": {
+    "stats": {
+      "level": 10,
+      "xp": 1200,
+      "maxHp": 400,
+      "hp": 260
+    },
+    "position": { "x": 0, "z": -8 }
+  },
+  "world": {
+    "wavesEnabled": false,
+    "laCryptaDefense": false,
+    "enemies": [
+      { "kind": "goblin", "x": -2.4, "z": -3, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": -1.2, "z": -2, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": 0, "z": -3, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": 1.2, "z": -2, "level": 12, "brain": "war_seeker" },
+      { "kind": "goblin", "x": 2.4, "z": -3, "level": 12, "brain": "war_seeker" }
+    ]
+  },
+  "timeScale": 1
+}

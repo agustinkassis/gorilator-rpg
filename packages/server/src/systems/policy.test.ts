@@ -1,6 +1,11 @@
 import { XP_DEATH_PENALTY } from "@rpg/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultRealmPolicy, realmPolicy, resetRealmPolicy, setRealmPolicy } from "./policy";
+import {
+  defaultRealmPolicy,
+  realmPolicy,
+  resetRealmPolicy,
+  setRealmPolicy,
+} from "./policy";
 
 // The policy sanitizer guards realm.json input: operators hand-edit that file,
 // so every invalid shape must fall back to a sane default instead of crashing
@@ -36,8 +41,12 @@ describe("realm policy", () => {
   });
 
   it("clamps xpPenalty into [0, 1]", () => {
-    expect(setRealmPolicy({ death: { xpPenalty: 1.5 } }).death.xpPenalty).toBe(1);
-    expect(setRealmPolicy({ death: { xpPenalty: -0.2 } }).death.xpPenalty).toBe(0);
+    expect(setRealmPolicy({ death: { xpPenalty: 1.5 } }).death.xpPenalty).toBe(
+      1,
+    );
+    expect(setRealmPolicy({ death: { xpPenalty: -0.2 } }).death.xpPenalty).toBe(
+      0,
+    );
   });
 
   it("rejects a non-numeric xpPenalty and keeps the default", () => {
@@ -60,7 +69,9 @@ describe("realm policy", () => {
   });
 
   it("ignores non-boolean progression flags", () => {
-    const p = setRealmPolicy({ progression: { persistAcrossWipes: "nope", keepInventoryOnWipe: 0 } });
+    const p = setRealmPolicy({
+      progression: { persistAcrossWipes: "nope", keepInventoryOnWipe: 0 },
+    });
     expect(p.progression.persistAcrossWipes).toBe(true);
     expect(p.progression.keepInventoryOnWipe).toBe(true);
     expect(console.warn).toHaveBeenCalledTimes(2);
@@ -73,7 +84,10 @@ describe("realm policy", () => {
   });
 
   it("does not carry fields over from a previous set (each set starts from defaults)", () => {
-    setRealmPolicy({ death: { mode: "hardcore" }, progression: { persistAcrossWipes: false } });
+    setRealmPolicy({
+      death: { mode: "hardcore" },
+      progression: { persistAcrossWipes: false },
+    });
     const p = setRealmPolicy({ death: { xpPenalty: 0.1 } });
     expect(p.death.mode).toBe("xp-penalty");
     expect(p.progression.persistAcrossWipes).toBe(true);
